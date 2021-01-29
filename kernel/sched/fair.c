@@ -8409,6 +8409,7 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 			 !preferred_cluster(
 				cpu_rq(env->dst_cpu)->wrq.cluster, p))
 		return 0;
+#endif
 
 	/* Don't detach task if it doesn't fit on the destination */
 	if (env->flags & LBF_IGNORE_BIG_TASKS &&

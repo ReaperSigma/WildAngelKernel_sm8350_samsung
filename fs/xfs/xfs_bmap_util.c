@@ -1318,9 +1318,8 @@ xfs_insert_file_space(
 	if (error)
 		return error;
 
-	while (!error && !done) {
-		error = xfs_trans_alloc(mp, &M_RES(mp)->tr_write, 0, 0, 0,
-					&tp);
+	do {
+		error = xfs_defer_finish(&tp);
 		if (error)
 			break;
 

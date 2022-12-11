@@ -144,11 +144,8 @@ int adreno_drawctxt_wait(struct adreno_device *adreno_dev,
 	int ret;
 	long ret_temp;
 
-	if (kgsl_context_detached(context)) {
-		dev_err(device->dev,
-			"return -ENOENT at <%s: %d>", __FILE__, __LINE__);
+	if (kgsl_context_detached(context))
 		return -ENOENT;
-	}
 
 	if (kgsl_context_invalid(context))
 		return -EDEADLK;
@@ -186,11 +183,8 @@ int adreno_drawctxt_wait(struct adreno_device *adreno_dev,
 
 
 	/* Return -EINVAL if the context was detached while we were waiting */
-	if (kgsl_context_detached(context)) {
-		dev_err(device->dev,
-			"ret = -ENOENT at <%s: %d>", __FILE__, __LINE__);
+	if (kgsl_context_detached(context))
 		ret = -ENOENT;
-	}
 
 done:
 	trace_adreno_drawctxt_wait_done(-1, context->id, timestamp, ret);
@@ -604,21 +598,15 @@ int adreno_drawctxt_switch(struct adreno_device *adreno_dev,
 	 * the pt switch commands get executed by the GPU, leading to
 	 * pagefaults.
 	 */
-	if (drawctxt != NULL && kgsl_context_detached(&drawctxt->base)) {
-		dev_err(device->dev,
-			"return -ENOENT at <%s: %d>", __FILE__, __LINE__);
+	if (drawctxt != NULL && kgsl_context_detached(&drawctxt->base))
 		return -ENOENT;
-	}
 
 	trace_adreno_drawctxt_switch(rb, drawctxt);
 
 	/* Get a refcount to the new instance */
 	if (drawctxt) {
-		if (!_kgsl_context_get(&drawctxt->base)) {
-			dev_err(device->dev,
-				"return -ENOENT at <%s: %d>", __FILE__, __LINE__);
+		if (!_kgsl_context_get(&drawctxt->base))
 			return -ENOENT;
-		}
 
 		new_pt = drawctxt->base.proc_priv->pagetable;
 	} else {

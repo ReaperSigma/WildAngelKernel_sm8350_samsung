@@ -551,9 +551,6 @@ void adreno_hang_int_callback(struct adreno_device *adreno_dev, int bit)
 {
 	dev_crit_ratelimited(KGSL_DEVICE(adreno_dev)->dev,
 				"MISC: GPU hang detected\n");
-#if defined(CONFIG_DISPLAY_SAMSUNG) && defined(CONFIG_SEC_ABC)
-	sec_abc_send_event("MODULE=gpu_qc@ERROR=gpu_fault");
-#endif 
 	adreno_irqctrl(adreno_dev, 0);
 
 	/* Trigger a fault in the dispatcher - this will effect a restart */
@@ -1213,11 +1210,8 @@ static int adreno_read_speed_bin(struct platform_device *pdev)
 
 	if (ret) {
 		/* If the nvmem node isn't there, try legacy */
-		if (ret == -ENOENT) {
-			dev_err(&pdev->dev,
-				"ret == -ENOENT at <%s: %d>", __FILE__, __LINE__);
+		if (ret == -ENOENT)
 			return adreno_read_speed_bin_legacy(pdev);
-		}
 
 		return ret;
 	}
@@ -1557,7 +1551,7 @@ int adreno_device_probe(struct platform_device *pdev,
 
 	adreno_debugfs_init(adreno_dev);
 	adreno_profile_init(adreno_dev);
-	
+
 	adreno_dev->perfcounter = false;
 
 	adreno_sysfs_init(adreno_dev);
@@ -1591,6 +1585,7 @@ err:
 	if (of_find_matching_node(dev->of_node, adreno_gmu_match))
 		component_unbind_all(dev, NULL);
 
+	idr_destroy(&device->context_idr);
 	kgsl_bus_close(device);
 
 	return status;
@@ -3140,12 +3135,14 @@ int adreno_gmu_fenced_write(struct adreno_device *adreno_dev,
 	unsigned int status, i;
 	const struct adreno_gpudev *gpudev = ADRENO_GPU_DEVICE(adreno_dev);
 	unsigned int reg_offset = gpudev->reg_offsets[offset];
+	u64 ts1, ts2;
 
 	adreno_writereg(adreno_dev, offset, val);
 
 	if (!gmu_core_isenabled(KGSL_DEVICE(adreno_dev)))
 		return 0;
 
+	ts1 = gpudev->read_alwayson(adreno_dev);
 	for (i = 0; i < GMU_CORE_LONG_WAKEUP_RETRY_LIMIT; i++) {
 		/*
 		 * Make sure the previous register write is posted before
@@ -3174,10 +3171,10 @@ int adreno_gmu_fenced_write(struct adreno_device *adreno_dev,
 		return 0;
 
 	if (i == GMU_CORE_LONG_WAKEUP_RETRY_LIMIT) {
+		ts2 = gpudev->read_alwayson(adreno_dev);
 		dev_err(adreno_dev->dev.dev,
-			"Timed out waiting %d usecs to write fenced register 0x%x\n",
-			i * GMU_CORE_WAKEUP_DELAY_US,
-			reg_offset);
+			"Timed out waiting %d usecs to write fenced register 0x%x, timestamps: %llx %llx\n",
+			i * GMU_CORE_WAKEUP_DELAY_US, reg_offset, ts1, ts2);
 		return -ETIMEDOUT;
 	}
 
@@ -3369,11 +3366,8 @@ static int adreno_waittimestamp(struct kgsl_device *device,
 	}
 
 	/* Return -ENOENT if the context has been detached */
-	if (kgsl_context_detached(context)) {
-		dev_err(device->dev,
-			"return -ENOENT at <%s: %d>", __FILE__, __LINE__);
+	if (kgsl_context_detached(context))
 		return -ENOENT;
-	}
 
 	ret = adreno_drawctxt_wait(ADRENO_DEVICE(device), context,
 		timestamp, msecs);

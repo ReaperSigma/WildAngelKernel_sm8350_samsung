@@ -828,15 +828,7 @@ static ssize_t _gpu_model_show(struct kgsl_device *device, char *buf)
 {
 	char model_str[32] = {0};
 
-	if (!device)
-		pr_err("device is null!\n");
-	else if (!device->ftbl)
-		pr_err("ftbl is null!\n");
-
-	else if (!device->ftbl->gpu_model)
-		pr_err("gpu_model is null!\n");
-	else
-		device->ftbl->gpu_model(device, model_str, sizeof(model_str));
+	device->ftbl->gpu_model(device, model_str, sizeof(model_str));
 
 	return scnprintf(buf, PAGE_SIZE, "%s\n", model_str);
 }
@@ -931,7 +923,7 @@ static ssize_t _max_clock_mhz_show(struct kgsl_device *device, char *buf)
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
 
 	return scnprintf(buf, PAGE_SIZE, "%d\n",
-		pwr->pwrlevels[pwr->sysfs_thermal_pwrlevel].gpu_freq / 1000000);
+		pwr->pwrlevels[pwr->thermal_pwrlevel].gpu_freq / 1000000);
 }
 
 static ssize_t max_clock_mhz_show(struct device *dev,

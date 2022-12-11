@@ -414,11 +414,8 @@ adreno_ringbuffer_addcmds(struct adreno_ringbuffer *rb,
 	static unsigned int _seq_cnt;
 
 	if (drawctxt != NULL && kgsl_context_detached(&drawctxt->base) &&
-		!is_internal_cmds(flags)) {
-		dev_err(device->dev,
-			"return -ENOENT at <%s: %d>", __FILE__, __LINE__);
+		!is_internal_cmds(flags))
 		return -ENOENT;
-	}
 
 	/* On fault return error so that we don't keep submitting */
 	if (adreno_gpu_fault(adreno_dev) != 0)
@@ -999,7 +996,7 @@ int adreno_ringbuffer_submitcmd(struct adreno_device *adreno_dev,
 	if (gpudev->ccu_invalidate)
 		dwords += 4;
 
-	link = kcalloc(dwords, sizeof(unsigned int), GFP_KERNEL);
+	link = kvcalloc(dwords, sizeof(unsigned int), GFP_KERNEL);
 	if (!link) {
 		ret = -ENOMEM;
 		goto done;
@@ -1101,10 +1098,6 @@ int adreno_ringbuffer_submitcmd(struct adreno_device *adreno_dev,
 			dev_err(device->dev,
 				     "Unable to switch draw context: %d\n",
 				     ret);
-		else if (ret == -ENOENT) {
-			dev_err(device->dev,
-				"ret == -ENOENT at <%s: %d>", __FILE__, __LINE__);
-		}
 		goto done;
 	}
 
@@ -1136,7 +1129,7 @@ done:
 	trace_kgsl_issueibcmds(device, context->id, numibs, drawobj->timestamp,
 			drawobj->flags, ret, drawctxt->type);
 
-	kfree(link);
+	kvfree(link);
 	return ret;
 }
 

@@ -124,8 +124,6 @@ static int _add_fence_event(struct kgsl_device *device,
 	 */
 	if (!_kgsl_context_get(context)) {
 		kfree(event);
-		dev_err(device->dev,
-			"return -ENOENT at <%s: %d>", __FILE__, __LINE__);
 		return -ENOENT;
 	}
 
@@ -315,10 +313,8 @@ int kgsl_sync_timeline_create(struct kgsl_context *context)
 	struct kgsl_sync_timeline *ktimeline;
 
 	/* Put context at detach time */
-	if (!_kgsl_context_get(context)) {
-		pr_err("return -ENOENT at <%s: %d>", __FILE__, __LINE__);
+	if (!_kgsl_context_get(context))
 		return -ENOENT;
-	}
 
 	ktimeline = kzalloc(sizeof(*ktimeline), GFP_KERNEL);
 	if (ktimeline == NULL) {

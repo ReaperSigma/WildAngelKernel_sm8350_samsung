@@ -23,6 +23,15 @@ config ION_CMA_HEAP
 	  by the Contiguous Memory Allocator (CMA). If your system has these
 	  regions, you should say Y here.
 
+config ION_RBIN_HEAP
+	bool "ION RBIN Heap"
+	default y
+	depends on ION && RBIN && CLEANCACHE && ION_MSM_HEAPS=y
+	help
+	  Provides ION RBIN heap which utilizes RBIN memory.
+	  While RBIN heap is similar with CMA heap, it assumes that an ION buffer
+	  can be composed of multiple free chunks.
+
 config ION_MSM_HEAPS
 	tristate "MSM platform-based Ion heaps support"
 	depends on ION
@@ -85,10 +94,3 @@ config PANIC_ON_MSM_ION_HEAPS_FAILURE
 	msm ion heap probe fails. This can happen when any invalid heap id,
 	heap types are added in device tree. Panic ensures early detection
 	of such changes.
-
-config DEBUG_ION_TRACK_HEAP_MEM
-	bool "Track total memory allocated in each ION heap"
-	help
-	  Add support to track the total amount of memory allocated by each ION
-	  heap. This information makes it easier to identify if an ION client is
-	  responsible for a memory leak.

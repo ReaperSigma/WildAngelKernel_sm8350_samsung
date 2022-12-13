@@ -4,15 +4,18 @@
 #include <linux/utsname.h>
 #include <linux/freezer.h>
 #include <linux/compiler.h>
+#if IS_ENABLED(CONFIG_SEC_PM)
+#include <linux/notifier.h>
+#endif
 
 struct swsusp_info {
 	struct new_utsname	uts;
 	u32			version_code;
-	u64			num_physpages;
+	unsigned long		num_physpages;
 	int			cpus;
-	u64			image_pages;
-	u64			pages;
-	u64			size;
+	unsigned long		image_pages;
+	unsigned long		pages;
+	unsigned long		size;
 } __aligned(PAGE_SIZE);
 
 #ifdef CONFIG_HIBERNATION
@@ -179,7 +182,7 @@ extern void swsusp_close(fmode_t);
 extern int swsusp_unmark(void);
 #endif
 
-struct __kernel_old_timeval;
+struct timeval;
 /* kernel/power/swsusp.c */
 extern void swsusp_show_speed(ktime_t, ktime_t, unsigned int, char *);
 
@@ -311,3 +314,8 @@ extern int pm_wake_lock(const char *buf);
 extern int pm_wake_unlock(const char *buf);
 
 #endif /* !CONFIG_PM_WAKELOCKS */
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+int msm_drm_register_notifier_client(struct notifier_block *nb);
+int msm_drm_unregister_notifier_client(struct notifier_block *nb);
+#endif

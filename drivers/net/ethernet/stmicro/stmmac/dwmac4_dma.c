@@ -336,8 +336,8 @@ static void dwmac4_dma_tx_chan_op_mode(void __iomem *ioaddr, int mode,
 	writel(mtl_tx_op, ioaddr +  MTL_CHAN_TX_OP_MODE(channel));
 }
 
-static int dwmac4_get_hw_feature(void __iomem *ioaddr,
-				 struct dma_features *dma_cap)
+static void dwmac4_get_hw_feature(void __iomem *ioaddr,
+				  struct dma_features *dma_cap)
 {
 	u32 hw_cap = readl(ioaddr + GMAC_HW_FEATURE0);
 
@@ -400,8 +400,6 @@ static int dwmac4_get_hw_feature(void __iomem *ioaddr,
 	dma_cap->frpbs = (hw_cap & GMAC_HW_FEAT_FRPBS) >> 11;
 	dma_cap->frpsel = (hw_cap & GMAC_HW_FEAT_FRPSEL) >> 10;
 	dma_cap->dvlan = (hw_cap & GMAC_HW_FEAT_DVLAN) >> 5;
-
-	return 0;
 }
 
 /* Enable/disable TSO feature and set MSS */
@@ -445,23 +443,6 @@ static void dwmac4_set_bfsize(void __iomem *ioaddr, int bfsize, u32 chan)
 	writel(value, ioaddr + DMA_CHAN_RX_CONTROL(chan));
 }
 
-static void dwmac4_dma_rx_chan_fep(void __iomem *ioaddr, bool en, u32 chan)
-{
-	u32 value;
-
-	if (en) {
-		/* enable FEP */
-		value = readl_relaxed(ioaddr + MTL_CHAN_RX_OP_MODE(chan));
-		writel_relaxed(value | MTL_OP_MODE_FEP,
-			       ioaddr + MTL_CHAN_RX_OP_MODE(chan));
-	} else {
-		/* disable FEP */
-		value = readl_relaxed(ioaddr + MTL_CHAN_RX_OP_MODE(chan));
-		writel_relaxed(value & ~MTL_OP_MODE_FEP,
-			       ioaddr + MTL_CHAN_RX_OP_MODE(chan));
-	}
-}
-
 const struct stmmac_dma_ops dwmac4_dma_ops = {
 	.reset = dwmac4_dma_reset,
 	.init = dwmac4_dma_init,
@@ -488,7 +469,6 @@ const struct stmmac_dma_ops dwmac4_dma_ops = {
 	.enable_tso = dwmac4_enable_tso,
 	.qmode = dwmac4_qmode,
 	.set_bfsize = dwmac4_set_bfsize,
-	.enable_rx_fep = dwmac4_dma_rx_chan_fep,
 };
 
 const struct stmmac_dma_ops dwmac410_dma_ops = {
@@ -517,5 +497,4 @@ const struct stmmac_dma_ops dwmac410_dma_ops = {
 	.enable_tso = dwmac4_enable_tso,
 	.qmode = dwmac4_qmode,
 	.set_bfsize = dwmac4_set_bfsize,
-	.enable_rx_fep = dwmac4_dma_rx_chan_fep,
 };

@@ -19,6 +19,13 @@
 #include "kgsl_drawobj.h"
 #include "kgsl_sharedmem.h"
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_SEC_ABC)
+#include <linux/sti/abc_common.h>
+#endif
+#include "../../../techpack/display/msm/samsung/ss_dpui_common.h"
+#endif
+
 #define show_memtype(type) \
 	__print_symbolic(type, \
 		{ KGSL_MEM_ENTRY_KERNEL, "gpumem" }, \
@@ -1088,33 +1095,6 @@ TRACE_EVENT(kgsl_clock_throttling,
 	TP_printk("idle_10=%d crc_50=%d crc_more50=%d crc_less50=%d adj=%lld",
 		__entry->idle_10pct, __entry->crc_50pct, __entry->crc_more50pct,
 		__entry->crc_less50pct, __entry->adj
-	)
-);
-
-TRACE_EVENT(kgsl_bcl_clock_throttling,
-	TP_PROTO(
-		int crc_25pct,
-		int crc_58pct,
-		int crc_78pct
-	),
-	TP_ARGS(
-		crc_25pct,
-		crc_58pct,
-		crc_78pct
-	),
-	TP_STRUCT__entry(
-		__field(int, crc_25pct)
-		__field(int, crc_58pct)
-		__field(int, crc_78pct)
-	),
-	TP_fast_assign(
-		__entry->crc_25pct = crc_25pct;
-		__entry->crc_58pct = crc_58pct;
-		__entry->crc_78pct = crc_78pct;
-	),
-	TP_printk("crc_25=%d crc_58=%d crc_78=%d",
-		__entry->crc_25pct, __entry->crc_58pct,
-		__entry->crc_78pct
 	)
 );
 

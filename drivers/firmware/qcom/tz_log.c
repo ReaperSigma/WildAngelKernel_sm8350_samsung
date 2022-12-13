@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 #include <linux/debugfs.h>
 #include <linux/errno.h>
@@ -18,8 +17,6 @@
 #include <linux/of.h>
 #include <linux/dma-buf.h>
 #include <linux/qcom_scm.h>
-#include <linux/pm.h>
-
 #include <soc/qcom/qseecomi.h>
 #include <linux/qtee_shmbridge.h>
 
@@ -38,7 +35,8 @@
 #define TZBSP_FVER_MINOR_SHIFT          12
 #define TZBSP_DIAG_MAJOR_VERSION_V9     9
 #define TZBSP_DIAG_MINOR_VERSION_V2     2
-#define TZBSP_DIAG_MINOR_VERSION_V21     3
+#define TZBSP_DIAG_MINOR_VERSION_V21    3
+#define TZBSP_DIAG_MINOR_VERSION_V22    4
 
 /* TZ Diag Feature Version Id */
 #define QCOM_SCM_FEAT_DIAG_ID           0x06
@@ -442,7 +440,6 @@ static struct tzdbg_log_t *g_qsee_log;
 static struct tzdbg_log_v2_t *g_qsee_log_v2;
 static dma_addr_t coh_pmem;
 static uint32_t debug_rw_buf_size;
-static bool restore_from_hibernation;
 static uint32_t display_buf_size;
 static uint32_t qseelog_buf_size;
 static phys_addr_t disp_buf_paddr;
@@ -451,6 +448,7 @@ static uint64_t qseelog_shmbridge_handle;
 static struct encrypted_log_info enc_qseelog_info;
 static struct encrypted_log_info enc_tzlog_info;
 
+#ifdef CONFIG_DEBUG_FS
 /*
  * Debugfs data structure and functions
  */
@@ -1004,16 +1002,6 @@ static int _disp_tz_log_stats(size_t count)
 	struct tzdbg_log_v2_t *log_v2_ptr;
 	struct tzdbg_log_t *log_ptr;
 
-        /* wrap and offset are initialized to zero since tz is coldboot
-	 * during restoration from hibernation.the reason to initialise
-	 * the wrap and offset to zero since it contains previous boot
-	 * values and which are invalid now.
-	 */
-	if (restore_from_hibernation) {
-		log_start.wrap = log_start.offset = 0;
-		log_start_v2.wrap = log_start_v2.offset = 0;
-		return 0;
-	}
 	log_ptr = (struct tzdbg_log_t *)((unsigned char *)tzdbg.diag_buf +
 			tzdbg.diag_buf->ring_off -
 			offsetof(struct tzdbg_log_t, log_buf));
@@ -1049,16 +1037,6 @@ static int _disp_qsee_log_stats(size_t count)
 	static struct tzdbg_log_pos_t log_start = {0};
 	static struct tzdbg_log_pos_v2_t log_start_v2 = {0};
 
-        /* wrap and offset are initialized to zero since tz is coldboot
-	 * during restoration from hibernation. The reason to initialise
-	 * the wrap and offset to zero since it contains previous values
-	 * and which are invalid now.
-	 */
-	if (restore_from_hibernation) {
-		log_start.wrap = log_start.offset = 0;
-		log_start_v2.wrap = log_start_v2.offset = 0;
-		return 0;
-	}
 	if (!tzdbg.is_enlarged_buf)
 		return _disp_log_stats(g_qsee_log, &log_start,
 			QSEE_LOG_BUF_SIZE - sizeof(struct tzdbg_log_pos_t),
@@ -1227,6 +1205,7 @@ static const struct file_operations tzdbg_fops = {
 	.read    = tzdbgfs_read,
 	.open    = simple_open,
 };
+#endif
 
 /*
  * Allocates log buffer from ION, registers the buffer at TZ
@@ -1369,6 +1348,7 @@ static void tzdbg_free_encrypted_log_buf(struct platform_device *pdev)
 			enc_qseelog_info.vaddr, enc_qseelog_info.paddr);
 }
 
+#ifdef CONFIG_DEBUG_FS
 static int  tzdbgfs_init(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -1407,6 +1387,7 @@ static void tzdbgfs_exit(struct platform_device *pdev)
 	dent_dir = platform_get_drvdata(pdev);
 	debugfs_remove_recursive(dent_dir);
 }
+#endif
 
 static int __update_hypdbg_base(struct platform_device *pdev,
 			void __iomem *virt_iobase)
@@ -1478,7 +1459,9 @@ static int tzdbg_get_tz_version(void)
 	((((version >> TZBSP_FVER_MINOR_SHIFT) & TZBSP_FVER_MAJOR_MINOR_MASK)
 			== TZBSP_DIAG_MINOR_VERSION_V2) ||
 	(((version >> TZBSP_FVER_MINOR_SHIFT) & TZBSP_FVER_MAJOR_MINOR_MASK)
-			== TZBSP_DIAG_MINOR_VERSION_V21)))
+			== TZBSP_DIAG_MINOR_VERSION_V21) ||
+	(((version >> TZBSP_FVER_MINOR_SHIFT) & TZBSP_FVER_MAJOR_MINOR_MASK)
+			== TZBSP_DIAG_MINOR_VERSION_V22)))
 		tzdbg.is_enlarged_buf = true;
 	else
 		tzdbg.is_enlarged_buf = false;
@@ -1492,10 +1475,7 @@ static void tzdbg_query_encrypted_log(void)
 
 	ret = qcom_scm_query_encrypted_log_feature(&enabled);
 	if (ret) {
-		if (ret == -EIO)
-			pr_info("SCM_CALL : SYS CALL NOT SUPPORTED IN TZ\n");
-		else
-			pr_err("scm_call QUERY_ENCR_LOG_FEATURE failed ret %d\n", ret);
+		pr_err("scm_call QUERY_ENCR_LOG_FEATURE failed ret %d\n", ret);
 		tzdbg.is_encrypted_log_enabled = false;
 	} else {
 		pr_warn("encrypted qseelog enabled is %d\n", enabled);
@@ -1618,13 +1598,17 @@ static int tz_log_probe(struct platform_device *pdev)
 		goto exit_free_encr_log_buf;
 	}
 
+#ifdef CONFIG_DEBUG_FS
 	if (tzdbgfs_init(pdev))
 		goto exit_free_disp_buf;
+#endif
 	return 0;
 
+#ifdef CONFIG_DEBUG_FS
 exit_free_disp_buf:
 	dma_free_coherent(&pdev->dev, display_buf_size,
 			(void *)tzdbg.disp_buf, disp_buf_paddr);
+#endif			
 exit_free_encr_log_buf:
 	tzdbg_free_encrypted_log_buf(pdev);
 exit_free_qsee_log_buf:
@@ -1637,7 +1621,9 @@ exit_free_diag_buf:
 
 static int tz_log_remove(struct platform_device *pdev)
 {
+#ifdef CONFIG_DEBUG_FS
 	tzdbgfs_exit(pdev);
+#endif	
 	dma_free_coherent(&pdev->dev, display_buf_size,
 			(void *)tzdbg.disp_buf, disp_buf_paddr);
 	tzdbg_free_encrypted_log_buf(pdev);
@@ -1646,54 +1632,6 @@ static int tz_log_remove(struct platform_device *pdev)
 		kfree(tzdbg.diag_buf);
 	return 0;
 }
-
-#ifdef CONFIG_PM
-static int tz_log_freeze(struct device *dev)
-{
-       /* This Boolean variable is maintained to initialise the ring buffer
-	 * log pointer to zero during restoration from hibernation
-	 */
-	restore_from_hibernation = true;
-	if (g_qsee_log)
-	dma_free_coherent(dev, QSEE_LOG_BUF_SIZE, (void *)g_qsee_log,
-				coh_pmem);
-
-	return 0;
-}
-
-static int tz_log_restore(struct device *dev)
-{
-         /* ring buffer log pointer needs to be re initialized
-	 * during restoration from hibernation.
-	 */
-	if (restore_from_hibernation) {
-		_disp_tz_log_stats(0);
-		_disp_qsee_log_stats(0);
-	}
-	/* Register the log bugger at TZ during hibernation resume.
-	 * After hibernation the log buffer is with HLOS as TZ encountered
-	 * a coldboot sequence.
-	 */
-	tzdbg_register_qsee_log_buf(to_platform_device(dev));
-        /* This is set back to zero after successful restoration
-	 * from hibernation.
-	 */
-	restore_from_hibernation = false;
-
-	return 0;
-}
-
-static const struct dev_pm_ops tz_log_pmops = {
-	.freeze = tz_log_freeze,
-	.restore = tz_log_restore,
-	.thaw = tz_log_restore,
-};
-
-#define TZ_LOG_PMOPS (&tz_log_pmops)
-
-#else
-#define TZ_LOG_PMOPS NULL
-#endif
 
 static const struct of_device_id tzlog_match[] = {
 	{.compatible = "qcom,tz-log"},
@@ -1707,7 +1645,6 @@ static struct platform_driver tz_log_driver = {
 		.name = "tz_log",
 		.of_match_table = tzlog_match,
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
-		.pm = TZ_LOG_PMOPS,
 	},
 };
 

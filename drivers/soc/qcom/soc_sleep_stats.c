@@ -15,7 +15,6 @@
 #include <linux/platform_device.h>
 
 #include <clocksource/arm_arch_timer.h>
-#include <soc/qcom/boot_stats.h>
 
 #ifdef CONFIG_ARM
 #ifndef readq_relaxed
@@ -44,16 +43,16 @@ struct soc_sleep_stats_data {
 };
 
 struct entry {
-	u32 stat_type;
-	u32 count;
-	u64 last_entered_at;
-	u64 last_exited_at;
-	u64 accumulated;
+	__le32 stat_type;
+	__le32 count;
+	__le64 last_entered_at;
+	__le64 last_exited_at;
+	__le64 accumulated;
 };
 
 struct appended_entry {
-	u32 client_votes;
-	u32 reserved[3];
+	__le32 client_votes;
+	__le32 reserved[3];
 };
 
 struct stats_entry {
@@ -61,9 +60,9 @@ struct stats_entry {
 	struct appended_entry appended_entry;
 };
 
-#ifdef CONFIG_QGKI_MSM_BOOT_TIME_MARKER
-static struct soc_sleep_stats_data *gdata;
-static u64 deep_sleep_last_exited_time;
+#if IS_ENABLED(CONFIG_SEC_PM)
+struct soc_sleep_stats_data *debug_drv;
+u64 last_accumulated[5];
 #endif
 
 static inline u64 get_time_in_sec(u64 counter)
@@ -94,63 +93,11 @@ static inline ssize_t append_data_to_buf(char *buf, int length,
 			 data->appended_entry.client_votes);
 }
 
-#ifdef CONFIG_QGKI_MSM_BOOT_TIME_MARKER
-uint64_t get_sleep_exit_time(void)
-{
-	int i;
-	uint32_t offset;
-	u64 last_exited_at;
-	u32 count;
-	static u32 saved_deep_sleep_count;
-	u32 s_type = 0;
-	char stat_type[5] = {0};
-	struct soc_sleep_stats_data *drv = gdata;
-	void __iomem *reg;
-
-	if (!drv) {
-		pr_err("ERROR could not get rpm data memory\n");
-		return -ENOMEM;
-	}
-
-	reg = drv->reg;
-
-	for (i = 0; i < drv->config->num_records; i++) {
-
-		offset = offsetof(struct entry, stat_type);
-		s_type = readl_relaxed(reg + offset);
-		memcpy(stat_type, &s_type, sizeof(u32));
-
-		if (!memcmp((const void *)stat_type, (const void *)"aosd", 4)) {
-
-			offset = offsetof(struct entry, count);
-			count = readl_relaxed(reg + offset);
-
-			if (saved_deep_sleep_count == count)
-				deep_sleep_last_exited_time = 0;
-			else {
-				saved_deep_sleep_count = count;
-				offset = offsetof(struct entry, last_exited_at);
-				last_exited_at = readq_relaxed(reg + offset);
-				deep_sleep_last_exited_time = last_exited_at;
-			}
-			break;
-
-		} else {
-			reg += sizeof(struct entry);
-			if (drv->config->appended_stats_avail)
-				reg += sizeof(struct appended_entry);
-		}
-	}
-
-	return deep_sleep_last_exited_time;
-}
-EXPORT_SYMBOL(get_sleep_exit_time);
-#endif
-
 static ssize_t stats_show(struct kobject *obj, struct kobj_attribute *attr,
 			  char *buf)
 {
 	int i;
+	uint32_t offset;
 	ssize_t length = 0, op_length;
 	struct stats_entry data;
 	struct entry *e = &data.entry;
@@ -160,7 +107,20 @@ static ssize_t stats_show(struct kobject *obj, struct kobj_attribute *attr,
 	void __iomem *reg = drv->reg;
 
 	for (i = 0; i < drv->config->num_records; i++) {
-		memcpy_fromio(e, reg, sizeof(struct entry));
+		offset = offsetof(struct entry, stat_type);
+		e->stat_type = le32_to_cpu(readl_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, count);
+		e->count = le32_to_cpu(readl_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, last_entered_at);
+		e->last_entered_at = le64_to_cpu(readq_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, last_exited_at);
+		e->last_exited_at = le64_to_cpu(readq_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, accumulated);
+		e->accumulated = le64_to_cpu(readq_relaxed(reg + offset));
 
 		e->last_entered_at = get_time_in_sec(e->last_entered_at);
 		e->last_exited_at = get_time_in_sec(e->last_exited_at);
@@ -169,7 +129,9 @@ static ssize_t stats_show(struct kobject *obj, struct kobj_attribute *attr,
 		reg += sizeof(struct entry);
 
 		if (drv->config->appended_stats_avail) {
-			memcpy_fromio(ae, reg, sizeof(struct appended_entry));
+			offset = offsetof(struct appended_entry, client_votes);
+			ae->client_votes = le32_to_cpu(readl_relaxed(reg +
+								     offset));
 
 			reg += sizeof(struct appended_entry);
 		} else {
@@ -186,6 +148,74 @@ static ssize_t stats_show(struct kobject *obj, struct kobj_attribute *attr,
 exit:
 	return length;
 }
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+extern int _debug_vx_show(void);
+
+void debug_soc_stats_show(char *annotation)
+{
+	int i;
+	uint32_t offset;
+	struct stats_entry data;
+	struct entry *e = &data.entry;
+	void __iomem *reg = debug_drv->reg;
+	char stat_type[5] = {0};
+	char buf[256];
+	char *buf_ptr = buf;
+	u64 time_in_last_mode;
+	u64 time_since_last_mode;
+	bool is_exit = ( (!strcmp("exit", annotation)) ? true : false );
+
+	buf_ptr += sprintf(buf_ptr, "PM: %s: ", annotation);
+	for (i = 0; i < debug_drv->config->num_records; i++) {
+		offset = offsetof(struct entry, stat_type);
+		e->stat_type = le32_to_cpu(readl_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, count);
+		e->count = le32_to_cpu(readl_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, last_entered_at);
+		e->last_entered_at = le64_to_cpu(readq_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, last_exited_at);
+		e->last_exited_at = le64_to_cpu(readq_relaxed(reg + offset));
+
+		offset = offsetof(struct entry, accumulated);
+		e->accumulated = le64_to_cpu(readq_relaxed(reg + offset));
+
+		e->last_entered_at = get_time_in_sec(e->last_entered_at);
+		e->last_exited_at = get_time_in_sec(e->last_exited_at);
+		e->accumulated = get_time_in_sec(e->accumulated);
+
+		reg += sizeof(struct entry);
+
+		memcpy(stat_type, &e->stat_type, sizeof(u32));
+
+		time_in_last_mode = e->last_exited_at - e->last_entered_at;
+		time_since_last_mode = get_time_in_sec(__arch_counter_get_cntvct()) - e->last_exited_at;
+
+		if (is_exit && e->accumulated == last_accumulated[i]) {
+			buf_ptr += sprintf(buf_ptr, " *");
+			if (!(strcmp("cxsd", stat_type)) )
+				_debug_vx_show();
+		}
+		last_accumulated[i] = e->accumulated;
+
+		buf_ptr += sprintf(buf_ptr, "%s(%d, %llu, %llu, %llu)",
+			stat_type, e->count, time_in_last_mode, time_since_last_mode, e->accumulated);
+
+		if (i < (debug_drv->config->num_records - 1))
+			buf_ptr += sprintf(buf_ptr, ", ");
+		else
+			buf_ptr += sprintf(buf_ptr, "\n");
+	}
+
+	printk(KERN_INFO "%s", buf);
+
+	return ;
+}
+EXPORT_SYMBOL(debug_soc_stats_show);
+#endif
 
 static int soc_sleep_stats_create_sysfs(struct platform_device *pdev,
 					struct soc_sleep_stats_data *drv)
@@ -265,15 +295,15 @@ static int soc_sleep_stats_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-#ifdef CONFIG_QGKI_MSM_BOOT_TIME_MARKER
-	gdata = drv;
-#endif
-
 	drv->reg = devm_ioremap(&pdev->dev, drv->stats_base, drv->stats_size);
 	if (!drv->reg) {
 		pr_err("ioremap failed\n");
 		return -ENOMEM;
 	}
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+	debug_drv = drv;
+#endif
 
 	platform_set_drvdata(pdev, drv);
 	return 0;

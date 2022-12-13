@@ -33,23 +33,7 @@ else
 	source ${SCRIPTS_ROOT}/envsetup.sh $PLATFORM_NAME
 fi
 
-# Pass LEX, YACC, and KBUILD_HOSTLDFLAGS via KERN_MAKE_ARGS to prevent build
-# errors due to android build system's restriction against using path tools.
-if [[ "$HOSTCC" == *"clang" ]]; then
-	KERN_MAKE_ARGS="ARCH=$ARCH \
-		CROSS_COMPILE=$CROSS_COMPILE \
-		REAL_CC=$REAL_CC \
-		CLANG_TRIPLE=$CLANG_TRIPLE \
-		HOSTCC=$HOSTCC \
-		HOSTLD=$HOSTLD \
-		HOSTAR=$HOSTAR \
-		LD=$LD \
-                LEX=$LEX \
-                YACC=$YACC \
-                KBUILD_HOSTLDFLAGS=-fuse-ld=lld \
-		"
-else
-	KERN_MAKE_ARGS="ARCH=$ARCH \
+KERN_MAKE_ARGS="ARCH=$ARCH \
 		CROSS_COMPILE=$CROSS_COMPILE \
 		REAL_CC=$REAL_CC \
 		CLANG_TRIPLE=$CLANG_TRIPLE \
@@ -58,7 +42,6 @@ else
 		HOSTAR=$HOSTAR \
 		LD=$LD \
 		"
-fi
 
 # Allyes fragment temporarily created on GKI config fragment
 QCOM_GKI_ALLYES_FRAG=${CONFIGS_DIR}/${PLATFORM_NAME}_ALLYES_GKI.config
@@ -71,6 +54,42 @@ fi
 fi
 
 FINAL_DEFCONFIG_BLEND=""
+
+#Samsung defconfigs
+SAMSUNG_DEFCONFIG_BLEND=""
+TEMP_VARIANT_NAME=`echo $2 | sed -r "s/.*vendor//"`
+VARIANT_DEFCONFIG=${CONFIGS_DIR}${TEMP_VARIANT_NAME}
+
+TEMP_VARIANT_GKI_NAME=`echo $3 | sed -r "s/.*vendor//"`
+VARIANT_GKI_DEFCONFIG=${CONFIGS_DIR}${TEMP_VARIANT_GKI_NAME}
+
+SAMSUNG_DEFCONFIG_BLEND="${VARIANT_DEFCONFIG}"
+
+if [[ "${PROJECT_FULLNAME}" == "b2q"* ]]; then
+if [[ "${SEC_BUILD_OPTION_HW_REVISION}" == "00" ]]; then
+	echo "" >> ${VARIANT_DEFCONFIG}
+	echo "# WIFI HW option set 00" >> ${VARIANT_DEFCONFIG}
+	echo "# CONFIG_CNSS_QCA6490 is not set" >> ${VARIANT_DEFCONFIG}
+	echo "CONFIG_CNSS_QCA6390=y" >> ${VARIANT_DEFCONFIG}
+	echo "" >> ${VARIANT_GKI_DEFCONFIG}
+	echo "# WIFI HW option set 00" >> ${VARIANT_GKI_DEFCONFIG}
+	echo "# CONFIG_CNSS_QCA6490 is not set" >> ${VARIANT_GKI_DEFCONFIG}
+	echo "CONFIG_CNSS_QCA6390=y" >> ${VARIANT_GKI_DEFCONFIG}
+fi
+fi
+
+if [[ "${TARGET_BUILD_VARIANT}" == "eng" ]]; then
+	SAMSUNG_DEFCONFIG_BLEND+=" $SEC_ENG_FRAG"
+elif [[ "${TARGET_BUILD_VARIANT}" == "userdebug" ]]; then
+	SAMSUNG_DEFCONFIG_BLEND+=" $SEC_USERDEBUG_FRAG"
+fi
+
+SAMSUNG_DEFCONFIG_BLEND+=" $SEC_COMMON_FRAG"
+
+echo "Samsung generate_defconfig config ${SAMSUNG_DEFCONFIG_BLEND}"
+if [[ "${REQUIRED_DEFCONFIG}" == *"qgki"* ]]; then
+	FINAL_DEFCONFIG_BLEND+=" $SAMSUNG_DEFCONFIG_BLEND"
+fi
 
 case "$REQUIRED_DEFCONFIG" in
 	${PLATFORM_NAME}-qgki-debug_defconfig )
@@ -88,14 +107,14 @@ case "$REQUIRED_DEFCONFIG" in
 		FINAL_DEFCONFIG_BLEND+=" $QCOM_GKI_ALLYES_FRAG "
 		;;
 	${PLATFORM_NAME}-gki_defconfig )
+		FINAL_DEFCONFIG_BLEND+=" $VARIANT_GKI_DEFCONFIG"
+		FINAL_DEFCONFIG_BLEND+=" $SEC_GKI_COMMON_FRAG"
 		FINAL_DEFCONFIG_BLEND+=" $QCOM_GKI_FRAG "
 		;;
 	${PLATFORM_NAME}-debug_defconfig )
-		FINAL_DEFCONFIG_BLEND+=" $QCOM_DEBUG_FS_FRAG"
 		FINAL_DEFCONFIG_BLEND+=" $QCOM_GENERIC_DEBUG_FRAG "
 		;&
 	${PLATFORM_NAME}_defconfig )
-		FINAL_DEFCONFIG_BLEND+=" $QCOM_DEBUG_FS_FRAG"
 		FINAL_DEFCONFIG_BLEND+=" $QCOM_GENERIC_PERF_FRAG "
 		;;
 esac

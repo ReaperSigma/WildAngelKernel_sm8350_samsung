@@ -27,6 +27,14 @@
 #include "gadget.h"
 #include "io.h"
 
+#include <linux/battery/sec_battery_common.h>
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+#include <linux/usb_notify.h>
+#endif
+#if IS_ENABLED(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
+#include <linux/usb/typec/manager/usb_typec_manager_notifier.h>
+#endif
+
 static void __dwc3_ep0_do_control_status(struct dwc3 *dwc, struct dwc3_ep *dep);
 static void __dwc3_ep0_do_control_data(struct dwc3 *dwc,
 		struct dwc3_ep *dep, struct dwc3_request *req);
@@ -710,6 +718,9 @@ static int dwc3_ep0_set_config(struct dwc3 *dwc, struct usb_ctrlrequest *ctrl)
 			if (!dwc->dis_u2_entry_quirk)
 				reg |= DWC3_DCTL_ACCEPTU2ENA;
 			dwc3_writel(dwc->regs, DWC3_DCTL, reg);
+			/* user notification for android auto connection */
+			if (dwc->usb_function_info & GADGET_ACCESSORY)
+				dwc->acc_dev_status = true;
 		}
 		break;
 
@@ -839,8 +850,35 @@ static int dwc3_ep0_std_request(struct dwc3 *dwc, struct usb_ctrlrequest *ctrl)
 	case USB_REQ_SET_ADDRESS:
 		ret = dwc3_ep0_set_address(dwc, ctrl);
 		break;
+	case USB_REQ_GET_DESCRIPTOR:
+		if ((le16_to_cpu(ctrl->wValue) >> 8) == USB_DT_DEVICE
+				&& le16_to_cpu(ctrl->wLength) == USB_DT_DEVICE_SIZE) {
+			pr_info("usb: GET_DES\n");
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+			store_usblog_notify(NOTIFY_USBSTATE,
+				(void *)"USB_STATE=ENUM:GET:DES", NULL);
+#endif
+#if IS_ENABLED(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
+			set_usb_enumeration_state(dwc->gadget.speed);
+#endif
+		}
+		ret = dwc3_ep0_delegate_req(dwc, ctrl);
+		break;
 	case USB_REQ_SET_CONFIGURATION:
 		ret = dwc3_ep0_set_config(dwc, ctrl);
+#if IS_ENABLED(CONFIG_USB_CHARGING_EVENT)
+		if (ret < 0)
+			break;
+		if (dwc->gadget.speed == USB_SPEED_SUPER)
+			dwc->vbus_current = USB_CURRENT_SUPER_SPEED;
+		else
+			dwc->vbus_current = USB_CURRENT_HIGH_SPEED;
+		schedule_work(&dwc->set_vbus_current_work);
+#endif
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+		store_usblog_notify(NOTIFY_USBSTATE,
+			(void *)"USB_STATE=ENUM:SET:CON", NULL);
+#endif
 		break;
 	case USB_REQ_SET_SEL:
 		ret = dwc3_ep0_set_sel(dwc, ctrl);
@@ -865,11 +903,6 @@ static void dwc3_ep0_inspect_setup(struct dwc3 *dwc,
 
 	if (!dwc->gadget_driver)
 		goto out;
-
-	if (dwc->ignore_statusirq) {
-		dwc->ignore_statusirq = false;
-		return;
-	}
 
 	trace_dwc3_ctrl_req(ctrl);
 
@@ -1154,7 +1187,6 @@ void dwc3_ep0_send_delayed_status(struct dwc3 *dwc)
 	unsigned int direction = !dwc->ep0_expect_in;
 
 	dwc->delayed_status = false;
-	dwc->clear_stall_protocol = 0;
 
 	if (dwc->ep0state != EP0_STATUS_PHASE)
 		return;
@@ -1194,28 +1226,6 @@ void dwc3_ep0_end_control_data(struct dwc3 *dwc, struct dwc3_ep *dep)
 	dep->flags &= ~DWC3_EP_TRANSFER_STARTED;
 out:
 	dep->resource_index = 0;
-}
-
-static void dwc3_check_ep0_status_complete(struct dwc3 *dwc)
-{
-	struct dwc3_trb		*trb;
-	int			count;
-	union dwc3_event	event;
-
-	trb = dwc->ep0_trb;
-
-	for (count = 0; count < 10; count++) {
-		if (!(trb->ctrl & DWC3_TRB_CTRL_HWO))
-			break;
-		udelay(10);
-	}
-
-	if (trb->ctrl & DWC3_TRB_CTRL_HWO)
-		return;
-
-	event.raw = 0xc040; /* Populate dummy xfer complete event for ep0 */
-	dwc3_ep0_xfer_complete(dwc, &event.depevt);
-	dwc->ignore_statusirq = true;
 }
 
 static void dwc3_ep0_xfernotready(struct dwc3 *dwc,
@@ -1280,10 +1290,6 @@ static void dwc3_ep0_xfernotready(struct dwc3 *dwc,
 		}
 
 		dwc3_ep0_do_control_status(dwc, event);
-		if (dwc->active_highbw_isoc) {
-			dbg_event(0x00, "POLL STATUSCOMPLETION", 0);
-			dwc3_check_ep0_status_complete(dwc);
-		}
 	}
 }
 

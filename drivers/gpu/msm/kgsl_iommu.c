@@ -637,6 +637,20 @@ static int kgsl_iommu_fault_handler(struct iommu_domain *domain,
 	if (private) {
 		pid = pid_nr(private->pid);
 		comm = private->comm;
+#if 0
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+		if ((strncmp(comm, "provider@4.0-se", 15) == 0) ||
+			(strncmp(comm, "roid.app.camera", 15) == 0)) {
+			adreno_dev->ft_pf_policy = (
+				(1 << KGSL_FT_PAGEFAULT_INT_ENABLE) |
+				(1 << KGSL_FT_PAGEFAULT_GPUHALT_ENABLE));
+			device->force_panic = true;
+			dev_err(device->dev, "### comm: %s, flags: 0x%08x, ft_pf_policy : 0x%08x\n",
+				private->comm, flags, adreno_dev->ft_pf_policy);
+			flags |= IOMMU_FAULT_TRANSACTION_STALLED;
+		}
+#endif
+#endif
 	}
 
 	if (test_bit(KGSL_FT_PAGEFAULT_GPUHALT_ENABLE,
@@ -734,6 +748,20 @@ static int kgsl_iommu_fault_handler(struct iommu_domain *domain,
 					dev_err(ctx->kgsldev->dev, "*EMPTY*\n");
 			}
 		}
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+#if defined(CONFIG_SEC_ABC)
+		sec_abc_send_event("MODULE=gpu_qc@ERROR=gpu_page_fault");
+#endif
+
+		{
+			/* To print gpuaddr info */
+			extern void kgsl_svm_addr_mapping_check(pid_t pid, unsigned long fault_addr);
+			extern void kgsl_svm_addr_mapping_log(struct kgsl_device *device, pid_t pid);
+
+			kgsl_svm_addr_mapping_log(device, ptname);
+			kgsl_svm_addr_mapping_check(ptname, addr);
+		}
+#endif
 	}
 
 	/*
@@ -932,22 +960,22 @@ static void setup_64bit_pagetable(struct kgsl_mmu *mmu,
 		struct kgsl_iommu_pt *pt)
 {
 	if (mmu->secured && pagetable->name == KGSL_MMU_SECURE_PT) {
-		pt->compat_va_start = mmu->secure_base;
+		pt->compat_va_start = KGSL_IOMMU_SECURE_BASE(mmu);
 		pt->compat_va_end = KGSL_IOMMU_SECURE_END(mmu);
-		pt->va_start = mmu->secure_base;
+		pt->va_start = KGSL_IOMMU_SECURE_BASE(mmu);
 		pt->va_end = KGSL_IOMMU_SECURE_END(mmu);
 	} else {
 		pt->compat_va_start = KGSL_IOMMU_SVM_BASE32(mmu);
-		pt->compat_va_end = mmu->secure_base;
+		pt->compat_va_end = KGSL_IOMMU_SECURE_BASE(mmu);
 		pt->va_start = KGSL_IOMMU_VA_BASE64;
 		pt->va_end = KGSL_IOMMU_VA_END64;
 	}
 
 	if (pagetable->name != KGSL_MMU_GLOBAL_PT &&
 		pagetable->name != KGSL_MMU_SECURE_PT) {
-		if (is_compat_task()) {
+		if (kgsl_is_compat_task()) {
 			pt->svm_start = KGSL_IOMMU_SVM_BASE32(mmu);
-			pt->svm_end = mmu->secure_base;
+			pt->svm_end = KGSL_IOMMU_SECURE_BASE(mmu);
 		} else {
 			pt->svm_start = KGSL_IOMMU_SVM_BASE64;
 			pt->svm_end = KGSL_IOMMU_SVM_END64;
@@ -961,13 +989,13 @@ static void setup_32bit_pagetable(struct kgsl_mmu *mmu,
 {
 	if (mmu->secured) {
 		if (pagetable->name == KGSL_MMU_SECURE_PT) {
-			pt->compat_va_start = mmu->secure_base;
+			pt->compat_va_start = KGSL_IOMMU_SECURE_BASE(mmu);
 			pt->compat_va_end = KGSL_IOMMU_SECURE_END(mmu);
-			pt->va_start = mmu->secure_base;
+			pt->va_start = KGSL_IOMMU_SECURE_BASE(mmu);
 			pt->va_end = KGSL_IOMMU_SECURE_END(mmu);
 		} else {
 			pt->va_start = KGSL_IOMMU_SVM_BASE32(mmu);
-			pt->va_end = mmu->secure_base;
+			pt->va_end = KGSL_IOMMU_SECURE_BASE(mmu);
 			pt->compat_va_start = pt->va_start;
 			pt->compat_va_end = pt->va_end;
 		}
@@ -1055,18 +1083,16 @@ static void _enable_gpuhtw_llc(struct kgsl_mmu *mmu,
 			"System cache no-write-alloc is disabled for GPU pagetables\n");
 }
 
-int kgsl_set_smmu_aperture(struct kgsl_device *device)
+static int set_smmu_aperture(struct kgsl_device *device, int cb_num)
 {
-	struct kgsl_iommu *iommu = _IOMMU_PRIV(&(device->mmu));
-	struct kgsl_iommu_context *ctx = &iommu->user_context;
 	int ret;
 
 	if (!test_bit(KGSL_MMU_SMMU_APERTURE, &device->mmu.features))
 		return 0;
 
-	ret = qcom_scm_kgsl_set_smmu_aperture(ctx->cb_num);
+	ret = qcom_scm_kgsl_set_smmu_aperture(cb_num);
 	if (ret == -EBUSY)
-		ret = qcom_scm_kgsl_set_smmu_aperture(ctx->cb_num);
+		ret = qcom_scm_kgsl_set_smmu_aperture(cb_num);
 
 	if (ret)
 		dev_err(device->dev, "Unable to set the SMMU aperture: %d. The aperture needs to be set to use per-process pagetables\n",
@@ -1135,7 +1161,7 @@ static int _init_global_pt(struct kgsl_mmu *mmu, struct kgsl_pagetable *pt)
 	ctx->cb_num = (int) cb_num;
 
 	if (!test_bit(KGSL_MMU_GLOBAL_PAGETABLE, &device->mmu.features)) {
-		ret = kgsl_set_smmu_aperture(device);
+		ret = set_smmu_aperture(device, cb_num);
 
 		if (ret)
 			goto done;
@@ -2242,6 +2268,7 @@ static int kgsl_iommu_get_gpuaddr(struct kgsl_pagetable *pagetable,
 	addr = _get_unmapped_area(pagetable, start, end, size, align);
 
 	if (addr == (uint64_t) -ENOMEM) {
+		pr_err("_get_unmapped_area failed\n");
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -2255,6 +2282,9 @@ static int kgsl_iommu_get_gpuaddr(struct kgsl_pagetable *pagetable,
 	if (ret == 0) {
 		memdesc->gpuaddr = addr;
 		memdesc->pagetable = pagetable;
+	} else {
+		pr_err("_insert_gpuaddr failed %llu s:%p e:%p size:%llu\n", 
+		memdesc->flags & KGSL_MEMFLAGS_SECURE, (uint64_t *)(uintptr_t)start, (uint64_t *)(uintptr_t)end, size);
 	}
 
 out:
@@ -2289,24 +2319,270 @@ static int kgsl_iommu_svm_range(struct kgsl_pagetable *pagetable,
 }
 
 static bool kgsl_iommu_addr_in_range(struct kgsl_pagetable *pagetable,
-		uint64_t gpuaddr, uint64_t size)
+		uint64_t gpuaddr)
 {
 	struct kgsl_iommu_pt *pt = pagetable->priv;
 
 	if (gpuaddr == 0)
 		return false;
 
-	if (gpuaddr >= pt->va_start && (gpuaddr + size) < pt->va_end)
+	if (gpuaddr >= pt->va_start && gpuaddr < pt->va_end)
 		return true;
 
-	if (gpuaddr >= pt->compat_va_start && (gpuaddr + size) < pt->compat_va_end)
+	if (gpuaddr >= pt->compat_va_start && gpuaddr < pt->compat_va_end)
 		return true;
 
-	if (gpuaddr >= pt->svm_start && (gpuaddr + size) < pt->svm_end)
+	if (gpuaddr >= pt->svm_start && gpuaddr < pt->svm_end)
 		return true;
 
 	return false;
 }
+
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+struct kgsl_hole_log_data {
+	int entry_cnt;
+
+	uint64_t biggest_hole_size;
+	uint64_t biggest_hole_addr;
+	uint64_t used_mem_size;
+};
+
+struct kgsl_hole_logging {
+	uint64_t low, high; // svm_range
+
+	struct kgsl_hole_log_data gpu_hole_data;
+	struct kgsl_hole_log_data cpu_hole_data;
+};
+
+struct kgsl_hole_logging svm_hole_log_data;
+
+static int kgsl_gpu_addr_hole_log(struct kgsl_device *device, pid_t pid, uint64_t memflags)
+{
+	struct kgsl_process_private *private = NULL;
+
+	struct kgsl_iommu_addr_entry *entry;
+	struct kgsl_iommu_pt *pt;
+	struct rb_node *node;
+
+	uint64_t low, high;
+
+	int entry_cnt = 0;
+	uint64_t biggest_hole_size = 0;
+	uint64_t biggest_hole_addr = 0;
+	uint64_t used_mem_size = 0;
+	uint64_t pre_entry_end_addr = 0;
+
+	private = kgsl_process_private_find(pid);
+	if (IS_ERR_OR_NULL(private)) {
+		pr_err("%s : smmu fault pid killed\n", __func__);
+		return -EINVAL;
+	}
+
+	spin_lock(&private->mem_lock);
+
+	pt = private->pagetable->priv;
+
+	/* To check current entry boundray */
+	if ((memflags & KGSL_MEMFLAGS_FORCE_32BIT) != 0) {
+		low = pt->compat_va_start;
+		high = pt->compat_va_end;
+	} else {
+		low = pt->svm_start;
+		high = pt->svm_end;
+	}
+
+	/* update svm range for cpu vm check */
+	svm_hole_log_data.high = high;
+	svm_hole_log_data.low = low;
+
+	/* init data for first node*/
+	node = rb_first(&pt->rbtree);
+	if (node) {
+		entry_cnt++;
+		entry = rb_entry(node, struct kgsl_iommu_addr_entry, node);
+
+#if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+		pr_err("%s pid : %d base : 0x%lx size : %ld\n", __func__,
+					pid, entry->base, entry->size);
+#endif
+		if ((entry->base >= low) && (entry->base <= high)) {
+			used_mem_size += entry->size;
+
+			biggest_hole_size = entry->base - low;
+			biggest_hole_addr = entry->base;
+
+			pre_entry_end_addr = entry->base + entry->size;
+		} else {
+			biggest_hole_size = 0;
+			biggest_hole_addr = low;
+			pre_entry_end_addr = low;
+		}
+	}
+
+	while (node) {
+		node = rb_next(node); //update node here
+		if (node) {
+			entry_cnt++;
+			entry = rb_entry(node, struct kgsl_iommu_addr_entry, node);
+
+#if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+			pr_err("%s pid : %d base : 0x%lx size : %ld\n", __func__,
+					pid, entry->base, entry->size);
+#endif
+			if ((entry->base >= low) && (entry->base <= high)) {
+				used_mem_size += entry->size;
+
+				if (entry->base - pre_entry_end_addr > biggest_hole_size) {
+					biggest_hole_size = entry->base - pre_entry_end_addr;
+					biggest_hole_addr = entry->base;
+				}
+
+				//update previous valid entry end address
+				pre_entry_end_addr = entry->base + entry->size;
+			}
+		}
+	}
+
+	/* To check last vm boundary */
+	if (high - pre_entry_end_addr > biggest_hole_size) {
+		biggest_hole_size = high - pre_entry_end_addr;
+		biggest_hole_addr = high;
+	}
+
+	spin_unlock(&private->mem_lock);
+
+	kgsl_process_private_put(private);
+
+	svm_hole_log_data.gpu_hole_data.entry_cnt = entry_cnt;
+	svm_hole_log_data.gpu_hole_data.biggest_hole_size = biggest_hole_size;
+	svm_hole_log_data.gpu_hole_data.biggest_hole_addr = biggest_hole_addr;
+	svm_hole_log_data.gpu_hole_data.used_mem_size = used_mem_size;
+
+	return 0;
+}
+
+static void __kgsl_cpu_addr_hole_log(pid_t pid, struct mm_struct *mm)
+{
+	struct vm_area_struct *vma;
+
+	int entry_cnt = 0;
+	uint64_t biggest_hole_size = 0;
+	uint64_t biggest_hole_addr = 0;
+	uint64_t used_mem_size = 0;
+	uint64_t pre_vma_end_addr = 0;
+	unsigned long vma_size = 0;
+
+	uint64_t low = svm_hole_log_data.low;
+	uint64_t high = svm_hole_log_data.high;
+
+	if(!mm) {
+		pr_err("%s mm is null\n", __func__);
+		return;
+	}
+
+	for (vma = mm->mmap; vma; vma = vma->vm_next) {
+		if (vma->vm_start < low) {
+			pre_vma_end_addr = vma->vm_end;
+			continue;
+		} else if ((vma->vm_start >= low) && (vma->vm_start <= high)) {
+			vma_size = vma->vm_end - vma->vm_start;
+			used_mem_size += vma_size;
+			entry_cnt++;
+
+			if (entry_cnt == 1) {
+				if (pre_vma_end_addr > low)
+					biggest_hole_size = vma->vm_start - pre_vma_end_addr;
+				else
+					biggest_hole_size = vma->vm_start - low;
+				biggest_hole_addr = vma->vm_start;
+
+#if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+				pr_err("%s pid : %d base : 0x%lx size : %ld pre_vma_end_addr : %ld\n", __func__,
+					pid, vma->vm_start, vma_size, pre_vma_end_addr);
+#endif
+			} else {
+				if (vma->vm_start - pre_vma_end_addr > biggest_hole_size) {
+					biggest_hole_size = vma->vm_start - pre_vma_end_addr;
+					biggest_hole_addr = vma->vm_start;
+				}
+
+#if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+				pr_err("%s pid : %d base : 0x%lx size : %ld\n", __func__,
+					pid, vma->vm_start, vma_size);
+#endif
+			}
+			//update previous valid entry end address
+			pre_vma_end_addr = vma->vm_end;
+		} else { // (vma->vm_start > high)
+			/* To check last vm boundary */
+			if (high - pre_vma_end_addr > biggest_hole_size) {
+				biggest_hole_size = high - pre_vma_end_addr;
+				biggest_hole_addr = high;
+			}
+			break;
+		}
+	}
+
+	svm_hole_log_data.cpu_hole_data.entry_cnt = entry_cnt;
+	svm_hole_log_data.cpu_hole_data.biggest_hole_size = biggest_hole_size;
+	svm_hole_log_data.cpu_hole_data.biggest_hole_addr = biggest_hole_addr;
+	svm_hole_log_data.cpu_hole_data.used_mem_size = used_mem_size;
+}
+
+static void kgsl_cpu_addr_hole_log(pid_t pid)
+{
+	struct pid *pid_struct;
+	struct task_struct *task;
+	struct mm_struct *mm;
+
+	pid_struct = find_get_pid(pid);
+	if (pid_struct) {
+		task = get_pid_task(pid_struct, PIDTYPE_PID);
+		if (task) {
+			mm = get_task_mm(task);
+			if (mm) {
+				__kgsl_cpu_addr_hole_log(pid, mm);
+				mmput(mm);
+			}
+			put_task_struct(task);
+		}
+		put_pid(pid_struct);
+	}
+}
+
+void kgsl_svm_addr_hole_log(struct kgsl_device *device, pid_t pid, uint64_t memflags)
+{
+	static DEFINE_RATELIMIT_STATE(_rs, 1 * HZ, 3);
+
+	if (__ratelimit(&_rs)) {
+		memset(&svm_hole_log_data, 0, sizeof(struct kgsl_hole_logging));
+
+		if (!kgsl_gpu_addr_hole_log(device, pid, memflags)) {
+			kgsl_cpu_addr_hole_log(pid);
+
+			pr_err("%s GPU pid %d entry_cnt %d used_size %ld biggest_hole_size 0x%lx \
+				0x%lx 0x%lx 0x%lx\n", __func__,
+				pid,
+				svm_hole_log_data.gpu_hole_data.entry_cnt,
+				svm_hole_log_data.gpu_hole_data.used_mem_size,
+				svm_hole_log_data.gpu_hole_data.biggest_hole_size,
+				svm_hole_log_data.gpu_hole_data.biggest_hole_addr,
+				svm_hole_log_data.low,
+				svm_hole_log_data.high);
+
+			pr_err("%s CPU pid %d entry_cnt %d used_size %ld biggest_hole_size 0x%lx \
+				0x%lx 0x%lx 0x%lx\n", __func__,
+				pid,
+				svm_hole_log_data.cpu_hole_data.entry_cnt,
+				svm_hole_log_data.cpu_hole_data.used_mem_size,
+				svm_hole_log_data.cpu_hole_data.biggest_hole_size,
+				svm_hole_log_data.cpu_hole_data.biggest_hole_addr,
+				svm_hole_log_data.low,
+				svm_hole_log_data.high);
+		}
+	}
+}
+#endif
 
 static int kgsl_iommu_probe_child(struct kgsl_device *device,
 		struct device_node *parent, struct kgsl_iommu_context *context,
@@ -2317,8 +2593,11 @@ static int kgsl_iommu_probe_child(struct kgsl_device *device,
 	struct device_node *phandle;
 	int ret;
 
-	if (!node)
+	if (!node) {
+		dev_err(device->dev,
+			"return -ENOENT at <%s: %d>", __FILE__, __LINE__);
 		return -ENOENT;
+	}
 
 	pdev = of_find_device_by_node(node);
 
@@ -2498,14 +2777,6 @@ int kgsl_iommu_probe(struct kgsl_device *device)
 
 	if (of_property_read_bool(node, "qcom,global_pt"))
 		set_bit(KGSL_MMU_GLOBAL_PAGETABLE, &mmu->features);
-
-	if (of_property_read_u32(node, "qcom,secure-size", &mmu->secure_size))
-		mmu->secure_size = KGSL_IOMMU_SECURE_SIZE;
-	else if (mmu->secure_size >
-			(KGSL_IOMMU_SECURE_END(mmu) - KGSL_IOMMU_SVM_BASE32(mmu)))
-		mmu->secure_size = KGSL_IOMMU_SECURE_SIZE;
-
-	mmu->secure_base = KGSL_IOMMU_SECURE_END(mmu) - mmu->secure_size;
 
 	/* Fill out the rest of the devices in the node */
 	of_platform_populate(node, NULL, NULL, &pdev->dev);

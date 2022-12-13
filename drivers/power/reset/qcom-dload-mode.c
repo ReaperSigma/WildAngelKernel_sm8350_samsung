@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2020 The Linux Foundation. All rights reserved.
  */
+
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/init.h>
@@ -14,8 +15,9 @@
 #include <linux/pm.h>
 #include <linux/qcom_scm.h>
 #include <soc/qcom/minidump.h>
-#ifdef CONFIG_HIBERNATION
-#include <linux/syscore_ops.h>
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+#include <linux/sec_debug.h>
 #endif
 
 enum qcom_download_dest {
@@ -76,6 +78,18 @@ static void msm_enable_dump_mode(bool enable)
 		set_download_mode(QCOM_DOWNLOAD_NODUMP);
 }
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG) 
+void set_dload_mode(int on)
+{
+	if (on)
+		set_download_mode(QCOM_DOWNLOAD_FULLDUMP);
+	else
+		set_download_mode(QCOM_DOWNLOAD_NODUMP);
+
+	pr_err("set_dload_mode <%d> ( %lx )\n", on, CALLER_ADDR0);
+}
+#endif
+
 static void set_download_dest(struct qcom_dload *poweroff,
 			      enum qcom_download_dest dest)
 {
@@ -100,9 +114,7 @@ static int param_set_download_mode(const char *val,
 	if (ret)
 		return ret;
 
-	msm_enable_dump_mode(enable_dump);
-	if (!enable_dump)
-		qcom_scm_disable_sdi();
+	msm_enable_dump_mode(true);
 
 	return 0;
 }
@@ -243,17 +255,6 @@ static struct attribute_group qcom_dload_attr_group = {
 	.attrs = qcom_dload_attrs,
 };
 
-#ifdef CONFIG_HIBERNATION
-static void qcom_dload_syscore_resume(void)
-{
-	msm_enable_dump_mode(enable_dump);
-}
-
-static struct syscore_ops qcom_dload_syscore_ops = {
-	.resume = qcom_dload_syscore_resume,
-};
-#endif
-
 static int qcom_dload_panic(struct notifier_block *this, unsigned long event,
 			      void *ptr)
 {
@@ -272,20 +273,20 @@ static int qcom_dload_reboot(struct notifier_block *this, unsigned long event,
 	struct qcom_dload *poweroff = container_of(this, struct qcom_dload,
 						     reboot_nb);
 
+	pr_debug("%s : cmd : %s\n", __func__, cmd);
+
 	/* Clean shutdown, disable dump mode to allow normal restart */
 	if (!poweroff->in_panic)
 		set_download_mode(QCOM_DOWNLOAD_NODUMP);
 
+#if !IS_ENABLED(CONFIG_SEC_DEBUG) 
 	if (cmd) {
 		if (!strcmp(cmd, "edl"))
 			set_download_mode(QCOM_DOWNLOAD_EDL);
 		else if (!strcmp(cmd, "qcom_dload"))
 			msm_enable_dump_mode(true);
-		else if (!strcmp(cmd, "rtc"))
-			qcom_scm_custom_reset_type = QCOM_SCM_RST_SHUTDOWN_TO_RTC_MODE;
-		else if (!strcmp(cmd, "twm"))
-			qcom_scm_custom_reset_type = QCOM_SCM_RST_SHUTDOWN_TO_TWM_MODE;
 	}
+#endif
 
 	if (current_download_mode != QCOM_DOWNLOAD_NODUMP)
 		reboot_mode = REBOOT_WARM;
@@ -299,7 +300,7 @@ static void __iomem *map_prop_mem(const char *propname)
 	void __iomem *addr;
 
 	if (!np) {
-		pr_warn("Unable to find DT property: %s\n", propname);
+		pr_err("Unable to find DT property: %s\n", propname);
 		return NULL;
 	}
 
@@ -360,9 +361,14 @@ static int qcom_dload_probe(struct platform_device *pdev)
 	poweroff->dload_dest_addr = map_prop_mem("qcom,msm-imem-dload-type");
 	store_kaslr_offset();
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+	enable_dump = true; 
+	msm_enable_dump_mode(enable_dump);
+#else
 	msm_enable_dump_mode(enable_dump);
 	if (!enable_dump)
 		qcom_scm_disable_sdi();
+#endif
 
 	poweroff->panic_nb.notifier_call = qcom_dload_panic;
 	poweroff->panic_nb.priority = INT_MAX;
@@ -372,9 +378,6 @@ static int qcom_dload_probe(struct platform_device *pdev)
 	poweroff->reboot_nb.notifier_call = qcom_dload_reboot;
 	poweroff->reboot_nb.priority = 255;
 	register_reboot_notifier(&poweroff->reboot_nb);
-#ifdef CONFIG_HIBERNATION
-	register_syscore_ops(&qcom_dload_syscore_ops);
-#endif
 
 	platform_set_drvdata(pdev, poweroff);
 

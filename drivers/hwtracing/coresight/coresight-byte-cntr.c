@@ -182,7 +182,7 @@ EXPORT_SYMBOL(tmc_etr_byte_cntr_stop);
 
 static void etr_pcie_close_channel(struct byte_cntr *byte_cntr_data)
 {
-	if (!byte_cntr_data || !byte_cntr_data->pcie_chan_opened)
+	if (!byte_cntr_data)
 		return;
 
 	mutex_lock(&byte_cntr_data->byte_cntr_lock);
@@ -326,8 +326,7 @@ static int tmc_etr_byte_cntr_open(struct inode *in, struct file *fp)
 
 	mutex_lock(&byte_cntr_data->byte_cntr_lock);
 
-	if (!tmcdrvdata->enable || !byte_cntr_data->block_size ||
-		tmcdrvdata->out_mode != TMC_ETR_OUT_MODE_MEM) {
+	if (!tmcdrvdata->enable || !byte_cntr_data->block_size) {
 		mutex_unlock(&byte_cntr_data->byte_cntr_lock);
 		return -EINVAL;
 	}
@@ -875,12 +874,14 @@ struct byte_cntr *byte_cntr_init(struct amba_device *adev,
 		dev_err(dev, "Byte_cntr interrupt registration failed\n");
 		return NULL;
 	}
+	enable_irq_wake(byte_cntr_irq);
 
 	ret = byte_cntr_register_chardev(byte_cntr_data);
 	if (ret) {
 		devm_free_irq(dev, byte_cntr_irq, byte_cntr_data);
 		devm_kfree(dev, byte_cntr_data);
 		dev_err(dev, "Byte_cntr char dev registration failed\n");
+		disable_irq_wake(byte_cntr_irq);		
 		return NULL;
 	}
 

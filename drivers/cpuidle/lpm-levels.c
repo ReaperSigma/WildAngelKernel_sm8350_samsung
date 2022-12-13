@@ -36,7 +36,6 @@
 #include <soc/qcom/pm.h>
 #include <soc/qcom/lpm_levels.h>
 #include <soc/qcom/lpm-stats.h>
-#include <soc/qcom/rpm-smd.h>
 #include <asm/arch_timer.h>
 #include <asm/suspend.h>
 #include <asm/cpuidle.h>
@@ -46,16 +45,19 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/trace_msm_low_power.h>
 
+#include <linux/sec_debug.h>
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+#include <linux/sec-pinmux.h>
+#if IS_ENABLED(CONFIG_SEC_GPIO_DVS)
+#include <linux/secgpio_dvs.h>
+#endif /* CONFIG_SEC_GPIO_DVS */
+#endif /* CONFIG_SEC_PM */
+
 #define SCLK_HZ (32768)
 #define PSCI_POWER_STATE(reset) (reset << 30)
 #define PSCI_AFFINITY_LEVEL(lvl) ((lvl & 0x3) << 24)
 #define MAX_LPM_CPUS (8)
-#ifdef CONFIG_DEEPSLEEP
-#define RPM_XO_DS_REQ  0x73646f78
-#define RPM_XO_DS_ID  0x0
-#define RPM_XO_DS_KEY  0x62616e45
-#define RPM_XO_DS_VALUE  0x0
-#endif
 
 enum {
 	MSM_LPM_LVL_DBG_SUSPEND_LIMITS = BIT(0),
@@ -119,15 +121,49 @@ static DEFINE_PER_CPU(struct hrtimer, biastimer);
 static struct lpm_debug *lpm_debug;
 static phys_addr_t lpm_debug_phys;
 static const int num_dbg_elements = 0x100;
-#ifdef CONFIG_DEEPSLEEP
-static bool deep_sleep_mask;
-#endif
+
 static void cluster_unprepare(struct lpm_cluster *cluster,
 		const struct cpumask *cpu, int child_idx, bool from_idle,
 		int64_t time, bool success);
 static void cluster_prepare(struct lpm_cluster *cluster,
 		const struct cpumask *cpu, int child_idx, bool from_idle,
 		int64_t time);
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+extern void sec_gpio_debug_print(void);
+extern void msm_gpio_print_enabled(void);
+extern void sec_debug_print_sleep_time(void);
+extern void sec_clock_debug_print_enabled(void);
+extern void debug_soc_stats_show(char *annotation);
+extern void debug_masterstats_show(char *annotation);
+extern int aop_lpm_mon_enable(bool enable);
+static int msm_pm_sleep_sec_debug;
+
+static int sedebug_set(const char *val, const struct kernel_param *kp)
+{
+	int ret = 0;
+	
+	ret = param_set_int(val, kp);
+	if (ret) {
+		pr_err("Unable to set %s: %d\n", __func__, ret);
+		return ret;
+	}
+
+	ret = aop_lpm_mon_enable(*(bool *)kp->arg);
+	if (ret) {
+		pr_err("Unable to set aop_lpm_mon_enable: %d\n", ret);
+		return ret;
+	}
+
+	return ret;
+}
+
+static struct kernel_param_ops secdebug_ops = {
+	.set = sedebug_set,
+	.get = param_get_int,
+};
+module_param_cb(secdebug, &secdebug_ops, &msm_pm_sleep_sec_debug, 0664);
+#endif /* CONFIG_SEC_PM */
 
 static bool sleep_disabled;
 module_param_named(sleep_disabled, sleep_disabled, bool, 0664);
@@ -785,7 +821,7 @@ static int cpu_power_select(struct cpuidle_device *dev,
 	}
 
 done_select:
-	trace_cpu_power_select(best_level, sleep_us, latency_us, cpu->bias);
+	trace_cpu_power_select(best_level, sleep_us, latency_us, 0);
 
 	trace_cpu_pred_select(idx_restrict_time ? 2 : (ipi_predicted ?
 				3 : (predicted ? 1 : 0)), predicted, htime);
@@ -1105,6 +1141,11 @@ static int cluster_configure(struct lpm_cluster *cluster, int idx,
 		return -EPERM;
 
 	if (idx != cluster->default_level) {
+#if IS_ENABLED(CONFIG_SEC_DEBUG_POWER_LOG)
+		sec_debug_cluster_lpm_log(cluster->cluster_name, idx,
+				cluster->num_children_in_sync.bits[0],
+				cluster->child_cpus.bits[0], from_idle, 1);
+#endif
 		update_debug_pc_event(CLUSTER_ENTER, idx,
 			cluster->num_children_in_sync.bits[0],
 			cluster->child_cpus.bits[0], from_idle);
@@ -1124,11 +1165,13 @@ static int cluster_configure(struct lpm_cluster *cluster, int idx,
 		 * system suspend. This debug information is useful to know
 		 * which resources are enabled and preventing system level
 		 * LPMs (XO and Vmin).
+
+		 * [SS Power] moved to lpm_suspend_prepare
+		 * if (!from_idle) {
+		 *	clock_debug_print_enabled();
+		 *	regulator_debug_print_enabled();
+		 * }
 		 */
-		if (!from_idle) {
-			clock_debug_print_enabled();
-			regulator_debug_print_enabled();
-		}
 
 		cpu = get_next_online_cpu(from_idle);
 		cpumask_copy(&cpumask, cpumask_of(cpu));
@@ -1278,7 +1321,11 @@ static void cluster_unprepare(struct lpm_cluster *cluster,
 	trace_cluster_exit(cluster->cluster_name, cluster->last_level,
 			cluster->num_children_in_sync.bits[0],
 			cluster->child_cpus.bits[0], from_idle);
-
+#if IS_ENABLED(CONFIG_SEC_DEBUG_POWER_LOG)
+	sec_debug_cluster_lpm_log(cluster->cluster_name, cluster->last_level,
+			cluster->num_children_in_sync.bits[0],
+			cluster->child_cpus.bits[0], from_idle, 0);
+#endif
 	last_level = cluster->last_level;
 	cluster->last_level = cluster->default_level;
 
@@ -1348,14 +1395,9 @@ static int get_cluster_id(struct lpm_cluster *cluster, int *aff_lvl,
 		 * We may have updated the broadcast timers, update
 		 * the wakeup value by reading the bc timer directly.
 		 */
-		if (level->notify_rpm) {
+		if (level->notify_rpm)
 			if (sys_pm_ops && sys_pm_ops->update_wakeup)
 				sys_pm_ops->update_wakeup(from_idle);
-#ifdef CONFIG_DEEPSLEEP
-			if (deep_sleep_mask)
-				state_id = state_id | (1 << 16);
-#endif
-		}
 		if (cluster->psci_mode_shift)
 			(*aff_lvl)++;
 	}
@@ -1496,8 +1538,19 @@ static int lpm_cpuidle_enter(struct cpuidle_device *dev,
 	if (idx == cpu->nlevels - 1)
 		program_rimps_timer(cpu);
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG_POWER_LOG)
+	sec_debug_cpu_lpm_log(dev->cpu, idx, 0, 1);
+#endif
+#if IS_ENABLED(CONFIG_SEC_DEBUG_SCHED_LOG)
+	sec_debug_sched_msg("+Idle(%s)", cpu->levels[idx].name);
+#endif
+
 	ret = psci_enter_sleep(cpu, idx, true);
 	success = (ret == 0);
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG_SCHED_LOG)
+	sec_debug_sched_msg("-Idle(%s)", cpu->levels[idx].name);
+#endif
 
 exit:
 	if (idx == cpu->nlevels - 1)
@@ -1510,6 +1563,9 @@ exit:
 	dev->last_residency = ktime_us_delta(ktime_get(), start);
 	update_history(dev, idx);
 	RCU_NONIDLE(trace_cpu_idle_exit(idx, ret));
+#if IS_ENABLED(CONFIG_SEC_DEBUG_POWER_LOG)
+	sec_debug_cpu_lpm_log(dev->cpu, idx, ret, 0);
+#endif
 	if (lpm_prediction && cpu->lpm_prediction) {
 		histtimer_cancel();
 		clusttimer_cancel();
@@ -1732,7 +1788,28 @@ static void register_cluster_lpm_stats(struct lpm_cluster *cl,
 static int lpm_suspend_prepare(void)
 {
 	suspend_in_progress = true;
+
+#if IS_ENABLED(CONFIG_SEC_GPIO_DVS)
+	gpio_dvs_check_sleepgpio();
+#endif
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+	if (msm_pm_sleep_sec_debug) {
+		msm_gpio_print_enabled();
+		sec_gpio_debug_print();
+	}
+#endif /* CONFIG_SEC_PM	 */
+
 	lpm_stats_suspend_enter();
+
+	/* [SS Power] moved from cluster_configure */
+#if IS_ENABLED(CONFIG_SEC_PM)	
+	sec_clock_debug_print_enabled();
+	regulator_debug_print_enabled();
+
+	debug_masterstats_show("entry");
+	debug_soc_stats_show("entry");
+#endif
 
 	return 0;
 }
@@ -1741,41 +1818,14 @@ static void lpm_suspend_wake(void)
 {
 	suspend_in_progress = false;
 	lpm_stats_suspend_exit();
-}
 
-#ifdef CONFIG_DEEPSLEEP
-static void clear_deep_sleep(void)
-{
-	deep_sleep_mask = false;
-}
+#if IS_ENABLED(CONFIG_SEC_PM)
+	sec_debug_print_sleep_time();
 
-static int send_deep_sleep_vote(void)
-{
-	uint32_t val = RPM_XO_DS_VALUE;
-	struct msm_rpm_kvp req = {
-		.key = RPM_XO_DS_KEY,
-		.data = (void *)&val,
-		.length = sizeof(val),
-	};
-
-	return msm_rpm_send_message(MSM_RPM_CTX_SLEEP_SET, RPM_XO_DS_REQ,
-					RPM_XO_DS_ID, &req, 1);
-}
-
-static int set_deep_sleep(suspend_state_t state)
-{
-	if (state == PM_SUSPEND_MEM) {
-		deep_sleep_mask = true;
-		return send_deep_sleep_vote();
-	}
-	return 0;
-}
-
-static int lpm_suspend_valid(suspend_state_t state)
-{
-	return state == PM_SUSPEND_STANDBY || state == PM_SUSPEND_MEM;
-}
+	debug_soc_stats_show("exit");
+	debug_masterstats_show("exit");
 #endif
+}
 
 static int lpm_suspend_enter(suspend_state_t state)
 {
@@ -1795,14 +1845,6 @@ static int lpm_suspend_enter(suspend_state_t state)
 		pr_err("Failed suspend\n");
 		return -EINVAL;
 	}
-#ifdef CONFIG_DEEPSLEEP
-	ret = set_deep_sleep(state);
-	if (ret) {
-		clear_deep_sleep();
-		return ret;
-	}
-
-#endif
 	cpu_prepare(lpm_cpu, idx, false);
 	cluster_prepare(cluster, cpumask, idx, false, 0);
 
@@ -1810,9 +1852,6 @@ static int lpm_suspend_enter(suspend_state_t state)
 	ret = psci_enter_sleep(lpm_cpu, idx, false);
 	success = (ret == 0);
 
-#ifdef CONFIG_DEEPSLEEP
-	clear_deep_sleep();
-#endif
 	cluster_unprepare(cluster, cpumask, idx, false, 0, success);
 	cpu_unprepare(lpm_cpu, idx, false);
 	return ret;
@@ -1820,11 +1859,7 @@ static int lpm_suspend_enter(suspend_state_t state)
 
 static const struct platform_suspend_ops lpm_suspend_ops = {
 	.enter = lpm_suspend_enter,
-#ifdef CONFIG_DEEPSLEEP
-	.valid = lpm_suspend_valid,
-#else
 	.valid = suspend_valid_only_mem,
-#endif
 	.prepare_late = lpm_suspend_prepare,
 	.wake = lpm_suspend_wake,
 };
@@ -1904,9 +1939,7 @@ static int lpm_probe(struct platform_device *pdev)
 		goto failed;
 	}
 
-#ifndef CONFIG_ARCH_LEMANS
 	suspend_set_ops(&lpm_suspend_ops);
-#endif
 	s2idle_set_ops(&lpm_s2idle_ops);
 
 	return 0;

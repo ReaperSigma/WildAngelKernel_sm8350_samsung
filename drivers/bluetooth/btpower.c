@@ -158,12 +158,6 @@ static struct bt_power bt_vreg_info_qca_auto = {
 	.num_vregs = 6,
 };
 
-// Regulator structure for QCC5100 BT SoC series
-static struct bt_power_vreg_data bt_vreg_info_qcc5xxx[] = {
-	{NULL, "qcom,bt-vdd-pa", 1700000, 1900000, 0, false, false,
-			{BT_VDD_PA_LDO, BT_VDD_PA_LDO_CURRENT}},
-};
-
 static struct bt_power bt_vreg_info_qca6174 = {
 	.compatible = "qcom,qca6174",
 	.vregs = bt_vregs_info_qca61x4_937x,
@@ -188,12 +182,6 @@ static struct bt_power bt_vreg_info_wcn6750 = {
 	.num_vregs = ARRAY_SIZE(bt_vregs_info_qca6xx0),
 };
 
-static struct bt_power bt_vreg_info_qcc5100 = {
-	.compatible = "qcom,qcc5100",
-	.vregs = bt_vreg_info_qcc5xxx,
-	.num_vregs = ARRAY_SIZE(bt_vreg_info_qcc5xxx),
-};
-
 static const struct of_device_id bt_power_match_table[] = {
 	{	.compatible = "qcom,qca6174", .data = &bt_vreg_info_qca6174},
 	{	.compatible = "qcom,wcn3990", .data = &bt_vreg_info_wcn399x},
@@ -201,7 +189,6 @@ static const struct of_device_id bt_power_match_table[] = {
 	{	.compatible = "qcom,qca6490", .data = &bt_vreg_info_qca6490},
 	{	.compatible = "qcom,wcn6750-bt", .data = &bt_vreg_info_wcn6750},
 	{	.compatible = "qcom,qca-auto-converged", .data = &bt_vreg_info_qca_auto},
-	{	.compatible = "qcom,qcc5100", .data = &bt_vreg_info_qcc5100},
 	{},
 };
 
@@ -250,7 +237,7 @@ static int bt_vreg_enable(struct bt_power_vreg_data *vreg)
 
 		rc = regulator_enable(vreg->reg);
 		if (rc < 0) {
-			pr_err("regulator_enable(%s) failed. rc=%d\n",
+			pr_err("%s: regulator_enable(%s) failed. rc=%d\n",
 					__func__, vreg->name, rc);
 			goto out;
 		}
@@ -526,11 +513,15 @@ static int bt_configure_gpios(int on)
 		msleep(50);
 		/*  Check  if  SW_CTRL  is  asserted  */
 		if  (bt_sw_ctrl_gpio  >=  0)  {
+#ifndef CONFIG_ARCH_JLQ
 			rc  =  gpio_direction_input(bt_sw_ctrl_gpio);
 			if  (rc)  {
 				pr_err("%s:SWCTRL Dir Set Problem:%d\n",
 					__func__, rc);
-			}  else  if  (!gpio_get_value(bt_sw_ctrl_gpio))  {
+			}  else if  (!gpio_get_value(bt_sw_ctrl_gpio))  {
+#else
+			if  (!gpio_get_value(bt_sw_ctrl_gpio))  {
+#endif
 				/* SW_CTRL not asserted, assert debug GPIO */
 				if  (bt_debug_gpio  >=  0)
 					assert_dbg_gpio = 1;
@@ -946,6 +937,13 @@ static int bt_power_populate_dt_pinfo(struct platform_device *pdev)
 		if (bt_power_pdata->bt_gpio_debug < 0)
 			pr_warn("bt-debug-gpio not provided in devicetree\n");
 
+        //SS HW gpio for xFEM detect
+		bt_power_pdata->gpio_xFEM_detect  =
+			of_get_named_gpio(pdev->dev.of_node,
+						"qcom,bt-fem-sel-gpio",  0);
+		if (bt_power_pdata->gpio_xFEM_detect < 0)
+			pr_warn("bt-fem-sel-gpio not provided in devicetree\n");
+
 		bt_power_pdata->xo_gpio_sys_rst =
 			of_get_named_gpio(pdev->dev.of_node,
 						"qcom,xo-reset-gpio", 0);
@@ -1014,10 +1012,13 @@ static int bt_power_probe(struct platform_device *pdev)
 	if (btpower_get_tcs_table_info(pdev, bt_power_pdata) < 0)
 		pr_err("%s: Failed to get TCS table info\n", __func__);
 
+	pr_warn("%s done.\n", __func__);
+
 	return 0;
 
 free_pdata:
 	kfree(bt_power_pdata);
+	bt_power_pdata = NULL;
 	return ret;
 }
 
@@ -1064,7 +1065,7 @@ static void  set_pwr_srcs_status(struct bt_power_vreg_data *handle)
 			(regulator_is_enabled(handle->reg))) {
 			ldo_vol = regulator_get_voltage(handle->reg);
 			PWR_SRC_STATUS_SET(ldo_index, ldo_vol);
-			pr_err("%s(%d) value(%d)\n", handle->name,
+			pr_err("%s(%p) value(%d)\n", handle->name,
 				handle, ldo_vol);
 		} else {
 			pr_err("%s:%s is_enabled: %d\n",
@@ -1096,6 +1097,11 @@ static long bt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int chipset_version = 0;
 	int itr, num_vregs;
 	struct bt_power_vreg_data *vreg_info = NULL;
+
+	if (bt_power_pdata == NULL) {
+		pr_err("%s: bt_power_pdata is null\n", __func__);
+		return 0;
+	}
 
 	switch (cmd) {
 	case BT_CMD_SLIM_TEST:
@@ -1155,6 +1161,7 @@ static long bt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		/*  Check  if  SW_CTRL  is  asserted  */
 		pr_info("BT_CMD_CHECK_SW_CTRL\n");
 		if (bt_power_pdata->bt_gpio_sw_ctrl > 0) {
+#ifndef CONFIG_ARCH_JLQ
 			PWR_SRC_STATUS_SET(BT_SW_CTRL_GPIO,
 				DEFAULT_INVALID_VALUE);
 			ret  =  gpio_direction_input(
@@ -1164,7 +1171,9 @@ static long bt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 					 __func__);
 				pr_err("%s:failed for SW_CTRL:%d\n",
 					__func__, ret);
-			} else {
+			} else
+#endif
+			{
 				PWR_SRC_STATUS_SET(BT_SW_CTRL_GPIO,
 					gpio_get_value(
 					bt_power_pdata->bt_gpio_sw_ctrl));
@@ -1199,6 +1208,26 @@ static long bt_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		pr_err("%s: BT_CMD_SET_IPA_TCS_INFO\n", __func__);
 		btpower_enable_ipa_vreg(btpdev, bt_power_pdata);
 		break;
+
+//SS HW gpio for xFEM detect
+	case BT_CMD_GET_HW_GPIO_INFO:
+		if (bt_power_pdata->gpio_xFEM_detect > 0) {
+			ret  =  gpio_direction_input(bt_power_pdata->gpio_xFEM_detect);
+			if (ret) {
+				pr_err("%s:failed to gpio_direction_input xFEM :%d\n",	__func__, ret);
+			} else {
+				int gpio_val =0 ;
+				gpio_val = gpio_get_value(bt_power_pdata->gpio_xFEM_detect);
+				pr_err("BT_CMD_GET_HW_GPIO_INFO bt-fem-sel-gpio(%d) value(%d)\n",
+						bt_power_pdata->gpio_xFEM_detect, gpio_val);
+				if (copy_to_user((void __user *)arg,  &gpio_val, sizeof(gpio_val))) {
+					pr_err("%s: copy to user failed\n", __func__);
+					ret = -EFAULT;
+				}
+			}
+		} 
+		break;
+
 	default:
 		return -ENOIOCTLCMD;
 	}

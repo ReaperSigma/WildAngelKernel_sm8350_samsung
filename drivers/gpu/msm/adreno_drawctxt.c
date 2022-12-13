@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2002,2007-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2002,2007-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -144,8 +144,11 @@ int adreno_drawctxt_wait(struct adreno_device *adreno_dev,
 	int ret;
 	long ret_temp;
 
-	if (kgsl_context_detached(context))
+	if (kgsl_context_detached(context)) {
+		dev_err(device->dev,
+			"return -ENOENT at <%s: %d>", __FILE__, __LINE__);
 		return -ENOENT;
+	}
 
 	if (kgsl_context_invalid(context))
 		return -EDEADLK;
@@ -183,8 +186,11 @@ int adreno_drawctxt_wait(struct adreno_device *adreno_dev,
 
 
 	/* Return -EINVAL if the context was detached while we were waiting */
-	if (kgsl_context_detached(context))
+	if (kgsl_context_detached(context)) {
+		dev_err(device->dev,
+			"ret = -ENOENT at <%s: %d>", __FILE__, __LINE__);
 		ret = -ENOENT;
+	}
 
 done:
 	trace_adreno_drawctxt_wait_done(-1, context->id, timestamp, ret);
@@ -275,8 +281,6 @@ void adreno_drawctxt_invalidate(struct kgsl_device *device,
 	kgsl_sharedmem_writel(device->memstore,
 			KGSL_MEMSTORE_OFFSET(context->id, eoptimestamp),
 			drawctxt->timestamp);
-
-	adreno_drawctxt_write_shadow_timestamp(context, drawctxt->timestamp);
 
 	/* Get rid of commands still waiting in the queue */
 	count = drawctxt_detach_drawobjs(drawctxt, list);
@@ -484,8 +488,6 @@ static void wait_for_timestamp_rb(struct kgsl_device *device,
 			KGSL_MEMSTORE_OFFSET(context->id, eoptimestamp),
 			drawctxt->timestamp);
 
-	adreno_drawctxt_write_shadow_timestamp(context, drawctxt->timestamp);
-
 	adreno_profile_process_results(adreno_dev);
 
 	mutex_unlock(&device->mutex);
@@ -554,19 +556,11 @@ void adreno_drawctxt_detach(struct kgsl_context *context)
 void adreno_drawctxt_destroy(struct kgsl_context *context)
 {
 	struct adreno_context *drawctxt;
-	struct kgsl_mem_entry *entry;
 
 	if (context == NULL)
 		return;
 
 	drawctxt = ADRENO_CONTEXT(context);
-	entry = drawctxt->shadow_timestamp_mem;
-	if (entry) {
-		kgsl_memdesc_unmap(&entry->memdesc);
-		kgsl_mem_entry_put(entry);
-		drawctxt->shadow_timestamp_mem = NULL;
-	}
-
 	kfree(drawctxt);
 }
 
@@ -610,15 +604,21 @@ int adreno_drawctxt_switch(struct adreno_device *adreno_dev,
 	 * the pt switch commands get executed by the GPU, leading to
 	 * pagefaults.
 	 */
-	if (drawctxt != NULL && kgsl_context_detached(&drawctxt->base))
+	if (drawctxt != NULL && kgsl_context_detached(&drawctxt->base)) {
+		dev_err(device->dev,
+			"return -ENOENT at <%s: %d>", __FILE__, __LINE__);
 		return -ENOENT;
+	}
 
 	trace_adreno_drawctxt_switch(rb, drawctxt);
 
 	/* Get a refcount to the new instance */
 	if (drawctxt) {
-		if (!_kgsl_context_get(&drawctxt->base))
+		if (!_kgsl_context_get(&drawctxt->base)) {
+			dev_err(device->dev,
+				"return -ENOENT at <%s: %d>", __FILE__, __LINE__);
 			return -ENOENT;
+		}
 
 		new_pt = drawctxt->base.proc_priv->pagetable;
 	} else {
@@ -641,67 +641,4 @@ int adreno_drawctxt_switch(struct adreno_device *adreno_dev,
 
 	rb->drawctxt_active = drawctxt;
 	return 0;
-}
-
-int adreno_drawctxt_set_shadow_mem(struct kgsl_device_private *dev_priv,
-	struct kgsl_context *context, unsigned int gpuobj_id)
-{
-	struct adreno_context *drawctxt;
-	struct kgsl_process_private *proc_priv = dev_priv->process_priv;
-	struct kgsl_mem_entry *entry;
-	int ret = 0;
-
-	if (!context)
-		return -EINVAL;
-
-	entry = kgsl_sharedmem_find_id(proc_priv, gpuobj_id);
-	if (!entry)
-		return -EINVAL;
-
-	entry->memdesc.hostptr = kgsl_memdesc_map(&entry->memdesc);
-	if (!entry->memdesc.hostptr) {
-		ret = -EFAULT;
-		goto done;
-	}
-
-	drawctxt = ADRENO_CONTEXT(context);
-	spin_lock(&drawctxt->lock);
-	/* Only allow to set once before any submission */
-	if (drawctxt->active_time || drawctxt->shadow_timestamp_mem) {
-		ret = -EBUSY;
-		goto unlock;
-	}
-
-	drawctxt->shadow_timestamp_mem = entry;
-
-unlock:
-	spin_unlock(&drawctxt->lock);
-done:
-	if (ret) {
-		if (entry) {
-			if (entry->memdesc.hostptr)
-				kgsl_memdesc_unmap(&entry->memdesc);
-			kgsl_mem_entry_put(entry);
-		}
-	}
-	return ret;
-}
-
-void adreno_drawctxt_write_shadow_timestamp(struct kgsl_context *context,
-				unsigned int timestamp)
-{
-	struct adreno_context *drawctxt = ADRENO_CONTEXT(context);
-	struct kgsl_memdesc *memdesc = &drawctxt->shadow_timestamp_mem->memdesc;
-
-	if (!drawctxt->shadow_timestamp_mem)
-		return;
-
-	memdesc = &drawctxt->shadow_timestamp_mem->memdesc;
-	if (memdesc->hostptr) {
-		kgsl_sharedmem_writel(memdesc,
-			DRAWCTXT_SHADOW_OFFSET(soptimestamp), timestamp);
-
-		kgsl_sharedmem_writel(memdesc,
-			DRAWCTXT_SHADOW_OFFSET(eoptimestamp), timestamp);
-	}
 }

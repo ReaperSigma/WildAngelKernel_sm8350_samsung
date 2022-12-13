@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2008-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <uapi/linux/msm_ion.h>
@@ -21,7 +20,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/security.h>
 #include <linux/sort.h>
-#include <linux/string_helpers.h>
 #include <soc/qcom/boot_stats.h>
 
 #include "kgsl_compat.h"
@@ -347,8 +345,6 @@ static void kgsl_destroy_ion(struct kgsl_memdesc *memdesc)
 
 	if (meta != NULL) {
 		remove_dmabuf_list(meta);
-		dma_buf_unmap_attachment(meta->attach, meta->table,
-			DMA_BIDIRECTIONAL);
 		dma_buf_detach(meta->dmabuf, meta->attach);
 		dma_buf_put(meta->dmabuf);
 		kfree(meta);
@@ -357,58 +353,8 @@ static void kgsl_destroy_ion(struct kgsl_memdesc *memdesc)
 	memdesc->sgt = NULL;
 }
 
-static int kgsl_dmabuf_map_kernel(struct kgsl_memdesc *memdesc)
-{
-	struct kgsl_mem_entry *entry = container_of(memdesc,
-		struct kgsl_mem_entry, memdesc);
-	struct kgsl_dma_buf_meta *meta = entry->priv_data;
-	int ret = 0;
-
-	mutex_lock(&kgsl_driver.kernel_map_mutex);
-	if (!(memdesc->hostptr) && meta && meta->dmabuf) {
-		memdesc->hostptr = dma_buf_vmap(meta->dmabuf);
-		if (memdesc->hostptr) {
-			dma_buf_begin_cpu_access(meta->dmabuf, DMA_BIDIRECTIONAL);
-			KGSL_STATS_ADD(memdesc->size,
-				&kgsl_driver.stats.vmalloc,
-				&kgsl_driver.stats.vmalloc_max);
-		} else
-			ret = -ENOMEM;
-	}
-	if (memdesc->hostptr)
-		memdesc->hostptr_count++;
-
-	mutex_unlock(&kgsl_driver.kernel_map_mutex);
-
-	return ret;
-}
-
-static void kgsl_dmabuf_unmap_kernel(struct kgsl_memdesc *memdesc)
-{
-	struct kgsl_mem_entry *entry = container_of(memdesc,
-		struct kgsl_mem_entry, memdesc);
-	struct kgsl_dma_buf_meta *meta = entry->priv_data;
-
-	mutex_lock(&kgsl_driver.kernel_map_mutex);
-	if (memdesc->hostptr && meta && meta->dmabuf) {
-		memdesc->hostptr_count--;
-		if (memdesc->hostptr_count)
-			goto done;
-
-		dma_buf_end_cpu_access(meta->dmabuf, DMA_BIDIRECTIONAL);
-		dma_buf_vunmap(meta->dmabuf, memdesc->hostptr);
-		atomic_long_sub(memdesc->size, &kgsl_driver.stats.vmalloc);
-		memdesc->hostptr = NULL;
-	}
-
-done:
-	mutex_unlock(&kgsl_driver.kernel_map_mutex);
-}
-
 static const struct kgsl_memdesc_ops kgsl_dmabuf_ops = {
 	.free = kgsl_destroy_ion,
-	.map_kernel = kgsl_dmabuf_map_kernel,
-	.unmap_kernel = kgsl_dmabuf_unmap_kernel,
 };
 #endif
 
@@ -540,6 +486,7 @@ static int kgsl_mem_entry_attach_process(struct kgsl_device *device,
 
 	ret = kgsl_mem_entry_track_gpuaddr(device, process, entry);
 	if (ret) {
+		pr_err("kgsl_mem_entry_track_gpuaddr failed, %d\n", ret);
 		kgsl_process_private_put(process);
 		return ret;
 	}
@@ -552,6 +499,7 @@ static int kgsl_mem_entry_attach_process(struct kgsl_device *device,
 	idr_preload_end();
 
 	if (id < 0) {
+		pr_err("idr_alloc failed, %d\n", id);
 		if (!kgsl_memdesc_use_cpu_map(&entry->memdesc))
 			kgsl_mmu_put_gpuaddr(&entry->memdesc);
 		kgsl_process_private_put(process);
@@ -569,8 +517,10 @@ static int kgsl_mem_entry_attach_process(struct kgsl_device *device,
 		ret = kgsl_mmu_map(entry->memdesc.pagetable,
 				&entry->memdesc);
 
-		if (ret)
+		if (ret) {
+			pr_err("kgsl_mmu_map failed, %d\n", ret);
 			kgsl_mem_entry_detach_process(entry);
+		}
 	}
 
 	kgsl_memfree_purge(entry->memdesc.pagetable, entry->memdesc.gpuaddr,
@@ -896,6 +846,9 @@ struct kgsl_device *kgsl_get_device(int dev_idx)
 	mutex_unlock(&kgsl_driver.devlock);
 	return ret;
 }
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+EXPORT_SYMBOL(kgsl_get_device);
+#endif
 
 static struct kgsl_device *kgsl_get_minor(int minor)
 {
@@ -956,7 +909,6 @@ static void kgsl_destroy_process_private(struct kref *kref)
 	write_unlock(&kgsl_driver.proclist_lock);
 	mutex_unlock(&kgsl_driver.process_mutex);
 
-	kfree(private->cmdline);
 	put_pid(private->pid);
 	idr_destroy(&private->mem_idr);
 	idr_destroy(&private->syncsource_idr);
@@ -998,6 +950,185 @@ struct kgsl_process_private *kgsl_process_private_find(pid_t pid)
 	return private;
 }
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+extern void kgsl_svm_addr_hole_log(struct kgsl_device *device, pid_t pid, uint64_t memflags);
+
+#define KGSL_PRCO_PATH "/sys/kernel/debug/kgsl/proc"
+#define KGSL_PROC_PID_MEM_PATH "mem"
+
+void kgsl_svm_addr_mapping_check(pid_t pid, unsigned long fault_addr)
+{
+	struct kgsl_process_private *private = NULL;
+	struct kgsl_mem_entry *entry = NULL;
+	struct kgsl_memdesc *m = NULL;
+	int id = 0;
+	int mapped = 0;
+
+	private = kgsl_process_private_find(pid);
+	if (IS_ERR_OR_NULL(private)) {
+		pr_err("%s : smmu fault pid killed\n", __func__);
+		return;
+	}
+
+	spin_lock(&private->mem_lock);
+	for (entry = idr_get_next(&private->mem_idr, &id); entry;
+		id++, entry = idr_get_next(&private->mem_idr, &id)) {
+		m = &entry->memdesc;
+
+		if ((fault_addr >= m->gpuaddr) &&
+			(fault_addr < (m->gpuaddr + m->size))) {
+#if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+			pr_err("%s pid : %d fault_addr : 0x%lx m->gpuaddr : 0x%lx m->size : 0x%lx\n", __func__, pid, fault_addr,
+					m->gpuaddr, m->size);
+#endif
+			mapped = 1;
+			break;
+		}
+	}
+	spin_unlock(&private->mem_lock);
+
+	kgsl_process_private_put(private);
+
+#if defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+	pr_err("%s pid : %d mapped : %d\n", __func__, pid, mapped);
+#else
+	pr_err("%s pid : %d fault_addr : 0x%lx mapped : %d\n", __func__, pid, fault_addr, mapped);
+#endif
+}
+
+#if defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+void kgsl_svm_addr_mapping_log(struct kgsl_device *device, pid_t pid)
+{
+	pr_debug("%s : nothing to do\n", __func__);
+}
+#else
+static void kgsl_svm_addr_log_print(struct kgsl_process_private *private)
+{
+	struct kgsl_mem_entry *entry = NULL;
+	struct kgsl_memdesc *m = NULL;
+	char usage[16];
+	int id = 0;
+
+	if(!private) {
+		pr_err("%s private is null\n", __func__);
+		return;
+	}
+	pr_err("%s : %16s %16s %16s %5s %16s\n", __func__,
+			"gpuaddr", "useraddr", "size", "id", "usage");
+
+	spin_lock(&private->mem_lock);
+
+	for (entry = idr_get_next(&private->mem_idr, &id); entry;
+		id++, entry = idr_get_next(&private->mem_idr, &id)) {
+		m = &entry->memdesc;
+		kgsl_get_memory_usage(usage, sizeof(usage), m->flags);
+
+		pr_err("%s : %p %16llu %5d %16s\n", __func__,
+			(uint64_t *)(uintptr_t) m->gpuaddr,
+			m->size, entry->id, usage);
+	}
+
+	spin_unlock(&private->mem_lock);
+}
+
+void kgsl_svm_addr_mapping_log(struct kgsl_device *device, pid_t pid)
+{
+/*
+	ERROR: "vfs_read" [drivers/gpu/msm/msm_kgsl.ko] undefined!
+*/
+#if 0
+	struct file *fp;
+	mm_segment_t old_fs;
+	long nread;
+	long buf_index, start_index, print_size;
+	char *buf = NULL;
+	char *print_buf = NULL;
+
+	char dir_path[SZ_64] = {0, };
+
+	struct kgsl_process_private *private = NULL;
+
+	static DEFINE_RATELIMIT_STATE(_rs,
+					DEFAULT_RATELIMIT_INTERVAL,
+					DEFAULT_RATELIMIT_BURST);
+
+	private = kgsl_process_private_find(pid);
+	if (IS_ERR_OR_NULL(private)) {
+		pr_err("%s : smmu fault pid killed\n", __func__);
+		return;
+	}
+
+	buf = kmalloc(SZ_4K, GFP_KERNEL);
+	if (IS_ERR_OR_NULL(buf)) {
+		kgsl_process_private_put(private);
+		pr_err("%s : buf allocation fail SZ_4K\n", __func__);
+		return;
+	}
+
+	print_buf = kmalloc(SZ_256, GFP_KERNEL);
+	if (IS_ERR_OR_NULL(print_buf)) {
+		kfree(buf);
+		kgsl_process_private_put(private);
+		pr_err("%s : buf allocation fail SZ_256\n", __func__);
+		return;
+	}
+
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+
+	sprintf(dir_path, "%s/%d/%s", KGSL_PRCO_PATH, private->pid, KGSL_PROC_PID_MEM_PATH);
+
+	fp = filp_open(dir_path, O_RDONLY, 0444);
+	if (IS_ERR(fp)) {
+		if (__ratelimit(&_rs)) {
+			pr_err("%s %s open fail err : %ld\n", __func__, dir_path, PTR_ERR(fp));
+			kgsl_svm_addr_log_print(private);
+		}
+		goto end;
+	}
+
+	pr_err("%s : %s \n", __func__, dir_path);
+
+	nread = vfs_read(fp, (char __user *)buf, SZ_2K + SZ_1K, &fp->f_pos);
+	while (nread > 0) {
+		for (start_index = buf_index = 0; buf_index < nread;buf_index++) {
+			/* 0x0A means LF(line feed) */
+			if (buf[buf_index] == 0x0A) {
+				print_size = buf_index - start_index;
+				memcpy(print_buf, buf + start_index, print_size);
+				start_index = buf_index + 1;
+				print_buf[print_size] = '\0';
+
+				pr_err("%s : %s \n", __func__, print_buf);
+
+			}
+		}
+
+		print_size = buf_index - start_index;
+		memcpy(print_buf, buf + start_index, print_size);
+		print_buf[print_size] = '\0';
+
+		pr_err("%s : %s \n", __func__, print_buf);
+
+		nread = vfs_read(fp, (char __user *)buf, SZ_2K + SZ_1K, &fp->f_pos);
+	}
+
+	filp_close(fp, current->files);
+
+end:
+	set_fs(old_fs);
+
+	kfree(buf);
+	kfree(print_buf);
+	kgsl_process_private_put(private);
+#else
+	struct kgsl_process_private *private = NULL;
+	kgsl_svm_addr_log_print(private);
+#endif
+}
+#endif
+#endif
+
 static struct kgsl_process_private *kgsl_process_private_new(
 		struct kgsl_device *device)
 {
@@ -1037,7 +1168,6 @@ static struct kgsl_process_private *kgsl_process_private_new(
 
 	private->pid = cur_pid;
 	get_task_comm(private->comm, current->group_leader);
-	private->cmdline = kstrdup_quotable_cmdline(current, GFP_KERNEL);
 
 	spin_lock_init(&private->mem_lock);
 	spin_lock_init(&private->syncsource_lock);
@@ -1309,8 +1439,11 @@ static int kgsl_open(struct inode *inodep, struct file *filep)
 	filep->private_data = dev_priv;
 
 	result = kgsl_open_device(device);
-	if (result)
+	if (result) {
+		dev_err(device->dev,
+			"kgsl_open_device() failed w/ result = %d\n", result);
 		goto err;
+	}
 
 	/*
 	 * Get file (per process) private struct. This must be done
@@ -1319,6 +1452,8 @@ static int kgsl_open(struct inode *inodep, struct file *filep)
 	 */
 	dev_priv->process_priv = kgsl_process_private_open(device);
 	if (IS_ERR(dev_priv->process_priv)) {
+		dev_err(device->dev,
+			"kgsl_process_private_open() failed\n");
 		result = PTR_ERR(dev_priv->process_priv);
 		kgsl_close_device(device);
 		goto err;
@@ -1330,6 +1465,7 @@ err:
 		kfree(dev_priv);
 		pm_runtime_put(&device->pdev->dev);
 	}
+
 	return result;
 }
 
@@ -1355,9 +1491,9 @@ kgsl_sharedmem_find(struct kgsl_process_private *private, uint64_t gpuaddr)
 	if (!private)
 		return NULL;
 
-	if (!kgsl_mmu_gpuaddr_in_range(private->pagetable, gpuaddr, 0) &&
+	if (!kgsl_mmu_gpuaddr_in_range(private->pagetable, gpuaddr) &&
 		!kgsl_mmu_gpuaddr_in_range(
-			private->pagetable->mmu->securepagetable, gpuaddr, 0))
+			private->pagetable->mmu->securepagetable, gpuaddr))
 		return NULL;
 
 	spin_lock(&private->mem_lock);
@@ -2149,7 +2285,7 @@ long kgsl_ioctl_gpu_aux_command(struct kgsl_device_private *dev_priv,
 
 	cmdlist = u64_to_user_ptr(param->cmdlist);
 
-	 /* Create a draw object for KGSL_GPU_AUX_COMMAND_TIMELINE */
+	/* Create a draw object for KGSL_GPU_AUX_COMMAND_TIMELINE */
 	if (copy_struct_from_user(&generic, sizeof(generic),
 		cmdlist, param->cmdsize)) {
 		ret = -EFAULT;
@@ -2173,7 +2309,7 @@ long kgsl_ioctl_gpu_aux_command(struct kgsl_device_private *dev_priv,
 			u64_to_user_ptr(generic.priv), generic.size);
 		if (ret)
 			goto err;
-
+			
 	} else {
 		ret = -EINVAL;
 		goto err;
@@ -2573,15 +2709,6 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, unsigned long useraddr)
 
 	ret = sg_alloc_table_from_pages(memdesc->sgt, pages, npages,
 					0, memdesc->size, GFP_KERNEL);
-
-	if (ret)
-		goto out;
-
-	ret = kgsl_cache_range_op(memdesc, 0, memdesc->size,
-			KGSL_CACHE_OP_FLUSH);
-
-	if (ret)
-		sg_free_table(memdesc->sgt);
 out:
 	if (ret) {
 		for (i = 0; i < npages; i++)
@@ -2636,6 +2763,15 @@ static int kgsl_setup_anon_useraddr(struct kgsl_pagetable *pagetable,
 }
 
 #ifdef CONFIG_DMA_SHARED_BUFFER
+static int match_file(const void *p, struct file *file, unsigned int fd)
+{
+	/*
+	 * We must return fd + 1 because iterate_fd stops searching on
+	 * non-zero return, but 0 is a valid fd.
+	 */
+	return (p == file) ? (fd + 1) : 0;
+}
+
 static void _setup_cache_mode(struct kgsl_mem_entry *entry,
 		struct vm_area_struct *vma)
 {
@@ -2672,6 +2808,8 @@ static int kgsl_setup_dmabuf_useraddr(struct kgsl_device *device,
 	vma = find_vma(current->mm, hostptr);
 
 	if (vma && vma->vm_file) {
+		int fd;
+
 		ret = check_vma_flags(vma, entry->memdesc.flags);
 		if (ret) {
 			up_read(&current->mm->mmap_sem);
@@ -2687,10 +2825,15 @@ static int kgsl_setup_dmabuf_useraddr(struct kgsl_device *device,
 			return -EFAULT;
 		}
 
-		/* Take a refcount because dma_buf_put() decrements the refcount */
-		get_file(vma->vm_file);
-
-		dmabuf = vma->vm_file->private_data;
+		/* Look for the fd that matches this the vma file */
+		fd = iterate_fd(current->files, 0, match_file, vma->vm_file);
+		if (fd != 0) {
+			dmabuf = dma_buf_get(fd - 1);
+			if (IS_ERR(dmabuf)) {
+				up_read(&current->mm->mmap_sem);
+				return PTR_ERR(dmabuf);
+			}
+		}
 	}
 
 	if (!dmabuf) {
@@ -3054,6 +3197,8 @@ static int kgsl_setup_dma_buf(struct kgsl_device *device,
 		goto out;
 	}
 
+	dma_buf_unmap_attachment(attach, sg_table, DMA_BIDIRECTIONAL);
+
 	meta->table = sg_table;
 	entry->priv_data = meta;
 	entry->memdesc.sgt = sg_table;
@@ -3216,7 +3361,7 @@ long kgsl_ioctl_map_user_mem(struct kgsl_device_private *dev_priv,
 				| KGSL_MEMFLAGS_SECURE
 				| KGSL_MEMFLAGS_IOCOHERENT);
 
-	if (is_compat_task())
+	if (kgsl_is_compat_task())
 		flags |= KGSL_MEMFLAGS_FORCE_32BIT;
 
 	kgsl_memdesc_init(dev_priv->device, &entry->memdesc, flags);
@@ -3588,10 +3733,6 @@ struct kgsl_mem_entry *gpumem_alloc_entry(
 	struct kgsl_mmu *mmu = &dev_priv->device->mmu;
 	unsigned int align;
 
-	/* For 32-bit kernel world nothing to do with this flag */
-	if (BITS_PER_LONG == 32)
-		flags &= ~((uint64_t) KGSL_MEMFLAGS_FORCE_32BIT);
-
 	flags &= KGSL_MEMFLAGS_GPUREADONLY
 		| KGSL_CACHEMODE_MASK
 		| KGSL_MEMTYPE_MASK
@@ -3630,8 +3771,10 @@ struct kgsl_mem_entry *gpumem_alloc_entry(
 	flags = kgsl_filter_cachemode(flags);
 
 	entry = kgsl_mem_entry_create();
-	if (entry == NULL)
+	if (entry == NULL) {
+		pr_err("kgsl_mem_entry_create failed\n");
 		return ERR_PTR(-ENOMEM);
+	}
 
 	if (IS_ENABLED(CONFIG_QCOM_KGSL_IOCOHERENCY_DEFAULT) &&
 		kgsl_cachemode_is_cached(flags))
@@ -3687,11 +3830,22 @@ long kgsl_ioctl_gpuobj_alloc(struct kgsl_device_private *dev_priv,
 {
 	struct kgsl_gpuobj_alloc *param = data;
 	struct kgsl_mem_entry *entry;
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	struct kgsl_process_private *private = dev_priv->process_priv;
+	uint64_t debug_size;
+	debug_size = param->size >> 10;
+
+	if(debug_size > 200000) {
+		pr_err("kgsl: huge memory %lldKB is requested from pid = %d comm = %s\n", debug_size, private->pid, private->comm);
+	}
+#endif
 
 	entry = gpumem_alloc_entry(dev_priv, param->size, param->flags);
 
-	if (IS_ERR(entry))
+	if (IS_ERR(entry)) {
+		pr_err("kgsl_ioctl_gpuobj_alloc fail");
 		return PTR_ERR(entry);
+	}
 
 	copy_metadata(entry, param->metadata, param->metadata_len);
 
@@ -3716,7 +3870,7 @@ long kgsl_ioctl_gpumem_alloc(struct kgsl_device_private *dev_priv,
 	/* Legacy functions doesn't support these advanced features */
 	flags &= ~((uint64_t) KGSL_MEMFLAGS_USE_CPU_MAP);
 
-	if (is_compat_task())
+	if (kgsl_is_compat_task())
 		flags |= KGSL_MEMFLAGS_FORCE_32BIT;
 
 	entry = gpumem_alloc_entry(dev_priv, (uint64_t) param->size, flags);
@@ -3741,7 +3895,7 @@ long kgsl_ioctl_gpumem_alloc_id(struct kgsl_device_private *dev_priv,
 	struct kgsl_mem_entry *entry;
 	uint64_t flags = param->flags;
 
-	if (is_compat_task())
+	if (kgsl_is_compat_task())
 		flags |= KGSL_MEMFLAGS_FORCE_32BIT;
 
 	entry = gpumem_alloc_entry(dev_priv, (uint64_t) param->size, flags);
@@ -3887,30 +4041,6 @@ long kgsl_ioctl_timestamp_event(struct kgsl_device_private *dev_priv,
 	}
 
 	return ret;
-}
-
-long kgsl_ioctl_drawctxt_set_shadow_mem(struct kgsl_device_private *dev_priv,
-					unsigned int cmd, void *data)
-{
-	struct kgsl_drawctxt_set_shadow_mem *param = data;
-	struct kgsl_device *device = dev_priv->device;
-	long result;
-	struct kgsl_context *context;
-
-	/* Separate timestamp shadow memory is not supported
-	 * until it is enabled in GMU
-	 */
-	if (test_bit(GMU_DISPATCH, &device->gmu_core.flags))
-		return -EOPNOTSUPP;
-
-	context = kgsl_context_get_owner(dev_priv, param->drawctxt_id);
-	if (!context)
-		return -EINVAL;
-
-	result = device->ftbl->drawctxt_set_shadow_mem(dev_priv, context,
-						param->gpuobj_id);
-	kgsl_context_put(context);
-	return result;
 }
 
 static vm_fault_t
@@ -4145,21 +4275,17 @@ static unsigned long get_svm_unmapped_area(struct file *file,
 	unsigned long ret, iova;
 	u64 start = 0, end = 0;
 	struct vm_area_struct *vma;
-	bool hint_valid = true;
-
-	if (addr > current->mm->mmap_base)
-		hint_valid = false;
 
 	if (flags & MAP_FIXED) {
 		/* Even fixed addresses need to obey alignment */
-		if (!hint_valid || !IS_ALIGNED(addr, align))
+		if (!IS_ALIGNED(addr, align))
 			return -EINVAL;
 
 		return set_svm_area(file, entry, addr, len, flags);
 	}
 
 	/* If a hint was provided, try to use that first */
-	if (addr && hint_valid) {
+	if (addr) {
 		if (IS_ALIGNED(addr, align)) {
 			ret = set_svm_area(file, entry, addr, len, flags);
 			if (!IS_ERR_VALUE(ret))
@@ -4170,11 +4296,6 @@ static unsigned long get_svm_unmapped_area(struct file *file,
 	/* Get the SVM range for the current process */
 	if (kgsl_mmu_svm_range(private->pagetable, &start, &end,
 		entry->memdesc.flags))
-		return -ERANGE;
-
-	/* clamp the range based on the CPU's requirements */
-	end = min_t(uint64_t, end, current->mm->mmap_base);
-	if (start >= end)
 		return -ERANGE;
 
 	/* Find the first gap in the iova map */
@@ -4247,6 +4368,12 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 					       "_get_svm_area: pid %d addr %lx pgoff %lx len %ld failed error %d\n",
 					       pid_nr(private->pid), addr, pgoff, len,
 					       (int) val);
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+		if (IS_ERR_VALUE(val)) {
+			kgsl_svm_addr_mapping_log(device, pid_nr(private->pid));
+			kgsl_svm_addr_hole_log(device, pid_nr(private->pid), entry->memdesc.flags);
+		}
+#endif
 	}
 
 	kgsl_mem_entry_put(entry);
@@ -4361,7 +4488,6 @@ struct kgsl_driver kgsl_driver  = {
 	.proclist_lock = __RW_LOCK_UNLOCKED(kgsl_driver.proclist_lock),
 	.ptlock = __SPIN_LOCK_UNLOCKED(kgsl_driver.ptlock),
 	.devlock = __MUTEX_INITIALIZER(kgsl_driver.devlock),
-	.kernel_map_mutex = __MUTEX_INITIALIZER(kgsl_driver.kernel_map_mutex),
 	/*
 	 * Full cache flushes are faster than line by line on at least
 	 * 8064 and 8974 once the region to be flushed is > 16mb.
@@ -4383,9 +4509,6 @@ struct kgsl_driver kgsl_driver  = {
 static void _unregister_device(struct kgsl_device *device)
 {
 	int minor;
-
-	if (device->gpu_sysfs_kobj.state_initialized)
-		kobject_del(&device->gpu_sysfs_kobj);
 
 	mutex_lock(&kgsl_driver.devlock);
 	for (minor = 0; minor < ARRAY_SIZE(kgsl_driver.devp); minor++) {
@@ -4578,6 +4701,12 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	device->pwrctrl.interrupt_num = status;
 	disable_irq(device->pwrctrl.interrupt_num);
 
+	rwlock_init(&device->context_lock);
+	spin_lock_init(&device->submit_lock);
+
+	idr_init(&device->timelines);
+	spin_lock_init(&device->timelines_lock);
+
 	device->events_wq = alloc_workqueue("kgsl-events",
 		WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_SYSFS | WQ_HIGHPRI, 0);
 
@@ -4591,12 +4720,6 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	status = kgsl_mmu_probe(device);
 	if (status != 0)
 		goto error_pwrctrl_close;
-
-	rwlock_init(&device->context_lock);
-	spin_lock_init(&device->submit_lock);
-
-	idr_init(&device->timelines);
-	spin_lock_init(&device->timelines_lock);
 
 	kgsl_device_debugfs_init(device);
 
@@ -4631,6 +4754,9 @@ void kgsl_device_platform_remove(struct kgsl_device *device)
 
 	kgsl_device_snapshot_close(device);
 
+	if (device->gpu_sysfs_kobj.state_initialized)
+		kobject_del(&device->gpu_sysfs_kobj);
+
 	idr_destroy(&device->context_idr);
 	idr_destroy(&device->timelines);
 
@@ -4649,6 +4775,27 @@ void kgsl_device_platform_remove(struct kgsl_device *device)
 	kgsl_device_debugfs_close(device);
 	_unregister_device(device);
 }
+
+#ifdef CONFIG_QCOM_KGSL
+static int kgsl_sharedmem_size_notifier(struct notifier_block *nb,
+					unsigned long action, void *data)
+{
+	struct seq_file *s;
+
+	s = (struct seq_file *)data;
+	if (s != NULL)
+		seq_printf(s, "KgslSharedmem:  %8lu kB\n",
+			atomic_long_read(&kgsl_driver.stats.page_alloc) >> 10);
+	else
+		pr_cont("KgslSharedmem:%lukB ",
+			atomic_long_read(&kgsl_driver.stats.page_alloc) >> 10);
+	return 0;
+}
+
+static struct notifier_block kgsl_sharedmem_size_nb = {
+	.notifier_call = kgsl_sharedmem_size_notifier,
+};
+#endif
 
 void kgsl_core_exit(void)
 {
@@ -4687,6 +4834,9 @@ void kgsl_core_exit(void)
 
 	kfree(memfree.list);
 	memset(&memfree, 0, sizeof(memfree));
+#ifdef CONFIG_QCOM_KGSL
+	show_mem_extra_notifier_unregister(&kgsl_sharedmem_size_nb);
+#endif
 
 	unregister_chrdev_region(kgsl_driver.major,
 		ARRAY_SIZE(kgsl_driver.devp));
@@ -4802,6 +4952,9 @@ int __init kgsl_core_init(void)
 		GFP_KERNEL);
 
 	place_marker("M - DRIVER KGSL Ready");
+#ifdef CONFIG_QCOM_KGSL
+	show_mem_extra_notifier_register(&kgsl_sharedmem_size_nb);
+#endif
 
 	return 0;
 

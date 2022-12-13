@@ -29,6 +29,9 @@
 #include <linux/ulpi/interface.h>
 
 #include <linux/phy/phy.h>
+#if IS_ENABLED(CONFIG_USB_CHARGING_EVENT)
+#include "../../battery/common/sec_charging_common.h"
+#endif
 
 #define DWC3_MSG_MAX	500
 
@@ -171,7 +174,6 @@
 #define GEN2_U3_EXIT_RSP_RX_CLK_MASK	GEN2_U3_EXIT_RSP_RX_CLK(0xff)
 #define GEN1_U3_EXIT_RSP_RX_CLK(n)	(n)
 #define GEN1_U3_EXIT_RSP_RX_CLK_MASK	GEN1_U3_EXIT_RSP_RX_CLK(0xff)
-#define DWC3_LLUCTL(n)			(0xd024 + ((n) * 0x80))
 #define DWC31_LINK_GDBGLTSSM(n)		(0xd050 + ((n) * 0x80))
 
 /* DWC 3.1 Tx De-emphasis Registers */
@@ -414,7 +416,6 @@
 #define DWC3_GUCTL2_RST_ACTBITLATER		BIT(14)
 
 /* Global User Control Register 3 */
-#define DWC3_GUCTL3_USB20_RETRY_DISABLE		BIT(16)
 #define DWC3_GUCTL3_SPLITDISABLE		BIT(14)
 
 /* Device Configuration Register */
@@ -656,9 +657,6 @@
 #define DWC_CTRL_COUNT	10
 #define NUM_LOG_PAGES	12
 
-/* Force Gen1 speed on Gen2 link*/
-#define DWC3_FORCE_GEN1			BIT(10)
-
 /* Structures */
 
 struct dwc3_trb;
@@ -742,7 +740,6 @@ struct dwc3_ep_events {
  * @desc: usb_endpoint_descriptor pointer
  * @dwc: pointer to DWC controller
  * @saved_state: ep state saved during hibernation
- * @missed_isoc_packets: counter for missed packets sent
  * @flags: endpoint flags (wedged, stalled, ...)
  * @number: endpoint number (1 - 15)
  * @type: set to bmAttributes & USB_ENDPOINT_XFERTYPE_MASK
@@ -776,7 +773,6 @@ struct dwc3_ep {
 	struct dwc3		*dwc;
 
 	u32			saved_state;
-	u32			missed_isoc_packets;
 	unsigned		flags;
 #define DWC3_EP_ENABLED		BIT(0)
 #define DWC3_EP_STALL		BIT(1)
@@ -869,6 +865,11 @@ enum gadget_state {
 	DWC3_GADGET_SOFT_CONN,
 	DWC3_GADGET_CABLE_CONN,
 	DWC3_GADGET_ACTIVE,
+};
+
+enum {
+	RELEASE	= 0,
+	NOTIFY	= 1,
 };
 
 /* TRB Length, PCM and Status */
@@ -1069,10 +1070,10 @@ struct dwc3_scratchpad_array {
  * @role_sw: usb_role_switch handle
  * @role_switch_default_mode: default operation mode of controller while
  *			usb role is USB_ROLE_NONE.
- * @usb2_phy: array of pointers to USB2 PHYs
- * @usb3_phy: array of pointers to USB3 PHYs
- * @num_hsphy: Number of HS ports controlled by the core
- * @num_dsphy: Number of SS ports controlled by the core
+ * @usb2_phy: pointer to USB2 PHY 0
+ * @usb2_phy1: pointer to USB2 PHY 1
+ * @usb3_phy: pointer to USB3 PHY 0
+ * @usb3_phy: pointer to USB3 PHY 1
  * @usb2_generic_phy: pointer to USB2 PHY
  * @usb3_generic_phy: pointer to USB3 PHY
  * @phys_ready: flag to indicate that PHYs are ready
@@ -1177,10 +1178,7 @@ struct dwc3_scratchpad_array {
  * @is_remote_wakeup_enabled: remote wakeup status from host perspective
  * @wait_linkstate: waitqueue for waiting LINK to move into required state
  * @remote_wakeup_work: use to perform remote wakeup from this context
- * @force_gen1: use to force gen1 speed on gen2 controller
- * @active_highbw_isoc: if true, high bandwidth isochronous endpoint is active.
- * @ignore_statusirq: if true, ignore irq triggered for status stage.
- * @num_gsi_eps: number of GSI based hardware accelerated endpoints
+ * @dual_port: If true, this core supports two ports
  */
 struct dwc3 {
 	struct work_struct	drd_work;
@@ -1214,10 +1212,8 @@ struct dwc3 {
 
 	struct reset_control	*reset;
 
-	struct usb_phy		**usb2_phy;
-	struct usb_phy		**usb3_phy;
-	u32			num_hsphy;
-	u32			num_ssphy;
+	struct usb_phy		*usb2_phy, *usb2_phy1;
+	struct usb_phy		*usb3_phy, *usb3_phy1;
 
 	struct phy		*usb2_generic_phy;
 	struct phy		*usb3_generic_phy;
@@ -1304,7 +1300,6 @@ struct dwc3 {
 #define DWC31_VERSIONTYPE_EA04		0x65613034
 #define DWC31_VERSIONTYPE_EA05		0x65613035
 #define DWC31_VERSIONTYPE_EA06		0x65613036
-#define DWC31_VERSIONTYPE_GA		0x67612a2a
 
 	enum dwc3_ep0_next	ep0_next_event;
 	enum dwc3_ep0_state	ep0state;
@@ -1333,7 +1328,6 @@ struct dwc3 {
 	u8			rx_max_burst_prd;
 	u8			tx_thr_num_pkt_prd;
 	u8			tx_max_burst_prd;
-	u8			clear_stall_protocol;
 
 	const char		*hsphy_interface;
 
@@ -1379,7 +1373,6 @@ struct dwc3 {
 	unsigned		tx_de_emphasis:2;
 	unsigned		err_evt_seen:1;
 	unsigned		enable_bus_suspend:1;
-	unsigned		force_gen1:1;
 
 	atomic_t		in_lpm;
 	bool			b_suspend;
@@ -1440,10 +1433,32 @@ struct dwc3 {
 	bool			is_remote_wakeup_enabled;
 	wait_queue_head_t	wait_linkstate;
 	struct work_struct	remote_wakeup_work;
-	bool			active_highbw_isoc;
-	bool			ignore_statusirq;
-	u32			num_gsi_eps;
+	bool			dual_port;
+
+#if IS_ENABLED(CONFIG_USB_CHARGING_EVENT)
+	struct work_struct	set_vbus_current_work;
+	int			vbus_current; /* 0 : 100mA, 1 : 500mA, 2: 900mA */
+#endif
+	struct delayed_work usb_event_work;
+	ktime_t rst_time_before;
+	ktime_t rst_time_first;
+	int rst_err_cnt;
+	bool rst_err_noti;
+	bool event_state;
+	bool acc_dev_status;
+	int usb_function_info;
 };
+
+#define GADGET_MTP	0x01
+#define GADGET_RNDIS	0x02
+#define GADGET_ACCESSORY	0x04
+#define GADGET_ADB	0x08
+#define GADGET_ACM	0x10
+#define GADGET_DM	0x20
+#define GADGET_MIDI	0x40
+#define GADGET_CONN_GADGET	0x80
+
+#define ERR_RESET_CNT	4
 
 #define INCRX_BURST_MODE 0
 #define INCRX_UNDEF_LENGTH_BURST_MODE 1
@@ -1741,8 +1756,7 @@ enum dwc3_notify_event {
 	DWC3_CONTROLLER_NOTIFY_OTG_EVENT,
 	DWC3_CONTROLLER_SET_CURRENT_DRAW_EVENT,
 	DWC3_CONTROLLER_NOTIFY_DISABLE_UPDXFER,
-	DWC3_CONTROLLER_PULLUP_ENTER,
-	DWC3_CONTROLLER_PULLUP_EXIT,
+	DWC3_CONTROLLER_PULLUP,
 
 	/* USB GSI event buffer related notification */
 	DWC3_GSI_EVT_BUF_ALLOC,

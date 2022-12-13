@@ -10,8 +10,32 @@
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
-#include <linux/suspend.h>
-#include <linux/math64.h>
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON)
+#include <linux/reboot.h>
+#include <linux/alarmtimer.h>
+#include <linux/time.h>
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON_PARAM)
+#include <linux/sec_param.h>
+
+#define SAPA_KPARAM_MAGIC	0x41504153
+extern unsigned int sapa_param_time;
+#endif
+#define SAPA_START_POLL_TIME   (10LL * NSEC_PER_SEC) /* 10 sec */
+#define SAPA_BOOTING_TIME      (5*60)
+#define SAPA_POLL_TIME         (15*60)
+
+enum {
+	SAPA_DISTANT = 0,
+	SAPA_NEAR,
+	SAPA_EXPIRED,
+	SAPA_OVER
+};
+
+#define TO_SECS(arr)        (arr[0] | (arr[1] << 8) | (arr[2] << 16) | \
+                            (arr[3] << 24))
+
+extern unsigned int lpcharge;
+#endif
 
 /* RTC Register offsets from RTC CTRL REG */
 #define PM8XXX_ALARM_CTRL_OFFSET	0x01
@@ -24,17 +48,6 @@
 #define PM8xxx_RTC_ALARM_CLEAR		BIT(0)
 #define PM8xxx_RTC_ALARM_ENABLE		BIT(7)
 #define NUM_8_BIT_RTC_REGS		0x4
-
-#define RTC_SEC_TO_MSEC(s)	((s) * 1000ULL)
-#define RTC_SEC_TO_USEC(s)	((s) * 1000000ULL)
-#define RTC_MSTICKS_TO_US(ticks) div_u64(((ticks) * 999000), 1023)
-
-#define PM8XXX_WAKEUP_DISABLE		0
-#define PM8XXX_WAKEUP_ENABLE		1
-
-/* Values used for conversion to milli-seconds */
-#define RTC_MS_TICKS_MAX		1023
-#define RTC_MS_TIME_MAX			999
 
 /**
  * struct pm8xxx_rtc_regs - describe RTC registers per PMIC versions
@@ -54,7 +67,6 @@ struct pm8xxx_rtc_regs {
 	unsigned int alarm_ctrl2;
 	unsigned int alarm_rw;
 	unsigned int alarm_en;
-	unsigned int read_ms;
 };
 
 /**
@@ -75,6 +87,14 @@ struct pm8xxx_rtc {
 	const struct pm8xxx_rtc_regs *regs;
 	struct device *rtc_dev;
 	spinlock_t ctrl_reg_lock;
+#ifdef CONFIG_RTC_AUTO_PWRON
+	struct rtc_wkalrm   sapa;
+	struct alarm        check_poll;
+	struct work_struct  check_func;
+	struct wakeup_source *ws;
+	int                 lpm_mode;
+	unsigned char       triggered;
+#endif
 };
 
 /*
@@ -178,6 +198,12 @@ static int pm8xxx_rtc_set_time(struct device *dev, struct rtc_time *tm)
 			goto rtc_rw_fail;
 		}
 	}
+
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON)
+	pr_info("[SAPA] %s : secs = %lu, h:m:s == %d:%d:%d, d/m/y = %d/%d/%d\n", __func__,
+			secs, tm->tm_hour, tm->tm_min, tm->tm_sec,
+			tm->tm_mday, tm->tm_mon, tm->tm_year);
+#endif
 
 rtc_rw_fail:
 	spin_unlock_irqrestore(&rtc_dd->ctrl_reg_lock, irq_flags);
@@ -326,6 +352,10 @@ static int pm8xxx_rtc_alarm_irq_enable(struct device *dev, unsigned int enable)
 	unsigned int ctrl_reg;
 	u8 value[NUM_8_BIT_RTC_REGS] = {0};
 
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON)
+	pr_info("[SAPA] %s: Alarm irq=%d\n", __func__, enable);
+#endif
+	
 	spin_lock_irqsave(&rtc_dd->ctrl_reg_lock, irq_flags);
 
 	rc = regmap_read(rtc_dd->regmap, regs->alarm_ctrl, &ctrl_reg);
@@ -358,100 +388,226 @@ rtc_rw_fail:
 	return rc;
 }
 
-static ssize_t rtc_us_val_show(struct device *dev,
-				struct device_attribute *attr, char *buf)
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON)
+static void sapa_normalize_alarm(struct rtc_wkalrm *alarm)
 {
+	if (!alarm->enabled) {
+		/* 50 years after RTC reset = 1580518864 = 0x5e34cdd0 */
+		alarm->time.tm_year = 70 + 50;
+		alarm->time.tm_mon = 1;
+		alarm->time.tm_mday = 1;
+		alarm->time.tm_hour = 1;
+		alarm->time.tm_min = 1;
+		alarm->time.tm_sec = 4;
+	}
+}
+
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON_PARAM)
+static void sapa_save_kparam(struct pm8xxx_rtc *rtc_dd)
+{
+	unsigned long secs_pwron;
+	unsigned int sapa[3];
 	int rc;
-	u8 value[NUM_8_BIT_RTC_REGS], value_ms[2];
-	unsigned long long secs = 0, mticks = 0, usecs = 0, rtc_us_total = 0;
-	unsigned int reg;
-	struct pm8xxx_rtc *rtc_dd = dev_get_drvdata(dev->parent);
+
+	sapa_normalize_alarm(&rtc_dd->sapa);
+	rtc_tm_to_time(&rtc_dd->sapa.time, &secs_pwron);
+	sapa[0] = SAPA_KPARAM_MAGIC;
+	sapa[1] = (unsigned int)rtc_dd->sapa.enabled;
+	sapa[2] = (unsigned int)secs_pwron;
+
+	rc = sec_set_param(param_index_sapa, sapa);
+	pr_info("[SAPA] %s: rc=%d, enabled=%d, alarm=%u\n",
+		__func__, rc, sapa[1], sapa[2]);
+}
+#endif
+
+static int sapa_is_testalarm(struct rtc_wkalrm *alarm)
+{
+	unsigned long alm_sec;
+
+	rtc_tm_to_time(&alarm->time, &alm_sec);
+	return (alm_sec % 2);
+}
+
+static int sapa_rtc_getalarm(struct device *dev, struct rtc_wkalrm *alarm)
+{
+	struct pm8xxx_rtc *rtc_dd = dev_get_drvdata(dev);
+
+	alarm->enabled = rtc_dd->triggered;
+	return 1;
+}
+
+static int sapa_rtc_setalarm(struct device *dev, struct rtc_wkalrm *alarm)
+{
+	struct pm8xxx_rtc *rtc_dd = dev_get_drvdata(dev);
+
+	memcpy(&rtc_dd->sapa, alarm, sizeof(struct rtc_wkalrm));
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON_PARAM)
+	sapa_save_kparam(rtc_dd);
+#endif
+
+	return 0;
+}
+
+static int sapa_check_state(struct pm8xxx_rtc *rtc_dd, unsigned long *data)
+{
+	unsigned long rtc_secs;
+	unsigned long secs_pwron;
+	u8 value[NUM_8_BIT_RTC_REGS];
 	const struct pm8xxx_rtc_regs *regs = rtc_dd->regs;
+	int rc;
+	int res = SAPA_NEAR;
 
 	rc = regmap_bulk_read(rtc_dd->regmap, regs->read, value, sizeof(value));
-	if (rc) {
-		dev_err(dev, "RTC read data register failed\n");
-		return rc;
-	}
+	if (rc)
+		pr_err("[SAPA] %s: rtc read failed.\n", __func__);
+	rtc_secs = TO_SECS(value);
 
-	/*
-	 * Read the LSB again and check if there has been a carry over.
-	 * If there is, redo the read operation.
-	 */
-	rc = regmap_read(rtc_dd->regmap, regs->read, &reg);
-	if (rc < 0) {
-		dev_err(dev, "RTC read data register failed\n");
-		return rc;
-	}
+	rtc_tm_to_time(&rtc_dd->sapa.time, &secs_pwron);
 
-	if (unlikely(reg < value[0])) {
-		rc = regmap_bulk_read(rtc_dd->regmap, regs->read,
-				      value, sizeof(value));
-		if (rc) {
-			dev_err(dev, "RTC read data register failed\n");
-			return rc;
-		}
-	}
+	if (rtc_secs < secs_pwron) {
+		if (secs_pwron - rtc_secs > SAPA_POLL_TIME)
+			res = SAPA_DISTANT;
+		if (data)
+			*data = secs_pwron - rtc_secs;
+	} else if (rtc_secs <= secs_pwron+SAPA_BOOTING_TIME) {
+		res = SAPA_EXPIRED;
+		if (data)
+			*data = rtc_secs + 10;
+	} else
+		res = SAPA_OVER;
 
-	secs = value[0] | (value[1] << 8) | (value[2] << 16) |
-	       ((unsigned long long)value[3] << 24);
-
-	/* Read milli-second value */
-	rc = regmap_bulk_read(rtc_dd->regmap, regs->read_ms, value_ms, sizeof(value_ms));
-	if (rc) {
-		dev_err(dev, "RTC read data register failed\n");
-		return rc;
-	}
-
-	mticks = value_ms[0] | (value_ms[1] << 8);
-
-	/* Mapping 1023 ticks to 999 milli-seconds */
-	usecs = RTC_MSTICKS_TO_US(mticks);
-
-	rtc_us_total = RTC_SEC_TO_USEC(secs) + usecs;
-
-	return scnprintf(buf, PAGE_SIZE, "%llu\n", rtc_us_total);
+	pr_info("[SAPA] %s: rtc:%lu, alrm:%lu[%d]\n", __func__, rtc_secs, secs_pwron, res);
+	return res;
 }
 
-static DEVICE_ATTR_RO(rtc_us_val);
-
-static ssize_t rtc_wakeup_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t size)
+static void sapa_check_func(struct work_struct *work)
 {
-	int wake;
+	struct pm8xxx_rtc *rtc_dd = container_of(work, struct pm8xxx_rtc, check_func);
+	int res;
+	unsigned long remain;
 
-	if (kstrtou32(buf, 0, &wake)) {
-		dev_err(dev, "%s: failed to read data from string\n", __func__);
-		return -EINVAL;
+	res = sapa_check_state(rtc_dd, &remain);
+	if (res <= SAPA_NEAR) {
+		ktime_t kt;
+
+		if (res == SAPA_DISTANT)
+			remain = SAPA_POLL_TIME;
+		kt = ns_to_ktime((u64)remain * NSEC_PER_SEC);
+		alarm_start_relative(&rtc_dd->check_poll, kt);
+		pr_info("[SAPA] %s: next %lu s\n", __func__, remain);
+	} else if (res == SAPA_EXPIRED) {
+		__pm_stay_awake(rtc_dd->ws);
+		rtc_dd->triggered = 1;
 	}
-
-	if (wake == PM8XXX_WAKEUP_DISABLE)
-		device_set_wakeup_capable(dev->parent, false);
-	else if (wake == PM8XXX_WAKEUP_ENABLE)
-		device_set_wakeup_capable(dev->parent, true);
-	else
-		dev_err(dev, "%s: Invalid data\n", __func__);
-
-	return size;
 }
 
-static DEVICE_ATTR_WO(rtc_wakeup);
+static enum alarmtimer_restart sapa_check_callback(struct alarm *alarm, ktime_t now)
+{
+	struct pm8xxx_rtc *rtc_dd = container_of(alarm, struct pm8xxx_rtc, check_poll);
 
-static struct attribute *pm8xxx_rtc_attrs[] = {
-	&dev_attr_rtc_us_val.attr,
-	&dev_attr_rtc_wakeup.attr,
-	NULL,
-};
+	schedule_work(&rtc_dd->check_func);
+	return ALARMTIMER_NORESTART;
+}
 
-static const struct attribute_group pm8xxx_rtc_group = {
-	.attrs = pm8xxx_rtc_attrs,
-};
+static void sapa_load_alarm(struct pm8xxx_rtc *rtc_dd, u8 ctrl_reg)
+{
+	unsigned long alarm_secs;
+	u8 value[NUM_8_BIT_RTC_REGS];
+	const struct pm8xxx_rtc_regs *regs = rtc_dd->regs;
+	int rc;
+
+	rc = regmap_bulk_read(rtc_dd->regmap, regs->alarm_ctrl, value, sizeof(value));
+	if (rc) {
+		pr_err("[SAPA] %s: alarm read failed\n", __func__);
+		return;
+	}
+	alarm_secs = TO_SECS(value);
+
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON_PARAM)
+	pr_info("[SAPA] %s: param=%u\n", __func__, sapa_param_time);
+	rtc_time_to_tm(sapa_param_time, &rtc_dd->sapa.time);
+	rtc_dd->sapa.enabled = (sapa_param_time) ? 1 : 0;
+#else
+	rtc_time_to_tm(alarm_secs, &rtc_dd->sapa.time);
+	rtc_dd->sapa.enabled = (ctrl_reg & BIT_RTC_ALARM_ENABLE) ? 1 : 0;
+#endif
+
+	pr_info("[SAPA] %s: alarm_reg=%02x, pmic=%lu\n", __func__, ctrl_reg, alarm_secs);
+}
+
+static void sapa_init(struct pm8xxx_rtc *rtc_dd)
+{
+	ktime_t kt;
+
+	rtc_dd->lpm_mode = lpcharge;
+	rtc_dd->triggered = 0;
+	
+	if (rtc_dd->lpm_mode && rtc_dd->sapa.enabled) {
+		rtc_dd->ws = wakeup_source_register(rtc_dd->rtc_dev, "SAPA");
+
+		alarm_init(&rtc_dd->check_poll, ALARM_REALTIME, sapa_check_callback);
+		INIT_WORK(&rtc_dd->check_func, sapa_check_func);
+
+		kt = ns_to_ktime(SAPA_START_POLL_TIME);
+		alarm_start_relative(&rtc_dd->check_poll, kt);
+	}
+}
+
+static void sapa_exit(struct pm8xxx_rtc *rtc_dd)
+{
+	struct rtc_wkalrm *alarm;
+	int rc;
+
+	pr_info("%s\n", __func__);
+
+	if (rtc_dd->lpm_mode && rtc_dd->sapa.enabled) {
+		cancel_work_sync(&rtc_dd->check_func);
+		alarm_cancel(&rtc_dd->check_poll);
+		wakeup_source_unregister(rtc_dd->ws);
+	}
+
+	if (!rtc_dd->triggered) {
+		if (rtc_dd->sapa.enabled) {
+			unsigned long next_power_on;
+			int res = sapa_check_state(rtc_dd, &next_power_on);
+
+			if (res == SAPA_EXPIRED && !sapa_is_testalarm(&rtc_dd->sapa)) {
+				rtc_time_to_tm(next_power_on, &rtc_dd->sapa.time);
+				pr_info("[SAPA] %s: adjust %lu\n", __func__, next_power_on);
+			} else if (res >= SAPA_EXPIRED) {
+				rtc_dd->sapa.enabled = 0;
+				pr_info("[SAPA] %s: over - clear\n", __func__);
+			}
+		}
+	} else {
+		rtc_dd->sapa.enabled = 0;
+	}
+
+	alarm = &rtc_dd->sapa;
+	sapa_normalize_alarm(alarm);
+	rc = pm8xxx_rtc_set_alarm(rtc_dd->rtc_dev, alarm);
+	if (rc < 0)
+		pr_err("[SAPA] %s: err=%d\n", __func__, rc);
+
+	rc = pm8xxx_rtc_read_alarm(rtc_dd->rtc_dev, alarm);
+	if (!rc) {
+		pr_info("[SAPA] %s: %d-%02d-%02d %02d:%02d:%02d\n", __func__,
+			alarm->time.tm_year, alarm->time.tm_mon, alarm->time.tm_mday,
+			alarm->time.tm_hour, alarm->time.tm_min, alarm->time.tm_sec);
+	}
+}
+#endif /*CONFIG_RTC_AUTO_PWRON*/
 
 static const struct rtc_class_ops pm8xxx_rtc_ops = {
 	.read_time	= pm8xxx_rtc_read_time,
 	.set_time	= pm8xxx_rtc_set_time,
 	.set_alarm	= pm8xxx_rtc_set_alarm,
 	.read_alarm	= pm8xxx_rtc_read_alarm,
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON)
+	.read_bootalarm = sapa_rtc_getalarm,
+	.set_bootalarm  = sapa_rtc_setalarm,
+#endif /*CONFIG_RTC_AUTO_PWRON*/
 	.alarm_irq_enable = pm8xxx_rtc_alarm_irq_enable,
 };
 
@@ -563,7 +719,6 @@ static const struct pm8xxx_rtc_regs pmk8350_regs = {
 	.alarm_ctrl	= 0x6246,
 	.alarm_ctrl2	= 0x6248,
 	.alarm_en	= BIT(7),
-	.read_ms	= 0x6162,
 };
 
 static const struct pm8xxx_rtc_regs pm5100_regs = {
@@ -574,7 +729,6 @@ static const struct pm8xxx_rtc_regs pm5100_regs = {
 	.alarm_ctrl	= 0x6546,
 	.alarm_ctrl2	= 0x6548,
 	.alarm_en	= BIT(7),
-	.read_ms	= 0x6462,
 };
 
 /*
@@ -632,23 +786,18 @@ static int pm8xxx_rtc_probe(struct platform_device *pdev)
 
 	device_init_wakeup(&pdev->dev, 1);
 
-	rtc_dd->rtc = devm_rtc_allocate_device(&pdev->dev);
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON)
+	sapa_load_alarm(rtc_dd, rtc_dd->regs->alarm_ctrl);
+#endif
+	
+	/* Register the RTC device */
+	rtc_dd->rtc = devm_rtc_device_register(&pdev->dev, "pm8xxx_rtc",
+					       &pm8xxx_rtc_ops, THIS_MODULE);
 	if (IS_ERR(rtc_dd->rtc)) {
-		dev_err(&pdev->dev, "%s: RTC allocate device failed (%ld)\n",
+		dev_err(&pdev->dev, "%s: RTC registration failed (%ld)\n",
 			__func__, PTR_ERR(rtc_dd->rtc));
 		return PTR_ERR(rtc_dd->rtc);
 	}
-
-	rtc_dd->rtc->ops = &pm8xxx_rtc_ops;
-
-	rc = rtc_add_group(rtc_dd->rtc, &pm8xxx_rtc_group);
-	if (rc)
-		return rc;
-
-	/* Register the RTC device */
-	rc = rtc_register_device(rtc_dd->rtc);
-	if (rc)
-		return rc;
 
 	/* Request the alarm IRQ */
 	rc = devm_request_any_context_irq(&pdev->dev, rtc_dd->rtc_alarm_irq,
@@ -662,48 +811,41 @@ static int pm8xxx_rtc_probe(struct platform_device *pdev)
 
 	if (of_property_read_bool(pdev->dev.of_node, "disable-alarm-wakeup"))
 		device_set_wakeup_capable(&pdev->dev, false);
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON)
+	sapa_init(rtc_dd);
+#endif
 
 	dev_dbg(&pdev->dev, "Probe success !!\n");
 
 	return 0;
 }
 
-static int pm8xxx_rtc_restore(struct device *dev)
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON)
+static void pm8xxx_rtc_shutdown(struct platform_device *pdev)
 {
-	struct pm8xxx_rtc *rtc_dd = dev_get_drvdata(dev);
-	int rc;
+	struct pm8xxx_rtc *rtc_dd;
 
-	/* Request the alarm IRQ */
-	rc = devm_request_any_context_irq(rtc_dd->rtc_dev,
-					  rtc_dd->rtc_alarm_irq,
-					  pm8xxx_alarm_trigger,
-					  IRQF_TRIGGER_RISING,
-					  "pm8xxx_rtc_alarm", rtc_dd);
-	if (rc < 0) {
-		dev_err(rtc_dd->rtc_dev, "Request IRQ failed (%d)\n", rc);
-		return rc;
+	if (!pdev) {
+		pr_err("%s: spmi device not found\n", __func__);
+		return;
 	}
 
-	return pm8xxx_rtc_enable(rtc_dd);
+	rtc_dd = dev_get_drvdata(&pdev->dev);
+
+	if (!rtc_dd) {
+		pr_err("%s: rtc driver data not found\n", __func__);
+		return;
+	}
+	
+	sapa_exit(rtc_dd);
 }
+#endif
 
-static int pm8xxx_rtc_freeze(struct device *dev)
-{
-	struct pm8xxx_rtc *rtc_dd = dev_get_drvdata(dev);
-
-	devm_free_irq(rtc_dd->rtc_dev, rtc_dd->rtc_alarm_irq, rtc_dd);
-
-	return 0;
-}
-
+#ifdef CONFIG_PM_SLEEP
 static int pm8xxx_rtc_resume(struct device *dev)
 {
 	struct pm8xxx_rtc *rtc_dd = dev_get_drvdata(dev);
 
-#ifdef CONFIG_DEEPSLEEP
-	if (mem_sleep_current == PM_SUSPEND_MEM)
-		return pm8xxx_rtc_restore(dev);
-#endif
 	if (device_may_wakeup(dev))
 		disable_irq_wake(rtc_dd->rtc_alarm_irq);
 
@@ -714,25 +856,22 @@ static int pm8xxx_rtc_suspend(struct device *dev)
 {
 	struct pm8xxx_rtc *rtc_dd = dev_get_drvdata(dev);
 
-#ifdef CONFIG_DEEPSLEEP
-	if (mem_sleep_current == PM_SUSPEND_MEM)
-		return pm8xxx_rtc_freeze(dev);
-#endif
 	if (device_may_wakeup(dev))
 		enable_irq_wake(rtc_dd->rtc_alarm_irq);
 
 	return 0;
 }
+#endif
 
-static const struct dev_pm_ops pm8xxx_rtc_pm_ops = {
-	.freeze = pm8xxx_rtc_freeze,
-	.restore = pm8xxx_rtc_restore,
-	.suspend = pm8xxx_rtc_suspend,
-	.resume = pm8xxx_rtc_resume,
-};
+static SIMPLE_DEV_PM_OPS(pm8xxx_rtc_pm_ops,
+			 pm8xxx_rtc_suspend,
+			 pm8xxx_rtc_resume);
 
 static struct platform_driver pm8xxx_rtc_driver = {
 	.probe		= pm8xxx_rtc_probe,
+#if IS_ENABLED(CONFIG_RTC_AUTO_PWRON)
+	.shutdown	= pm8xxx_rtc_shutdown,
+#endif
 	.driver	= {
 		.name		= "rtc-pm8xxx",
 		.pm		= &pm8xxx_rtc_pm_ops,

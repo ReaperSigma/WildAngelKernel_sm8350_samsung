@@ -8,7 +8,6 @@
 
 #define CNSS_MAX_FILE_NAME		20
 #define CNSS_MAX_TIMESTAMP_LEN		32
-#define CNSS_WLFW_MAX_BUILD_ID_LEN      128
 #define CNSS_MAX_DEV_MEM_NUM		4
 
 /*
@@ -70,7 +69,6 @@ struct cnss_soc_info {
 	char fw_build_timestamp[CNSS_MAX_TIMESTAMP_LEN + 1];
 	struct cnss_device_version device_version;
 	struct cnss_dev_mem_info dev_mem_info[CNSS_MAX_DEV_MEM_NUM];
-	char fw_build_id[CNSS_WLFW_MAX_BUILD_ID_LEN + 1];
 };
 
 struct cnss_wlan_runtime_ops {
@@ -129,7 +127,6 @@ struct cnss_wlan_driver {
 			     struct cnss_uevent_data *uevent);
 	struct cnss_wlan_runtime_ops *runtime_ops;
 	const struct pci_device_id *id_table;
-	enum cnss_driver_mode (*get_driver_mode)(void);
 };
 
 struct cnss_ce_tgt_pipe_cfg {
@@ -281,4 +278,7 @@ extern int cnss_get_mem_seg_count(enum cnss_remote_mem_type type, u32 *seg);
 extern int cnss_get_mem_segment_info(enum cnss_remote_mem_type type,
 				     struct cnss_mem_segment segment[],
 				     u32 segment_count);
+					 
+extern int cnss_sysfs_get_pm_info(void);
+extern void cnss_sysfs_update_driver_status(int32_t new_status, void *version, void *softap);
 #endif /* _NET_CNSS2_H */

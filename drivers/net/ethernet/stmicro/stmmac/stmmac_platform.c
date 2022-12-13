@@ -431,7 +431,8 @@ stmmac_probe_config_dt(struct platform_device *pdev, const char **mac)
 	plat->phylink_node = np;
 
 	/* Get max speed of operation from device tree */
-	of_property_read_u32(np, "max-speed", &plat->max_speed);
+	if (of_property_read_u32(np, "max-speed", &plat->max_speed))
+		plat->max_speed = -1;
 
 	plat->bus_id = of_alias_get_id(np, "ethernet");
 	if (plat->bus_id < 0)
@@ -439,9 +440,6 @@ stmmac_probe_config_dt(struct platform_device *pdev, const char **mac)
 
 	/* Default to phy auto-detection */
 	plat->phy_addr = -1;
-
-	/* Flag for mac2mac feature support*/
-	plat->mac2mac_en = of_property_read_bool(np, "mac2mac");
 
 	/* Default to get clk_csr from stmmac_clk_crs_set(),
 	 * or get clk_csr from device tree.
@@ -456,11 +454,9 @@ stmmac_probe_config_dt(struct platform_device *pdev, const char **mac)
 		dev_warn(&pdev->dev, "snps,phy-addr property is deprecated\n");
 
 	/* To Configure PHY by using all device-tree supported properties */
-	if (!plat->mac2mac_en) {
-		rc = stmmac_dt_phy(plat, np, &pdev->dev);
-		if (rc)
-			return ERR_PTR(rc);
-	}
+	rc = stmmac_dt_phy(plat, np, &pdev->dev);
+	if (rc)
+		return ERR_PTR(rc);
 
 	of_property_read_u32(np, "tx-fifo-depth", &plat->tx_fifo_size);
 
@@ -509,14 +505,6 @@ stmmac_probe_config_dt(struct platform_device *pdev, const char **mac)
 		plat->multicast_filter_bins = dwmac1000_validate_mcast_bins(
 				&pdev->dev, plat->multicast_filter_bins);
 		plat->has_gmac = 1;
-		plat->pmt = 1;
-	}
-
-	if (of_device_is_compatible(np, "snps,dwmac-3.40a")) {
-		plat->has_gmac = 1;
-		plat->enh_desc = 1;
-		plat->tx_coe = 1;
-		plat->bugged_jumbo = 1;
 		plat->pmt = 1;
 	}
 
@@ -609,15 +597,11 @@ stmmac_probe_config_dt(struct platform_device *pdev, const char **mac)
 		dev_dbg(&pdev->dev, "PTP rate %d\n", plat->clk_ptp_rate);
 	}
 
-	if (of_property_read_u32(np,
-				 "snps,ptp-ref-clk-rate",
-				 &plat->clk_ptp_rate))
-		plat->clk_ptp_rate = 250000000;
+	of_property_read_u32(np,
+			     "snps,ptp-ref-clk-rate", &plat->clk_ptp_rate);
 
-	if (of_property_read_u32(np,
-				 "snps,ptp-req-clk-rate",
-				 &plat->clk_ptp_req_rate))
-		plat->clk_ptp_req_rate = 96000000;
+	of_property_read_u32(np,
+			     "snps,ptp-req-clk-rate", &plat->clk_ptp_req_rate);
 
 	plat->stmmac_rst = devm_reset_control_get(&pdev->dev,
 						  STMMAC_RESOURCE_NAME);

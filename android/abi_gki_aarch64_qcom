@@ -1102,8 +1102,10 @@
   i2c_register_driver
   i2c_smbus_read_byte
   i2c_smbus_read_byte_data
+  i2c_smbus_read_byte_data
   i2c_smbus_read_i2c_block_data
   i2c_smbus_write_byte
+  i2c_smbus_write_byte_data
   i2c_smbus_write_byte_data
   i2c_smbus_write_i2c_block_data
   __i2c_smbus_xfer
@@ -1308,7 +1310,6 @@
   kfree
   kfree_skb
   kfree_skb_list
-  kill_anon_super
   kill_fasync
   kill_litter_super
   kimage_vaddr
@@ -2868,7 +2869,6 @@
   vmalloc_to_page
   vmalloc_user
   vmap
-  vmemdup_user
   vmemmap
   vmf_insert_mixed
   vmf_insert_pfn

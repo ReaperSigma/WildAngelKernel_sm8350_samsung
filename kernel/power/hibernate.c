@@ -32,7 +32,6 @@
 #include <linux/ktime.h>
 #include <linux/security.h>
 #include <trace/events/power.h>
-#include <soc/qcom/boot_stats.h>
 
 #include "power.h"
 
@@ -336,7 +335,6 @@ static int create_image(int platform_mode)
 
  Platform_finish:
 	platform_finish(platform_mode);
-	place_marker("M - Hibernation: start device resume");
 
 	dpm_resume_start(in_suspend ?
 		(error ? PMSG_RECOVER : PMSG_THAW) : PMSG_RESTORE);
@@ -413,7 +411,6 @@ int hibernation_snapshot(int platform_mode)
 
 	resume_console();
 	dpm_complete(msg);
-	place_marker("M - Hibernation: end device resume");
 
  Close:
 	platform_end(platform_mode);
@@ -679,7 +676,7 @@ static int load_image_and_restore(void)
 		goto Unlock;
 
 	error = swsusp_read(&flags);
-	swsusp_close(FMODE_READ | FMODE_EXCL);
+	swsusp_close(FMODE_READ);
 	if (!error)
 		hibernation_restore(flags & SF_PLATFORM_MODE);
 
@@ -758,7 +755,6 @@ int hibernate(void)
 		in_suspend = 0;
 		pm_restore_gfp_mask();
 	} else {
-		place_marker("M - PM: Image restored!");
 		pm_pr_dbg("Image restored successfully.\n");
 	}
 
@@ -773,7 +769,6 @@ int hibernate(void)
 			error = load_image_and_restore();
 	}
 	thaw_processes();
-	place_marker("M - Hibernation: processes thaw done");
 
 	/* Don't bother checking whether freezer_test_done is true */
 	freezer_test_done = false;
@@ -783,7 +778,6 @@ int hibernate(void)
 	atomic_inc(&snapshot_device_available);
  Unlock:
 	unlock_system_sleep();
-	place_marker("M - PM: Hibernation Exit!");
 	pr_info("hibernation exit\n");
 
 	return error;
@@ -877,7 +871,7 @@ static int software_resume(void)
 	/* The snapshot device should not be opened while we're running */
 	if (!atomic_add_unless(&snapshot_device_available, -1, 0)) {
 		error = -EBUSY;
-		swsusp_close(FMODE_READ | FMODE_EXCL);
+		swsusp_close(FMODE_READ);
 		goto Unlock;
 	}
 
@@ -913,7 +907,7 @@ static int software_resume(void)
 	pm_pr_dbg("Hibernation image not present or could not be loaded.\n");
 	return error;
  Close_Finish:
-	swsusp_close(FMODE_READ | FMODE_EXCL);
+	swsusp_close(FMODE_READ);
 	goto Finish;
 }
 
@@ -1222,7 +1216,7 @@ static int __init resumedelay_setup(char *str)
 	int rc = kstrtouint(str, 0, &resume_delay);
 
 	if (rc)
-		pr_warn("resumedelay: bad option string '%s'\n", str);
+		return rc;
 	return 1;
 }
 

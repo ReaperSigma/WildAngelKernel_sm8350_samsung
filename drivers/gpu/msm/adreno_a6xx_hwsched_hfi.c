@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/iommu.h>
@@ -897,7 +897,7 @@ int a6xx_hwsched_cp_init(struct adreno_device *adreno_dev)
 	if (ret)
 		return ret;
 
-	if (!adreno_dev->zap_handle)
+	if (!adreno_dev->zap_loaded)
 		kgsl_regwrite(KGSL_DEVICE(adreno_dev),
 			A6XX_RBBM_SECVID_TRUST_CNTL, 0x0);
 	else
@@ -1204,7 +1204,7 @@ int a6xx_hwsched_submit_cmdobj(struct adreno_device *adreno_dev,
 	if (WARN_ON(cmd_sizebytes > HFI_MAX_MSG_SIZE))
 		return -EMSGSIZE;
 
-	cmd = kmalloc(cmd_sizebytes, GFP_KERNEL);
+	cmd = kvmalloc(cmd_sizebytes, GFP_KERNEL);
 	if (cmd == NULL)
 		return -ENOMEM;
 
@@ -1268,7 +1268,7 @@ skipib:
 	adreno_profile_submit_time(&time);
 
 free:
-	kfree(cmd);
+	kvfree(cmd);
 
 	return ret;
 }

@@ -1378,14 +1378,9 @@ int of_phandle_iterator_next(struct of_phandle_iterator *it)
 		 * property data length
 		 */
 		if (it->cur + count > it->list_end) {
-			if (it->cells_name)
-				pr_err("%pOF: %s = %d found %td\n",
-					it->parent, it->cells_name,
-					count, it->list_end - it->cur);
-			else
-				pr_err("%pOF: phandle %s needs %d, found %td\n",
-					it->parent, of_node_full_name(it->node),
-					count, it->list_end - it->cur);
+			pr_err("%pOF: %s = %d found %d\n",
+			       it->parent, it->cells_name,
+			       count, it->cell_count);
 			goto err;
 		}
 	}
@@ -1872,7 +1867,6 @@ int of_add_property(struct device_node *np, struct property *prop)
 
 	return rc;
 }
-EXPORT_SYMBOL(of_add_property);
 
 int __of_remove_property(struct device_node *np, struct property *prop)
 {
@@ -1925,7 +1919,6 @@ int of_remove_property(struct device_node *np, struct property *prop)
 
 	return rc;
 }
-EXPORT_SYMBOL(of_remove_property);
 
 int __of_update_property(struct device_node *np, struct property *newprop,
 		struct property **oldpropp)

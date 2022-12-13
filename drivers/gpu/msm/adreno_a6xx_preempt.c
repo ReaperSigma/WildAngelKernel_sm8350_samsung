@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
@@ -79,18 +79,14 @@ static void _power_collapse_set(struct adreno_device *adreno_dev, bool val)
 		return;
 
 	if (val) {
-		if (adreno_is_a660(adreno_dev) ||
-				adreno_is_a690(adreno_dev) ||
-				adreno_is_a663(adreno_dev))
+		if (adreno_is_a660(adreno_dev))
 			gmu_core_regwrite(device,
 				 A6XX_GMU_PWR_COL_PREEMPT_KEEPALIVE, 0x1);
 		else
 			gmu_core_regrmw(device,
 				 A6XX_GMU_AO_SPARE_CNTL, 0x0, 0x2);
 	} else {
-		if (adreno_is_a660(adreno_dev) ||
-				adreno_is_a690(adreno_dev) ||
-				adreno_is_a663(adreno_dev))
+		if (adreno_is_a660(adreno_dev))
 			gmu_core_regwrite(device,
 				 A6XX_GMU_PWR_COL_PREEMPT_KEEPALIVE, 0x0);
 		else
@@ -735,7 +731,7 @@ int a6xx_preemption_init(struct adreno_device *adreno_dev)
 	ret = PTR_ERR_OR_ZERO(iommu->smmu_info);
 	if (ret)
 		return ret;
-
+		
 	/*
 	 * First 8 dwords of the preemption scratch buffer is used to store the address for CP
 	 * to save/restore VPC data. Reserve 11 dwords in the preemption scratch buffer from
@@ -777,7 +773,7 @@ int a6xx_preemption_context_init(struct kgsl_context *context)
 	if (context->flags & KGSL_CONTEXT_SECURE)
 		flags |= KGSL_MEMFLAGS_SECURE;
 
-	if (is_compat_task())
+	if (kgsl_is_compat_task())
 		flags |= KGSL_MEMFLAGS_FORCE_32BIT;
 
 	/*

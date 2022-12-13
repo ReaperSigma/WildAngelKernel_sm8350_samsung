@@ -30,7 +30,9 @@
 #include <linux/soc/qcom/smem_state.h>
 
 #include "peripheral-loader.h"
-
+#ifdef CONFIG_SENSORS_SSC
+#include <linux/adsp/ssc_ssr_reason.h>
+#endif
 #define PIL_TZ_AVG_BW  0
 #define PIL_TZ_PEAK_BW UINT_MAX
 
@@ -56,6 +58,9 @@ struct reg_info {
 	struct regulator *reg;
 	int uV;
 	int uA;
+#if defined(CONFIG_SUB_SENSOR_VDD)
+	bool valid;
+#endif
 };
 
 /**
@@ -124,7 +129,6 @@ struct pil_tz_data {
 	int generic_irq;
 	int ramdump_disable_irq;
 	int shutdown_ack_irq;
-	int dsentry_ack_irq;
 	int force_stop_bit;
 	struct qcom_smem_state *state;
 };
@@ -172,6 +176,9 @@ static int wait_for_err_ready(struct pil_tz_data *d)
 					  msecs_to_jiffies(10000));
 	if (!ret) {
 		pr_err("[%s]: Error ready timed out\n", d->desc.name);
+		if(!strcmp(d->desc.name, "modem"))	{
+			panic("Modem booting fail !");
+		}
 		return -ETIMEDOUT;
 	}
 
@@ -303,12 +310,23 @@ static int of_read_regs(struct device *dev, struct reg_info **regs_ref,
 					      &reg_name);
 
 		regs[i].reg = devm_regulator_get(dev, reg_name);
+#if defined(CONFIG_SUB_SENSOR_VDD)
+		regs[i].valid = true;
+#endif
 		if (IS_ERR(regs[i].reg)) {
 			int rc = PTR_ERR(regs[i].reg);
 
 			if (rc != -EPROBE_DEFER)
 				dev_err(dev, "Failed to get %s\n regulator\n",
 								reg_name);
+#if defined(CONFIG_SUB_SENSOR_VDD)
+			if (!strcmp(reg_name, "subsensor_vdd")) {
+				regs[i].valid = false;
+				continue;
+			} else {
+				dev_err(dev, "Failed to get %s regulator\n", reg_name);
+			}
+#endif
 			return rc;
 		}
 
@@ -446,6 +464,12 @@ static int enable_regulators(struct pil_tz_data *d, struct device *dev,
 	int i, rc = 0;
 
 	for (i = 0; i < reg_count; i++) {
+#if defined(CONFIG_SUB_SENSOR_VDD)
+		if (!regs[i].valid) {
+			dev_err(dev, "reg[%d] invalid", i);
+			continue;
+		}
+#endif
 		if (regs[i].uV > 0) {
 			rc = regulator_set_voltage(regs[i].reg,
 					regs[i].uV, INT_MAX);
@@ -507,6 +531,10 @@ static void disable_regulators(struct pil_tz_data *d, struct reg_info *regs,
 	int i;
 
 	for (i = 0; i < reg_count; i++) {
+#if defined(CONFIG_SUB_SENSOR_VDD)
+		if (!regs[i].valid)
+			continue;
+#endif
 		if (regs[i].uV > 0)
 			regulator_set_voltage(regs[i].reg, 0, INT_MAX);
 
@@ -781,6 +809,14 @@ static void log_failure_reason(const struct pil_tz_data *d)
 
 	strlcpy(reason, smem_reason, min(size, (size_t)MAX_SSR_REASON_LEN));
 	pr_err("%s subsystem failure reason: %s.\n", name, reason);
+
+#ifdef CONFIG_SENSORS_SSC
+	if (!strncmp(name, "slpi", 4)) {
+		ssr_reason_call_back(reason, min(size, (size_t)MAX_SSR_REASON_LEN));
+		if (strstr(reason, "IPLSREVOCER"))
+			subsys_set_fssr(d->subsys, true);
+	}
+#endif
 }
 
 static int subsys_shutdown(const struct subsys_desc *subsys, bool force_stop)
@@ -806,24 +842,6 @@ static int subsys_shutdown(const struct subsys_desc *subsys, bool force_stop)
 	subsys_disable_all_irqs(d);
 	return 0;
 }
-
-static int subsys_enter_ds(const struct subsys_desc *subsys)
-{
-
-	struct pil_tz_data *d = subsys_to_data(subsys);
-	u32 scm_ret = 0;
-
-	/* Instruct secure firmware to unprotect memory
-	 * without running tear down sequence here
-	 */
-	scm_ret = qcom_scm_pas_dsentry(d->pas_id);
-
-	disable_unprepare_clocks(d->clks, d->clk_count);
-	disable_regulators(d, d->regs, d->reg_count, false);
-	subsys_disable_all_irqs(d);
-	return scm_ret;
-}
-
 
 static int subsys_powerup(const struct subsys_desc *subsys)
 {
@@ -909,7 +927,12 @@ static void subsys_crash_shutdown(const struct subsys_desc *subsys)
 		qcom_smem_state_update_bits(d->state,
 			BIT(d->force_stop_bit),
 			BIT(d->force_stop_bit));
-		mdelay(CRASH_STOP_ACK_TO_MS);
+#if defined(CONFIG_SEC_DEBUG)
+		if (likely(!in_atomic()))
+			msleep(CRASH_STOP_ACK_TO_MS);
+		else
+#endif
+			mdelay(CRASH_STOP_ACK_TO_MS);
 	}
 }
 
@@ -975,16 +998,6 @@ static irqreturn_t subsys_shutdown_ack_intr_handler(int irq, void *drv_data)
 	pr_info("Received stop shutdown interrupt from %s\n",
 			d->subsys_desc.name);
 	complete_shutdown_ack(&d->subsys_desc);
-	return IRQ_HANDLED;
-}
-
-static irqreturn_t subsys_dsentry_ack_intr_handler(int irq, void *drv_data)
-{
-	struct pil_tz_data *d = drv_data;
-
-	pr_info("Received dsentry ack interrupt from %s\n",
-			d->subsys_desc.name);
-	complete_dsentry_ack(&d->subsys_desc);
 	return IRQ_HANDLED;
 }
 
@@ -1151,8 +1164,6 @@ static void subsys_enable_all_irqs(struct pil_tz_data *d)
 		enable_irq(d->stop_ack_irq);
 	if (d->shutdown_ack_irq)
 		enable_irq(d->shutdown_ack_irq);
-	if (d->dsentry_ack_irq)
-		enable_irq(d->dsentry_ack_irq);
 	if (d->ramdump_disable_irq)
 		enable_irq(d->ramdump_disable_irq);
 	if (d->generic_irq) {
@@ -1176,8 +1187,6 @@ static void subsys_disable_all_irqs(struct pil_tz_data *d)
 		disable_irq(d->stop_ack_irq);
 	if (d->shutdown_ack_irq)
 		disable_irq(d->shutdown_ack_irq);
-	if (d->dsentry_ack_irq)
-		disable_irq(d->dsentry_ack_irq);
 	if (d->generic_irq) {
 		mask_scsr_irqs(d);
 		irq_set_irq_wake(d->generic_irq, 0);
@@ -1244,10 +1253,6 @@ static int subsys_parse_irqs(struct platform_device *pdev)
 		return ret;
 
 	ret = __get_irq(pdev, "qcom,shutdown-ack", &d->shutdown_ack_irq);
-	if (ret && ret != -ENOENT)
-		return ret;
-
-	ret = __get_irq(pdev, "qcom,dsentry-ack", &d->dsentry_ack_irq);
 	if (ret && ret != -ENOENT)
 		return ret;
 
@@ -1324,20 +1329,6 @@ static int subsys_setup_irqs(struct platform_device *pdev)
 			return ret;
 		}
 		disable_irq(d->shutdown_ack_irq);
-	}
-
-	if (d->dsentry_ack_irq) {
-		ret = devm_request_threaded_irq(&pdev->dev,
-				d->dsentry_ack_irq,
-				NULL, subsys_dsentry_ack_intr_handler,
-				IRQF_TRIGGER_RISING | IRQF_ONESHOT,
-				d->desc.name, d);
-		if (ret < 0) {
-			dev_err(&pdev->dev, "[%s]: Unable to register shutdown ack handler: %d\n",
-				d->desc.name, ret);
-			return ret;
-		}
-		disable_irq(d->dsentry_ack_irq);
 	}
 
 	if (d->ramdump_disable_irq) {
@@ -1482,7 +1473,6 @@ static int pil_tz_generic_probe(struct platform_device *pdev)
 	d->subsys_desc.ramdump = subsys_ramdump;
 	d->subsys_desc.free_memory = subsys_free_memory;
 	d->subsys_desc.crash_shutdown = subsys_crash_shutdown;
-	d->subsys_desc.enter_ds = subsys_enter_ds;
 
 	if (of_property_read_bool(pdev->dev.of_node,
 					"qcom,pil-generic-irq-handler")) {
@@ -1604,6 +1594,10 @@ load_from_pil:
 		rc = PTR_ERR(d->subsys);
 		goto err_subsys;
 	}
+	
+	/* NOTE: copy smem_state here for reset reason gpio */
+	if (!strncmp(d->subsys_desc.name, "modem", 5)) 
+		d->subsys_desc.state = d->state;
 
 	rc = subsys_setup_irqs(pdev);
 	if (rc) {

@@ -154,5 +154,4 @@
 
 /* BMS */
 #define PSY_IIO_CLEAR_SOH			0x7c
-#define PSY_IIO_SYS_SOC				0x7d
 #endif /* __QTI_POWER_SUPPLY_IIO_H__ */

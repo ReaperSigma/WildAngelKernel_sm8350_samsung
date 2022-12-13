@@ -32,7 +32,6 @@ enum ssr_comm {
 	SUBSYS_TO_SUBSYS_SYSMON,
 	SUBSYS_TO_HLOS,
 	HLOS_TO_SUBSYS_SYSMON_SHUTDOWN,
-	HLOS_TO_SUBSYS_SYSMON_DSENTER,
 	NUM_SSR_COMMS,
 };
 
@@ -66,7 +65,6 @@ struct subsys_notif_timeout {
  * @dev: parent device
  * @owner: module the descriptor belongs to
  * @shutdown: Stop a subsystem
- * @powerup_notify: Notify about start of a subsystem
  * @powerup: Start a subsystem
  * @crash_shutdown: Shutdown a subsystem when the system crashes (can't sleep)
  * @ramdump: Collect a ramdump of the subsystem
@@ -91,26 +89,21 @@ struct subsys_desc {
 	struct module *owner;
 
 	int (*shutdown)(const struct subsys_desc *desc, bool force_stop);
-	int (*enter_ds)(const struct subsys_desc *desc);
-	int (*powerup_notify)(const struct subsys_desc *desc);
 	int (*powerup)(const struct subsys_desc *desc);
 	void (*crash_shutdown)(const struct subsys_desc *desc);
 	int (*ramdump)(int need_dumps, const struct subsys_desc *desc);
 	void (*free_memory)(const struct subsys_desc *desc);
 	struct completion shutdown_ack;
-	struct completion dsentry_ack;
 	int err_fatal_gpio;
 	int force_stop_bit;
 	int ramdump_disable_irq;
 	int shutdown_ack_irq;
-	int dsentry_ack_irq;
 	int ramdump_disable;
 	bool no_auth;
 	bool pil_mss_memsetup;
 	int ssctl_instance_id;
 	u32 sysmon_pid;
 	int sysmon_shutdown_ret;
-	int sysmon_dsentry_ret;
 	bool system_debug;
 	bool ignore_ssr_failure;
 	const char *edge;
@@ -118,6 +111,7 @@ struct subsys_desc {
 #ifdef CONFIG_SETUP_SSR_NOTIF_TIMEOUTS
 	struct subsys_notif_timeout timeout_data;
 #endif /* CONFIG_SETUP_SSR_NOTIF_TIMEOUTS */
+	bool run_fssr;
 };
 
 /**
@@ -139,17 +133,40 @@ struct notif_data {
 
 #if IS_ENABLED(CONFIG_MSM_SUBSYSTEM_RESTART)
 
+#ifndef __IPC_SUB_IOCTL
+#define __IPC_SUB_IOCTL
+
+#include <linux/soc/qcom/smem_state.h>
+
+#define IPC_SUB_IOCTL_MAGIC (0xC8)
+#define IPC_SUB_IOCTL_SUBSYS_GET_RESTART \
+	_IOR(IPC_SUB_IOCTL_MAGIC, 0, struct msm_ipc_subsys_request)
+
+enum {
+	SUBSYS_CR_REQ = 0,
+	SUBSYS_RES_REQ,
+};
+
+struct msm_ipc_subsys_request {
+	char name[16];
+	char reason[16];
+	int request_id;
+};
+#endif
+
 extern int subsys_get_restart_level(struct subsys_device *dev);
 extern int subsystem_restart_dev(struct subsys_device *dev);
 extern int subsystem_restart(const char *name);
+extern int subsys_force_stop(struct msm_ipc_subsys_request *req);
 extern int subsystem_crashed(const char *name);
-extern int subsystem_start_notify(const char *name);
-extern int subsystem_stop_notify(const char *subsystem);
-extern int subsystem_ds_entry(const char *subsystem);
-extern int subsystem_ds_exit(const char *name);
-extern int subsystem_s2d_entry(const char *subsystem);
-extern int subsystem_s2d_exit(const char *name);
-
+extern void subsys_set_cdsp_silent_ssr(bool value);
+void subsys_set_fssr(struct subsys_device *dev, bool value);
+void subsys_set_adsp_silent_ssr(bool value);
+int subsys_restart_adsp(void);
+void subsys_set_voice_state(bool value);
+bool subsys_get_voice_state(void);
+void subsys_set_mmap_audio_state(bool value);
+bool subsys_get_mmap_audio_state(void);
 extern void *subsystem_get(const char *name);
 extern void *subsystem_get_with_fwname(const char *name, const char *fw_name);
 extern int subsystem_set_fwname(const char *name, const char *fw_name);
@@ -168,11 +185,11 @@ static inline void complete_shutdown_ack(struct subsys_desc *desc)
 {
 	complete(&desc->shutdown_ack);
 }
-static inline void complete_dsentry_ack(struct subsys_desc *desc)
-{
-	complete(&desc->dsentry_ack);
-}
 struct subsys_device *find_subsys_device(const char *str);
+#if IS_ENABLED(CONFIG_SEC_PCIE)
+extern bool is_subsystem_crash(const char *name);
+extern int is_subsystem_online(const char *name);
+#endif
 #else
 
 static inline int subsys_get_restart_level(struct subsys_device *dev)
@@ -190,37 +207,12 @@ static inline int subsystem_restart(const char *name)
 	return 0;
 }
 
+static inline int subsys_force_stop(struct msm_ipc_subsys_request *req)
+{
+	return 0;
+}
+
 static inline int subsystem_crashed(const char *name)
-{
-	return 0;
-}
-
-extern int subsystem_start_notify(const char *name)
-{
-	return 0;
-}
-
-extern int subsystem_stop_notify(const char *subsystem)
-{
-	return 0;
-}
-
-static int subsystem_ds_entry(const char *subsystem)
-{
-	return 0;
-}
-
-static int subsystem_ds_exit(const char *name)
-{
-	return 0;
-}
-
-static int subsystem_s2d_exit(const char *name)
-{
-	return 0;
-}
-
-static int subsystem_s2d_entry(const char *name)
 {
 	return 0;
 }
@@ -260,6 +252,17 @@ enum crash_status subsys_get_crash_status(struct subsys_device *dev)
 static inline void notify_proxy_vote(struct device *device) { }
 static inline void notify_proxy_unvote(struct device *device) { }
 static inline void notify_before_auth_and_reset(struct device *device) { }
+#if IS_ENABLED(CONFIG_SEC_PCIE)
+static bool is_subsystem_crash(const char *name)
+{
+	return false;
+}
+
+static int is_subsystem_online(const char *name)
+{
+	return false;
+}
+#endif
 #endif /* CONFIG_MSM_SUBSYSTEM_RESTART */
 
 /* Helper wrappers */
@@ -272,4 +275,7 @@ static inline void wakeup_source_trash(struct wakeup_source *ws)
 	__pm_relax(ws);
 }
 
+#if defined(CONFIG_SUPPORT_DUAL_6AXIS) && defined(CONFIG_SEC_FACTORY)
+extern bool is_pretest(void);
+#endif
 #endif

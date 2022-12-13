@@ -2,7 +2,6 @@
 /*
  * Copyright (c) 2015-2016, 2018-2021, The Linux Foundation.
  * All rights reserved.
- * Copyright (c) 2022, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/kernel.h>
@@ -241,18 +240,7 @@ const u8 clk_alpha_pll_regs[][PLL_OFF_MAX_REGS] = {
 		[PLL_OFF_TEST_CTL_U] = 0x30,
 		[PLL_OFF_TEST_CTL_U1] = 0x34,
 	},
-	[CLK_ALPHA_PLL_TYPE_RIVIAN_EVO] = {
-		[PLL_OFF_OPMODE] = 0x04,
-		[PLL_OFF_STATUS] = 0x0c,
-		[PLL_OFF_L_VAL] = 0x10,
-		[PLL_OFF_USER_CTL] = 0x14,
-		[PLL_OFF_USER_CTL_U] = 0x18,
-		[PLL_OFF_CONFIG_CTL] = 0x1c,
-		[PLL_OFF_CONFIG_CTL_U] = 0x20,
-		[PLL_OFF_CONFIG_CTL_U1] = 0x24,
-		[PLL_OFF_TEST_CTL] = 0x28,
-		[PLL_OFF_TEST_CTL_U] = 0x2c,
-	},
+
 };
 EXPORT_SYMBOL_GPL(clk_alpha_pll_regs);
 
@@ -618,17 +606,7 @@ static void clk_alpha_pll_disable(struct clk_hw *hw)
 static unsigned long
 alpha_pll_calc_rate(u64 prate, u32 l, u32 a, u32 alpha_width)
 {
-	unsigned long rate;
-
-	rate = (prate * l) + ((prate * a) >> ALPHA_SHIFT(alpha_width));
-
-	/*
-	 * PLLs with narrow ALPHA (e.g. 16 bits) aren't able to hit all
-	 * frequencies precisely and may be under by a few hundred Hz. Round to
-	 * the nearest KHz to avoid reporting strange, slightly lower than
-	 * requested frequencies. The small delta has no functional impact.
-	 */
-	return roundup(rate, 1000);
+	return (prate * l) + ((prate * a) >> ALPHA_SHIFT(alpha_width));
 }
 
 static unsigned long
@@ -650,7 +628,10 @@ alpha_pll_round_rate(unsigned long rate, unsigned long prate, u32 *l, u64 *a,
 	/* Upper ALPHA_BITWIDTH bits of Alpha */
 	quotient = remainder << ALPHA_SHIFT(alpha_width);
 
-	do_div(quotient, prate);
+	remainder = do_div(quotient, prate);
+
+	if (remainder)
+		quotient++;
 
 	*a = quotient;
 	return alpha_pll_calc_rate(prate, *l, *a, alpha_width);
@@ -910,68 +891,6 @@ static long clk_alpha_pll_round_rate(struct clk_hw *hw, unsigned long rate,
 	return clamp(rate, min_freq, max_freq);
 }
 
-void clk_huayra_pll_configure(struct clk_alpha_pll *pll, struct regmap *regmap,
-				const struct alpha_pll_config *config)
-{
-	if (config->config_ctl_val)
-		regmap_write(regmap, PLL_CONFIG_CTL(pll),
-				config->config_ctl_val);
-
-	if (config->config_ctl_hi_val)
-		regmap_write(regmap, PLL_CONFIG_CTL_U(pll),
-				config->config_ctl_hi_val);
-
-	if (config->config_ctl_hi1_val)
-		regmap_write(regmap, PLL_CONFIG_CTL_U1(pll),
-				config->config_ctl_hi1_val);
-
-	if (config->test_ctl_val)
-		regmap_write(regmap, PLL_TEST_CTL(pll),
-				config->test_ctl_val);
-
-	if (config->test_ctl_hi_val)
-		regmap_write(regmap, PLL_TEST_CTL_U(pll),
-				config->test_ctl_hi_val);
-
-	if (config->test_ctl_hi1_val)
-		regmap_write(regmap, PLL_TEST_CTL_U1(pll),
-				config->test_ctl_hi1_val);
-
-	if (config->l)
-		regmap_write(regmap, PLL_L_VAL(pll), config->l);
-
-	if (config->alpha)
-		regmap_write(regmap, PLL_ALPHA_VAL(pll), config->alpha);
-
-	if (config->user_ctl_val)
-		regmap_write(regmap, PLL_USER_CTL(pll),
-				config->user_ctl_val);
-
-	/* Set PLL_BYPASSNL */
-	regmap_update_bits(regmap, PLL_MODE(pll),
-			 PLL_BYPASSNL, PLL_BYPASSNL);
-
-	/*
-	 * H/W requires a 1us delay between disabling the bypass and
-	 * de-asserting the reset.
-	 */
-	mb();
-	udelay(5);
-
-	/* Take PLL out from reset state */
-	regmap_update_bits(regmap, PLL_MODE(pll),
-				 PLL_RESET_N, PLL_RESET_N);
-
-	/* Wait 50us for pll_lock_det bit to go high */
-	mb();
-	udelay(50);
-
-	/* Enables PLL output */
-	regmap_update_bits(regmap, PLL_MODE(pll),
-			 PLL_OUTCTRL, PLL_OUTCTRL);
-}
-EXPORT_SYMBOL(clk_huayra_pll_configure);
-
 static unsigned long
 alpha_huayra_pll_calc_rate(u64 prate, u32 l, u32 a)
 {
@@ -982,7 +901,7 @@ alpha_huayra_pll_calc_rate(u64 prate, u32 l, u32 a)
 	if (a >= BIT(PLL_HUAYRA_ALPHA_WIDTH - 1))
 		l -= 1;
 
-	return alpha_pll_calc_rate(prate, l, a, PLL_HUAYRA_ALPHA_WIDTH);
+	return (prate * l) + (prate * a >> PLL_HUAYRA_ALPHA_WIDTH);
 }
 
 static unsigned long
@@ -1002,7 +921,10 @@ alpha_huayra_pll_round_rate(unsigned long rate, unsigned long prate,
 	}
 
 	quotient = remainder << PLL_HUAYRA_ALPHA_WIDTH;
-	do_div(quotient, prate);
+	remainder = do_div(quotient, prate);
+
+	if (remainder)
+		quotient++;
 
 	/*
 	 * alpha_val should be in two’s compliment number in the range
@@ -1113,25 +1035,12 @@ static int alpha_pll_huayra_set_rate(struct clk_hw *hw, unsigned long rate,
 	return 0;
 }
 
-static int alpha_pll_huayra_determine_rate(struct clk_hw *hw,
-				struct clk_rate_request *req)
+static long alpha_pll_huayra_round_rate(struct clk_hw *hw, unsigned long rate,
+					unsigned long *prate)
 {
-	unsigned long rrate, prate;
 	u32 l, a;
-	struct clk_hw *parent_hw;
 
-	parent_hw = clk_hw_get_parent(hw);
-	if (!parent_hw)
-		return -EINVAL;
-
-	prate = clk_hw_get_rate(parent_hw);
-	rrate = alpha_huayra_pll_round_rate(req->rate, prate, &l, &a);
-
-	req->best_parent_hw = parent_hw;
-	req->best_parent_rate = prate;
-	req->rate = rrate;
-
-	return 0;
+	return alpha_huayra_pll_round_rate(rate, *prate, &l, &a);
 }
 
 static int trion_pll_is_enabled(struct clk_alpha_pll *pll,
@@ -1161,14 +1070,6 @@ int clk_trion_pll_configure(struct clk_alpha_pll *pll, struct regmap *regmap,
 
 	if (trion_pll_is_enabled(pll, regmap)) {
 		pr_warn("PLL is already enabled. Skipping configuration.\n");
-
-		/*
-		 * Set the PLL_UPDATE_BYPASS bit to latch the input before continuing.
-		 */
-		regmap_update_bits(regmap, pll->offset + PLL_MODE(pll),
-				 PLL_UPDATE_BYPASS,
-				 PLL_UPDATE_BYPASS);
-
 		return 0;
 	}
 
@@ -1413,9 +1314,6 @@ static int clk_trion_pll_prepare(struct clk_hw *hw)
 	/* Return early if calibration is not needed. */
 	regmap_read(pll->clkr.regmap, PLL_STATUS(pll), &regval);
 	if (regval & TRION_PCAL_DONE)
-		return ret;
-
-	if (clk_trion_pll_is_enabled(hw))
 		return ret;
 
 	ret = clk_trion_pll_enable(hw);
@@ -1966,78 +1864,6 @@ static void clk_alpha_pll_huayra_init(struct clk_hw *hw)
 		rclk->ops = &clk_alpha_pll_huayra_regmap_ops;
 }
 
-static int get_pll_type(struct clk_alpha_pll *pll,
-				const u8 clk_alpha_pll_regs[][PLL_OFF_MAX_REGS])
-{
-	if (pll->regs)
-		return (pll->regs - clk_alpha_pll_regs[0]) / (PLL_OFF_MAX_REGS);
-
-	pr_debug("pll->regs not defined\n");
-	return -EINVAL;
-}
-
-static void clk_pll_restore_context(struct clk_hw *hw)
-{
-	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
-	int type = get_pll_type(pll, clk_alpha_pll_regs);
-
-	if (!pll->config)
-		return;
-
-	switch (type) {
-	case CLK_ALPHA_PLL_TYPE_DEFAULT:
-	case CLK_ALPHA_PLL_TYPE_BRAMMO:
-		clk_alpha_pll_configure(pll, pll->clkr.regmap,
-					pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_HUAYRA:
-		clk_huayra_pll_configure(pll, pll->clkr.regmap,
-					pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_FABIA:
-		clk_fabia_pll_configure(pll, pll->clkr.regmap,
-					pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_TRION:
-		clk_trion_pll_configure(pll, pll->clkr.regmap,
-					 pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_LUCID:
-		clk_lucid_pll_configure(pll, pll->clkr.regmap,
-					 pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_ZONDA:
-		clk_zonda_pll_configure(pll, pll->clkr.regmap,
-					pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_ZONDA_EVO:
-		clk_zonda_evo_pll_configure(pll, pll->clkr.regmap, pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_LUCID_5LPE:
-		clk_lucid_5lpe_pll_configure(pll, pll->clkr.regmap,
-					 pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_ZONDA_5LPE:
-		clk_zonda_5lpe_pll_configure(pll, pll->clkr.regmap,
-					pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_REGERA:
-		clk_regera_pll_configure(pll, pll->clkr.regmap,
-					pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_AGERA:
-		clk_agera_pll_configure(pll, pll->clkr.regmap,
-					pll->config);
-		break;
-	case CLK_ALPHA_PLL_TYPE_LUCID_EVO:
-		clk_lucid_evo_pll_configure(pll, pll->clkr.regmap,
-					pll->config);
-		break;
-	default:
-		pr_err("Invalid pll type!\n");
-	}
-}
-
 const struct clk_ops clk_alpha_pll_ops = {
 	.prepare = clk_prepare_regmap,
 	.unprepare = clk_unprepare_regmap,
@@ -2051,7 +1877,6 @@ const struct clk_ops clk_alpha_pll_ops = {
 	.set_rate = clk_alpha_pll_set_rate,
 	.init = clk_alpha_pll_init,
 	.debug_init = clk_common_debug_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -2067,11 +1892,10 @@ const struct clk_ops clk_alpha_pll_huayra_ops = {
 	.disable = clk_alpha_pll_disable,
 	.is_enabled = clk_alpha_pll_is_enabled,
 	.recalc_rate = alpha_pll_huayra_recalc_rate,
-	.determine_rate = alpha_pll_huayra_determine_rate,
+	.round_rate = alpha_pll_huayra_round_rate,
 	.set_rate = alpha_pll_huayra_set_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_alpha_pll_huayra_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -2089,7 +1913,6 @@ const struct clk_ops clk_alpha_pll_hwfsm_ops = {
 	.recalc_rate = clk_alpha_pll_recalc_rate,
 	.round_rate = clk_alpha_pll_round_rate,
 	.set_rate = clk_alpha_pll_hwfsm_set_rate,
-	.restore_context = clk_pll_restore_context,
 	.debug_init = clk_common_debug_init,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
@@ -2110,7 +1933,6 @@ const struct clk_ops clk_trion_pll_ops = {
 	.set_rate = clk_trion_pll_set_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_trion_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -2129,7 +1951,6 @@ const struct clk_ops clk_trion_fixed_pll_ops = {
 	.round_rate = clk_alpha_pll_round_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_trion_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -2206,7 +2027,6 @@ const struct clk_ops clk_alpha_pll_zonda_ops = {
 	.set_rate = clk_zonda_pll_set_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_alpha_pll_zonda_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -2226,7 +2046,6 @@ const struct clk_ops clk_alpha_pll_zonda_5lpe_ops = {
 	.set_rate = clk_zonda_pll_set_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_alpha_pll_zonda_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -2622,7 +2441,6 @@ const struct clk_ops clk_alpha_pll_fabia_ops = {
 	.round_rate = clk_alpha_pll_round_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_fabia_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -2641,7 +2459,6 @@ const struct clk_ops clk_alpha_pll_fixed_fabia_ops = {
 	.round_rate = clk_alpha_pll_round_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_fabia_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -3076,24 +2893,18 @@ static int alpha_pll_lucid_set_rate(struct clk_hw *hw, unsigned long rate,
 	if (ret)
 		return ret;
 
-	/*
-	 * When PLL_HW_UPDATE_LOGIC_BYPASS bit is not set then waiting for
-	 * pll_ack_latch to return to zero can be bypassed.
-	 */
-	if (!(pll->flags & SUPPORTS_NO_PLL_LATCH)) {
-		/* Wait for 2 reference cycles before checking the ACK bit. */
-		udelay(1);
-		regmap_read(pll->clkr.regmap, PLL_MODE(pll), &regval);
-		if (!(regval & PLL_UPDATE_BYPASS)) {
-			ret = wait_for_pll_update(pll);
-			if (ret)
-				WARN_CLK(&pll->clkr.hw, 1, "PLL Update clear failed\n");
-			return ret;
-		} else if (!(regval & ALPHA_PLL_ACK_LATCH)) {
-			WARN_CLK(&pll->clkr.hw, 1,
+	/* Wait for 2 reference cycles before checking the ACK bit. */
+	udelay(1);
+	regmap_read(pll->clkr.regmap, PLL_MODE(pll), &regval);
+	if (!(regval & PLL_UPDATE_BYPASS)) {
+		ret = wait_for_pll_update(pll);
+		if (ret)
+			WARN_CLK(&pll->clkr.hw, 1, "PLL Update clear failed\n");
+		return ret;
+	} else if (!(regval & ALPHA_PLL_ACK_LATCH)) {
+		WARN_CLK(&pll->clkr.hw, 1,
 				"PLL latch failed. Output may be unstable!\n");
-			return -EINVAL;
-		}
+		return -EINVAL;
 	}
 
 	/* Return the latch input to 0 */
@@ -3396,6 +3207,61 @@ static int alpha_pll_lucid_5lpe_set_rate(struct clk_hw *hw, unsigned long rate,
 	return 0;
 }
 
+static int alpha_pll_lucid_5lpe_sdx_cpu_set_rate(struct clk_hw *hw,
+						 unsigned long rate,
+						 unsigned long prate)
+{
+	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
+	unsigned long rrate;
+	u32 regval, l;
+	u64 a;
+	int ret;
+
+	rrate = alpha_pll_round_rate(rate, prate, &l, &a, ALPHA_REG_16BIT_WIDTH);
+
+	/*
+	 * Due to a limited number of bits for fractional rate programming, the
+	 * rounded up rate could be marginally higher than the requested rate.
+	 */
+	if (rrate > (rate + PLL_OUT_RATE_MARGIN) || rrate < rate) {
+		pr_err("Call set rate on the PLL with rounded rates!\n");
+		return -EINVAL;
+	}
+
+	regmap_write(pll->clkr.regmap, PLL_L_VAL(pll), l);
+	regmap_write(pll->clkr.regmap, PLL_ALPHA_VAL(pll), a);
+
+	/* Latch the PLL input */
+	ret = regmap_write_bits(pll->clkr.regmap, PLL_MODE(pll),
+				LUCID_5LPE_SDX_CPU_LATCH_INPUT,
+				LUCID_5LPE_SDX_CPU_LATCH_INPUT);
+	if (ret)
+		return ret;
+
+	/* Wait for 2 reference cycles before checking the ACK bit. */
+	udelay(1);
+	regmap_read(pll->clkr.regmap, PLL_MODE(pll), &regval);
+	if (!(regval & LUCID_5LPE_ALPHA_PLL_ACK_LATCH)) {
+		WARN_CLK(&pll->clkr.hw, 1,
+			 "PLL latch failed. Output may be unstable!\n");
+		return -EINVAL;
+	}
+
+	/* Return the latch input to 0 */
+	ret = regmap_write_bits(pll->clkr.regmap, PLL_MODE(pll),
+				LUCID_5LPE_SDX_CPU_LATCH_INPUT, 0);
+	if (ret)
+		return ret;
+
+	if (clk_hw_is_enabled(hw)) {
+		ret = wait_for_pll_enable_lock(pll);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int clk_lucid_5lpe_pll_postdiv_set_rate(struct clk_hw *hw,
 				unsigned long rate, unsigned long parent_rate)
 {
@@ -3512,7 +3378,6 @@ const struct clk_ops clk_alpha_pll_lucid_ops = {
 	.set_rate = alpha_pll_lucid_set_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_lucid_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -3532,12 +3397,30 @@ const struct clk_ops clk_alpha_pll_lucid_5lpe_ops = {
 	.set_rate = alpha_pll_lucid_5lpe_set_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_lucid_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
 };
 EXPORT_SYMBOL(clk_alpha_pll_lucid_5lpe_ops);
+
+const struct clk_ops clk_alpha_pll_lucid_5lpe_sdx_cpu_ops = {
+	.prepare = alpha_pll_lucid_5lpe_prepare,
+	.unprepare = clk_unprepare_regmap,
+	.pre_rate_change = clk_pre_change_regmap,
+	.post_rate_change = clk_post_change_regmap,
+	.enable = alpha_pll_lucid_5lpe_enable,
+	.disable = alpha_pll_lucid_5lpe_disable,
+	.is_enabled = alpha_pll_lucid_is_enabled,
+	.recalc_rate = alpha_pll_lucid_recalc_rate,
+	.round_rate = clk_alpha_pll_round_rate,
+	.set_rate = alpha_pll_lucid_5lpe_sdx_cpu_set_rate,
+	.debug_init = clk_common_debug_init,
+	.init = clk_lucid_pll_init,
+#ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
+	.list_rate_vdd_level = clk_list_rate_vdd_level,
+#endif
+};
+EXPORT_SYMBOL(clk_alpha_pll_lucid_5lpe_sdx_cpu_ops);
 
 const struct clk_ops clk_alpha_pll_fixed_lucid_ops = {
 	.prepare = clk_prepare_regmap,
@@ -3551,7 +3434,6 @@ const struct clk_ops clk_alpha_pll_fixed_lucid_ops = {
 	.round_rate = clk_alpha_pll_round_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_lucid_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -3577,7 +3459,6 @@ const struct clk_ops clk_alpha_pll_fixed_lucid_5lpe_ops = {
 	.round_rate = clk_alpha_pll_round_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_lucid_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -3984,7 +3865,6 @@ const struct clk_ops clk_alpha_pll_fixed_lucid_evo_ops = {
 	.round_rate = clk_alpha_pll_round_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_lucid_evo_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -4011,7 +3891,6 @@ const struct clk_ops clk_alpha_pll_lucid_evo_ops = {
 	.set_rate = alpha_pll_lucid_evo_set_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_lucid_evo_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -4274,7 +4153,6 @@ const struct clk_ops clk_alpha_pll_fixed_zonda_evo_ops = {
 	.round_rate = clk_alpha_pll_round_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_alpha_pll_zonda_evo_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -4596,7 +4474,6 @@ const struct clk_ops clk_regera_pll_ops = {
 	.set_rate = clk_regera_pll_set_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_regera_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -4753,7 +4630,6 @@ const struct clk_ops clk_agera_pll_ops = {
 	.set_rate = alpha_pll_agera_set_rate,
 	.debug_init = clk_common_debug_init,
 	.init = clk_agera_pll_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
@@ -4952,146 +4828,8 @@ const struct clk_ops clk_alpha_pll_slew_ops = {
 	.set_rate = clk_alpha_pll_slew_set_rate,
 	.init = clk_alpha_pll_init,
 	.debug_init = clk_common_debug_init,
-	.restore_context = clk_pll_restore_context,
 #ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
 	.list_rate_vdd_level = clk_list_rate_vdd_level,
 #endif
 };
 EXPORT_SYMBOL(clk_alpha_pll_slew_ops);
-
-int clk_rivian_evo_pll_configure(struct clk_alpha_pll *pll,
-		struct regmap *regmap, const struct alpha_pll_config *config)
-{
-	u32 mask;
-	int ret;
-
-	ret = lucid_pll_is_enabled(pll, regmap);
-	if (ret)
-		return ret;
-
-	if (config->config_ctl_val)
-		ret |= regmap_write(regmap, PLL_CONFIG_CTL(pll),
-				config->config_ctl_val);
-
-	if (config->config_ctl_hi_val)
-		ret |= regmap_write(regmap, PLL_CONFIG_CTL_U(pll),
-				config->config_ctl_hi_val);
-
-	if (config->config_ctl_hi1_val)
-		ret |= regmap_write(regmap, PLL_CONFIG_CTL_U1(pll),
-				config->config_ctl_hi1_val);
-
-	if (config->test_ctl_val)
-		regmap_write(regmap, PLL_TEST_CTL(pll), config->test_ctl_val);
-
-	if (config->test_ctl_hi_val)
-		regmap_write(regmap, PLL_TEST_CTL_U(pll),
-						config->test_ctl_hi_val);
-
-	if (config->l)
-		ret |= regmap_write(regmap, PLL_L_VAL(pll), config->l);
-
-	if (config->user_ctl_val)
-		ret |= regmap_write(regmap, PLL_USER_CTL(pll),
-				config->user_ctl_val);
-
-	if (config->user_ctl_hi_val)
-		ret |= regmap_write(regmap, PLL_USER_CTL_U(pll),
-				config->user_ctl_hi_val);
-
-	/* pll_opmode to STANDBY */
-	ret |= regmap_write(regmap, PLL_OPMODE(pll), PLL_OPMODE_STANDBY);
-
-	mask = PLL_RESET_N | PLL_BYPASSNL;
-	ret |= regmap_update_bits(regmap, PLL_MODE(pll), mask, mask);
-
-	return ret ? -EIO : 0;
-}
-EXPORT_SYMBOL(clk_rivian_evo_pll_configure);
-
-static unsigned long
-clk_rivian_evo_pll_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
-{
-	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
-	u32 l;
-
-	regmap_read(pll->clkr.regmap, PLL_L_VAL(pll), &l);
-
-	return parent_rate * l;
-}
-
-static long clk_rivian_evo_pll_round_rate(struct clk_hw *hw, unsigned long rate,
-				     unsigned long *prate)
-{
-	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
-	u32 l;
-	u64 a;
-	unsigned long min_freq, max_freq;
-
-	rate = alpha_pll_round_rate(rate, *prate, &l, &a, 0);
-	if (!pll->vco_table || alpha_pll_find_vco(pll, rate))
-		return rate;
-
-	min_freq = pll->vco_table[0].min_freq;
-	max_freq = pll->vco_table[pll->num_vco - 1].max_freq;
-
-	return clamp(rate, min_freq, max_freq);
-}
-
-static void clk_rivian_evo_pll_list_registers(struct seq_file *f, struct clk_hw *hw)
-{
-	struct clk_alpha_pll *pll = to_clk_alpha_pll(hw);
-	int size, i, val;
-
-	static struct clk_register_data data[] = {
-		{"PLL_MODE", PLL_OFF_MODE},
-		{"PLL_OPMODE", PLL_OFF_OPMODE},
-		{"PLL_STATUS", PLL_OFF_STATUS},
-		{"PLL_L_VAL", PLL_OFF_L_VAL},
-		{"PLL_USER_CTL", PLL_OFF_USER_CTL},
-		{"PLL_USER_CTL_U", PLL_OFF_USER_CTL_U},
-		{"PLL_CONFIG_CTL", PLL_OFF_CONFIG_CTL},
-		{"PLL_CONFIG_CTL_U", PLL_OFF_CONFIG_CTL_U},
-		{"PLL_CONFIG_CTL_U1", PLL_OFF_CONFIG_CTL_U1},
-		{"PLL_TEST_CTL", PLL_OFF_TEST_CTL},
-		{"PLL_TEST_CTL_U", PLL_OFF_TEST_CTL_U},
-	};
-
-	size = ARRAY_SIZE(data);
-
-	for (i = 0; i < size; i++) {
-		regmap_read(pll->clkr.regmap, pll->offset +
-					pll->regs[data[i].offset], &val);
-		seq_printf(f, "%20s: 0x%.8x\n", data[i].name, val);
-	}
-}
-
-static struct clk_regmap_ops clk_rivian_evo_pll_regmap_ops = {
-	.list_registers = &clk_rivian_evo_pll_list_registers,
-};
-
-static void clk_rivian_evo_pll_init(struct clk_hw *hw)
-{
-	struct clk_regmap *rclk = to_clk_regmap(hw);
-
-	if (!rclk->ops)
-		rclk->ops = &clk_rivian_evo_pll_regmap_ops;
-}
-
-const struct clk_ops clk_alpha_pll_rivian_evo_ops = {
-	.prepare = clk_prepare_regmap,
-	.unprepare = clk_unprepare_regmap,
-	.pre_rate_change = clk_pre_change_regmap,
-	.post_rate_change = clk_post_change_regmap,
-	.enable = alpha_pll_lucid_5lpe_enable,
-	.disable = alpha_pll_lucid_5lpe_disable,
-	.is_enabled = alpha_pll_lucid_is_enabled,
-	.recalc_rate = clk_rivian_evo_pll_recalc_rate,
-	.round_rate = clk_rivian_evo_pll_round_rate,
-	.debug_init = clk_common_debug_init,
-	.init = clk_rivian_evo_pll_init,
-#ifdef CONFIG_COMMON_CLK_QCOM_DEBUG
-	.list_rate_vdd_level = clk_list_rate_vdd_level,
-#endif
-};
-EXPORT_SYMBOL(clk_alpha_pll_rivian_evo_ops);

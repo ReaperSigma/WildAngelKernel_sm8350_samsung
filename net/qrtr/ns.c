@@ -19,7 +19,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/qrtr.h>
 
-#define NS_LOG_PAGE_CNT 4
+#define NS_LOG_PAGE_CNT 8
 static void *ns_ilc;
 #define NS_INFO(x, ...) ipc_log_string(ns_ilc, x, ##__VA_ARGS__)
 
@@ -86,34 +86,34 @@ static struct qrtr_node *node_get(unsigned int node_id)
 		return node;
 
 	/* If node didn't exist, allocate and insert it to the tree */
-	node = kzalloc(sizeof(*node), GFP_ATOMIC);
+	node = kzalloc(sizeof(*node), GFP_KERNEL);
 	if (!node)
 		return NULL;
 
 	node->id = node_id;
 	xa_init(&node->servers);
 
-	xa_store(&nodes, node_id, node, GFP_ATOMIC);
+	xa_store(&nodes, node_id, node, GFP_KERNEL);
 
 	return node;
 }
 
-int qrtr_get_service_id(unsigned int node_id, unsigned int port_id)
+unsigned int qrtr_get_service_id(unsigned int node_id, unsigned int port_id)
 {
 	struct qrtr_server *srv;
 	struct qrtr_node *node;
 	unsigned long index;
 
-	node = xa_load(&nodes, node_id);
+	node = node_get(node_id);
 	if (!node)
-		return -EINVAL;
+		return 0;
 
 	xa_for_each(&node->servers, index, srv) {
 		if (srv->node == node_id && srv->port == port_id)
 			return srv->service;
 	}
 
-	return -EINVAL;
+	return 0;
 }
 EXPORT_SYMBOL(qrtr_get_service_id);
 
@@ -507,7 +507,7 @@ static int ctrl_cmd_new_server(struct sockaddr_qrtr *from,
 
 	/* Don't accept spoofed messages */
 	if (from->sq_node != node_id)
-		return -EACCES;
+		return -EINVAL;
 
 	srv = server_add(service, instance, node_id, port);
 	if (!srv)
@@ -736,14 +736,9 @@ static void qrtr_ns_worker(struct kthread_work *work)
 			break;
 		}
 
-		if (ret < 0 && ret != -EACCES)
+		if (ret < 0)
 			pr_err("failed while handling packet from %d:%d",
 			       sq.sq_node, sq.sq_port);
-
-		else if (ret == -EACCES)
-			NS_INFO("cmd:0x%x Spoofed message from addr[0x%x:0x%x]\n",
-				cmd, le32_to_cpu(pkt->server.node),
-				le32_to_cpu(pkt->server.port));
 	}
 
 	kfree(recv_buf);

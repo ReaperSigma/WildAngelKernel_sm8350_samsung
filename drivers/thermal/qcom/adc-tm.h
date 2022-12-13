@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #ifndef __QCOM_ADC_TM_H__
@@ -139,8 +138,6 @@ struct adc_tm_ops {
 	void (*notify)(struct adc_tm_sensor *adc_tm);
 	int (*interrupts_reg)(struct adc_tm_chip *chip);
 	int (*shutdown)(struct adc_tm_chip *chip);
-	int (*freeze)(struct adc_tm_chip *chip);
-	int (*restore)(struct adc_tm_chip *chip);
 };
 
 struct adc_tm_chip {
@@ -154,7 +151,6 @@ struct adc_tm_chip {
 	const struct adc_tm_ops		*ops;
 	const struct adc_tm_data	*data;
 	unsigned int			dt_channels;
-	int				threshold_irq;
 	struct pmic_revid_data		*pmic_rev_id;
 	struct adc_tm_sensor		sensor[0];
 };
@@ -318,5 +314,13 @@ int32_t adc_tm_write_reg(struct adc_tm_chip *chip,
 					int16_t reg, u8 *data, int len);
 
 int adc_tm_is_valid(struct adc_tm_chip *chip);
+
+#if IS_ENABLED(CONFIG_SEC_EXT_THERMAL_MONITOR)
+#define USB_THM_CH	0x45
+#define WPC_THM_CH	0x4B
+
+int sec_convert_adc_to_temp(unsigned int adc_ch, int temp_adc);
+int sec_get_thr_voltage(unsigned int adc_ch, int temp);
+#endif /* CONFIG_SEC_EXT_THERMAL_MONITOR */
 
 #endif /* __QCOM_ADC_TM_H__ */

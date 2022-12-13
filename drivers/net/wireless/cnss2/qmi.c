@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
- */
+/* Copyright (c) 2015-2021, The Linux Foundation. All rights reserved. */
 
 #include <linux/firmware.h>
 #include <linux/module.h>
@@ -180,33 +178,6 @@ qmi_registered:
 	return ret;
 }
 
-static void cnss_wlfw_host_cap_parse_mlo(struct cnss_plat_data *plat_priv,
-					 struct wlfw_host_cap_req_msg_v01 *req)
-{
-	if (plat_priv->device_id == KIWI_DEVICE_ID) {
-		req->mlo_capable_valid = 1;
-		req->mlo_capable = 1;
-		req->mlo_chip_id_valid = 1;
-		req->mlo_chip_id = 0;
-		req->mlo_group_id_valid = 1;
-		req->mlo_group_id = 0;
-		req->max_mlo_peer_valid = 1;
-		/* Max peer number generally won't change for the same device
-		 * but needs to be synced with host driver.
-		 */
-		req->max_mlo_peer = 32;
-		req->mlo_num_chips_valid = 1;
-		req->mlo_num_chips = 1;
-		req->mlo_chip_info_valid = 1;
-		req->mlo_chip_info[0].chip_id = 0;
-		req->mlo_chip_info[0].num_local_links = 2;
-		req->mlo_chip_info[0].hw_link_id[0] = 0;
-		req->mlo_chip_info[0].hw_link_id[1] = 1;
-		req->mlo_chip_info[0].valid_mlo_link_id[0] = 1;
-		req->mlo_chip_info[0].valid_mlo_link_id[1] = 1;
-	}
-}
-
 static int cnss_wlfw_host_cap_send_sync(struct cnss_plat_data *plat_priv)
 {
 	struct wlfw_host_cap_req_msg_v01 *req;
@@ -278,8 +249,6 @@ static int cnss_wlfw_host_cap_send_sync(struct cnss_plat_data *plat_priv)
 		cnss_pr_dbg("Sending feature list 0x%llx\n",
 			    req->feature_list);
 	}
-
-	cnss_wlfw_host_cap_parse_mlo(plat_priv, req);
 
 	ret = qmi_txn_init(&plat_priv->qmi_wlfw, &txn,
 			   wlfw_host_cap_resp_msg_v01_ei, resp);
@@ -541,6 +510,33 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+extern int ant_from_macloader;
+void cnss_add_ss_naming_rule(struct cnss_plat_data *plat_priv, 
+				  char *filename)
+{
+	char ant[3];
+#ifdef CONFIG_WLAN_MULTIPLE_SUPPORT_FEM
+	int high = -1;
+
+	high = cnss_get_fem_sel_gpio_status (plat_priv);
+#endif
+
+	cnss_pr_err("ant_from_macloader %d\n",ant_from_macloader);
+	//Add ant configuration from macloader
+	if (ant_from_macloader == 1 || ant_from_macloader == 2 || ant_from_macloader == 10) { // 10: for GTX disabled bdf
+		snprintf(ant, 3, "%d", ant_from_macloader); //convert to string
+		strncat(filename, ant, strlen(ant));
+	}
+	
+#ifdef CONFIG_WLAN_MULTIPLE_SUPPORT_FEM
+	if (high > 0)
+		strncat(filename, ".nxp", 4);
+#endif
+	return;
+}
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
+
 static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 				  u32 bdf_type, char *filename,
 				  u32 filename_len)
@@ -573,6 +569,9 @@ static int cnss_get_bdf_file_name(struct cnss_plat_data *plat_priv,
 				 plat_priv->board_info.board_id >> 8 & 0xFF,
 				 plat_priv->board_info.board_id & 0xFF);
 		}
+#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
+		cnss_add_ss_naming_rule(plat_priv, filename_tmp);
+#endif /* CONFIG_SEC_SS_CNSS_FEATURE_SYSFS */
 		break;
 	case CNSS_BDF_BIN:
 		if (plat_priv->board_info.board_id == 0xFF) {
@@ -623,7 +622,7 @@ int cnss_wlfw_bdf_dnld_send_sync(struct cnss_plat_data *plat_priv,
 	struct wlfw_bdf_download_req_msg_v01 *req;
 	struct wlfw_bdf_download_resp_msg_v01 *resp;
 	struct qmi_txn txn;
-	char filename[MAX_FIRMWARE_NAME_LEN] = {0};
+	char filename[MAX_FIRMWARE_NAME_LEN];
 	const struct firmware *fw_entry = NULL;
 	const u8 *temp;
 	u32 remaining;
@@ -1047,7 +1046,7 @@ int cnss_wlfw_qdss_dnld_send_sync(struct cnss_plat_data *plat_priv)
 	struct qmi_txn txn;
 	const struct firmware *fw_entry = NULL;
 	const u8 *temp;
-	char qdss_cfg_filename[MAX_FIRMWARE_NAME_LEN] = {0};
+	char qdss_cfg_filename[MAX_FIRMWARE_NAME_LEN];
 	u32 remaining;
 	int ret = 0;
 
@@ -2237,8 +2236,7 @@ static void cnss_wlfw_request_mem_ind_cb(struct qmi_handle *qmi_wlfw,
 			    ind_msg->mem_seg[i].size, ind_msg->mem_seg[i].type);
 		plat_priv->fw_mem[i].type = ind_msg->mem_seg[i].type;
 		plat_priv->fw_mem[i].size = ind_msg->mem_seg[i].size;
-		if (!plat_priv->fw_mem[i].va &&
-		    plat_priv->fw_mem[i].type == CNSS_MEM_TYPE_DDR)
+		if (plat_priv->fw_mem[i].type == CNSS_MEM_TYPE_DDR)
 			plat_priv->fw_mem[i].attrs |=
 				DMA_ATTR_FORCE_CONTIGUOUS;
 	}
@@ -2894,26 +2892,9 @@ static struct qmi_ops qmi_wlfw_ops = {
 	.del_server = wlfw_del_server,
 };
 
-static int cnss_qmi_add_lookup(struct cnss_plat_data *plat_priv)
-{
-	unsigned int id = WLFW_SERVICE_INS_ID_V01;
-
-	/* In order to support dual wlan card attach case,
-	 * need separate qmi service instance id for each dev
-	 */
-	if (cnss_is_dual_wlan_enabled() && plat_priv->qrtr_node_id != 0 &&
-	    plat_priv->wlfw_service_instance_id != 0)
-		id = plat_priv->wlfw_service_instance_id;
-
-	return qmi_add_lookup(&plat_priv->qmi_wlfw, WLFW_SERVICE_ID_V01,
-			      WLFW_SERVICE_VERS_V01, id);
-}
-
 int cnss_qmi_init(struct cnss_plat_data *plat_priv)
 {
 	int ret = 0;
-
-	cnss_get_qrtr_info(plat_priv);
 
 	ret = qmi_handle_init(&plat_priv->qmi_wlfw,
 			      QMI_WLFW_MAX_RECV_BUF_SIZE,
@@ -2924,7 +2905,8 @@ int cnss_qmi_init(struct cnss_plat_data *plat_priv)
 		goto out;
 	}
 
-	ret = cnss_qmi_add_lookup(plat_priv);
+	ret = qmi_add_lookup(&plat_priv->qmi_wlfw, WLFW_SERVICE_ID_V01,
+			     WLFW_SERVICE_VERS_V01, WLFW_SERVICE_INS_ID_V01);
 	if (ret < 0)
 		cnss_pr_err("Failed to add WLFW QMI lookup, err: %d\n", ret);
 

@@ -621,10 +621,16 @@ static int spcom_handle_create_channel_command(void *cmd_buf, int cmd_size)
 {
 	int ret = 0;
 	struct spcom_user_create_channel_command *cmd = cmd_buf;
+	const size_t maxlen = sizeof(cmd->ch_name);
 
 	if (cmd_size != sizeof(*cmd)) {
 		spcom_pr_err("cmd_size [%d] , expected [%d]\n",
 		       (int) cmd_size,  (int) sizeof(*cmd));
+		return -EINVAL;
+	}
+
+	if (strnlen(cmd->ch_name, maxlen) == maxlen) {
+		spcom_pr_err("channel name is not NULL terminated\n");
 		return -EINVAL;
 	}
 
@@ -633,7 +639,6 @@ static int spcom_handle_create_channel_command(void *cmd_buf, int cmd_size)
 	mutex_unlock(&spcom_dev->chdev_count_lock);
 	if (ret)
 		spcom_pr_err("failed to create ch[%s], ret [%d]\n", cmd->ch_name, ret);
-
 	return ret;
 }
 
@@ -1941,10 +1946,10 @@ static long spcom_device_ioctl(struct file *file,
 
 	switch (ioctl) {
 	case SPCOM_SET_IONFD:
-		ret = copy_from_user(&spcom_dev->nvm_ion_fd, argp, sizeof(int));
+		ret = get_user(spcom_dev->nvm_ion_fd, (int32_t *)arg);
 		break;
 	case SPCOM_GET_IONFD:
-		ret = copy_to_user(argp, &spcom_dev->nvm_ion_fd, sizeof(int));
+		ret = put_user(spcom_dev->nvm_ion_fd, (int32_t *)arg);
 		break;
 	case SPCOM_POLL_STATE:
 		ret = copy_from_user(&op, argp,
@@ -1997,12 +2002,6 @@ static int spcom_create_channel_chardev(const char *name, bool is_sharable)
 	void *priv;
 	struct cdev *cdev;
 
-	if (!name || strnlen(name, SPCOM_CHANNEL_NAME_SIZE) ==
-			SPCOM_CHANNEL_NAME_SIZE) {
-		spcom_pr_err("invalid channel name\n");
-		return -EINVAL;
-	}
-
 	spcom_pr_dbg("creating channel [%s]\n", name);
 
 	ch = spcom_find_channel_by_name(name);
@@ -2037,12 +2036,7 @@ static int spcom_create_channel_chardev(const char *name, bool is_sharable)
 
 	devt = spcom_dev->device_no + spcom_dev->chdev_count;
 	priv = ch;
-
-	/*
-	 * Pass channel name as formatted string to avoid abuse by using a
-	 * formatted string as channel name
-	 */
-	dev = device_create(cls, parent, devt, priv, "%s", name);
+	dev = device_create(cls, parent, devt, priv, name);
 	if (IS_ERR(dev)) {
 		spcom_pr_err("device_create failed\n");
 		ret = -ENODEV;
@@ -2643,8 +2637,11 @@ static int spcom_remove(struct platform_device *pdev)
 		rx_item = list_last_entry(&spcom_dev->rx_list_head,
 					  struct rx_buff_list, list);
 		list_del(&rx_item->list);
-		if (!rx_item)
+		if (!rx_item) {
 			spcom_pr_err("empty entry in pending rx list\n");
+			spin_lock_irqsave(&spcom_dev->rx_lock, flags);
+			continue;
+		}
 		kfree(rx_item);
 	}
 	spin_unlock_irqrestore(&spcom_dev->rx_lock, flags);

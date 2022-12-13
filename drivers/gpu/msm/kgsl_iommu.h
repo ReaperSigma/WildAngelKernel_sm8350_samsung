@@ -29,8 +29,16 @@
 	(test_bit(KGSL_MMU_64BIT, &(__mmu)->features) ? \
 		KGSL_IOMMU_GLOBAL_MEM_BASE64 : KGSL_IOMMU_GLOBAL_MEM_BASE32)
 
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+/* To prevent OOM, increase the size */
+#define KGSL_IOMMU_SECURE_SIZE (SZ_256M + SZ_128M)
+#else
 #define KGSL_IOMMU_SECURE_SIZE SZ_256M
+#endif
+
 #define KGSL_IOMMU_SECURE_END(_mmu) KGSL_IOMMU_GLOBAL_MEM_BASE(_mmu)
+#define KGSL_IOMMU_SECURE_BASE(_mmu)	\
+	(KGSL_IOMMU_GLOBAL_MEM_BASE(_mmu) - KGSL_IOMMU_SECURE_SIZE)
 
 #define KGSL_IOMMU_SVM_BASE32(__mmu)	\
 	(ADRENO_DEVICE(KGSL_MMU_DEVICE(__mmu))->uche_gmem_base + \
@@ -164,13 +172,5 @@ struct kgsl_iommu_pt {
 	uint64_t compat_va_start;
 	uint64_t compat_va_end;
 };
-
-/**
- * kgsl_set_smmu_aperture - set SMMU Aperture for user context
- * @device: A GPU device handle
- *
- * Return: 0 on success or negative on failure.
- */
-int kgsl_set_smmu_aperture(struct kgsl_device *device);
 
 #endif

@@ -511,6 +511,9 @@ static const struct of_device_id reserved_mem_matches[] = {
 	{ .compatible = "qcom,rmtfs-mem" },
 	{ .compatible = "qcom,cmd-db" },
 	{ .compatible = "ramoops" },
+#if IS_ENABLED(CONFIG_PSTORE_PMSG_SSPLOG)
+	{ .compatible = "ss_plog" },
+#endif
 	{}
 };
 
@@ -538,7 +541,9 @@ static int __init of_platform_default_populate_init(void)
 	}
 
 	/* Populate everything else. */
+	fw_devlink_pause();
 	of_platform_default_populate(NULL, NULL, NULL);
+	fw_devlink_resume();
 
 	return 0;
 }

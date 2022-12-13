@@ -37,8 +37,7 @@ suspend_state_t pm_suspend_target_state;
 bool events_check_enabled __read_mostly;
 
 /* First wakeup IRQ seen by the kernel in the last cycle. */
-static unsigned int wakeup_irq[2] __read_mostly;
-static DEFINE_RAW_SPINLOCK(wakeup_irq_lock);
+unsigned int pm_wakeup_irq __read_mostly;
 
 /* If greater than 0 and the system is suspending, terminate the suspend. */
 static atomic_t pm_abort_suspend __read_mostly;
@@ -928,42 +927,19 @@ void pm_system_cancel_wakeup(void)
 }
 EXPORT_SYMBOL_GPL(pm_system_cancel_wakeup);
 
-void pm_wakeup_clear(unsigned int irq_number)
+void pm_wakeup_clear(bool reset)
 {
-	raw_spin_lock_irq(&wakeup_irq_lock);
-
-	if (irq_number && wakeup_irq[0] == irq_number)
-		wakeup_irq[0] = wakeup_irq[1];
-	else
-		wakeup_irq[0] = 0;
-
-	wakeup_irq[1] = 0;
-
-	raw_spin_unlock_irq(&wakeup_irq_lock);
-
-	if (!irq_number)
+	pm_wakeup_irq = 0;
+	if (reset)
 		atomic_set(&pm_abort_suspend, 0);
 }
 
 void pm_system_irq_wakeup(unsigned int irq_number)
 {
-	unsigned long flags;
+	struct irq_desc *desc;
+	const char *name = "null";
 
-	raw_spin_lock_irqsave(&wakeup_irq_lock, flags);
-
-	if (wakeup_irq[0] == 0)
-		wakeup_irq[0] = irq_number;
-	else if (wakeup_irq[1] == 0)
-		wakeup_irq[1] = irq_number;
-	else
-		irq_number = 0;
-
-	raw_spin_unlock_irqrestore(&wakeup_irq_lock, flags);
-
-	if (irq_number) {
-		struct irq_desc *desc;
-		const char *name = "null";
-
+	if (pm_wakeup_irq == 0) {
 		if (msm_show_resume_irq_mask) {
 			desc = irq_to_desc(irq_number);
 			if (desc == NULL)
@@ -974,15 +950,10 @@ void pm_system_irq_wakeup(unsigned int irq_number)
 			log_irq_wakeup_reason(irq_number);
 			pr_warn("%s: %d triggered %s\n", __func__,
 					irq_number, name);
-
 		}
+		pm_wakeup_irq = irq_number;
 		pm_system_wakeup();
 	}
-}
-
-unsigned int pm_wakeup_irq(void)
-{
-	return wakeup_irq[0];
 }
 
 /**
@@ -1185,6 +1156,61 @@ static int wakeup_sources_stats_seq_show(struct seq_file *m, void *v)
 
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+static int print_wakeup_source_active(
+				     struct wakeup_source *ws)
+{
+	unsigned long flags;
+	ktime_t total_time;
+	unsigned long active_count;
+	ktime_t active_time;
+	ktime_t prevent_sleep_time;
+	int ret;
+
+	spin_lock_irqsave(&ws->lock, flags);
+
+	total_time = ws->total_time;
+	prevent_sleep_time = ws->prevent_sleep_time;
+	active_count = ws->active_count;
+	if (ws->active) {
+		ktime_t now = ktime_get();
+
+		active_time = ktime_sub(now, ws->last_time);
+		total_time = ktime_add(total_time, active_time);
+
+		if (ws->autosleep_enabled)
+			prevent_sleep_time = ktime_add(prevent_sleep_time,
+				ktime_sub(now, ws->start_prevent_time));
+	} else {
+		active_time = ktime_set(0, 0);
+	}
+
+	ret = pr_info("%s: active_count(%lu), active_time(%lld), total_time(%lld)\n",
+			ws->name, active_count,
+			ktime_to_ms(active_time), ktime_to_ms(total_time));
+
+	spin_unlock_irqrestore(&ws->lock, flags);
+
+	return ret;
+}
+
+int wakeup_sources_stats_active(void)
+{
+	struct wakeup_source *ws;
+
+	pr_info("Active wake lock:\n");
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(ws, &wakeup_sources, entry)
+		if (ws->active)
+			print_wakeup_source_active(ws);
+	rcu_read_unlock();
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(wakeup_sources_stats_active);
+#endif
 
 static const struct seq_operations wakeup_sources_stats_seq_ops = {
 	.start = wakeup_sources_stats_seq_start,

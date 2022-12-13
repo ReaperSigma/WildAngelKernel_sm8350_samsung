@@ -24,6 +24,8 @@
 
 #include "clk.h"
 
+#include <linux/sec_debug.h>
+
 static DEFINE_SPINLOCK(enable_lock);
 static DEFINE_MUTEX(prepare_lock);
 
@@ -89,6 +91,9 @@ struct clk_core {
 #ifdef CONFIG_DEBUG_FS
 	struct dentry		*dentry;
 	struct hlist_node	debug_node;
+#endif
+#if IS_ENABLED(CONFIG_SEC_PM)
+	struct hlist_node	sec_debug_node;
 #endif
 	struct kref		ref;
 };
@@ -637,24 +642,6 @@ static void clk_core_get_boundaries(struct clk_core *core,
 
 	hlist_for_each_entry(clk_user, &core->clks, clks_node)
 		*max_rate = min(*max_rate, clk_user->max_rate);
-}
-
-static bool clk_core_check_boundaries(struct clk_core *core,
-				      unsigned long min_rate,
-				      unsigned long max_rate)
-{
-	struct clk *user;
-
-	lockdep_assert_held(&prepare_lock);
-
-	if (min_rate > core->max_rate || max_rate < core->min_rate)
-		return false;
-
-	hlist_for_each_entry(user, &core->clks, clks_node)
-		if (min_rate > user->max_rate || max_rate < user->min_rate)
-			return false;
-
-	return true;
 }
 
 void clk_hw_set_rate_range(struct clk_hw *hw, unsigned long min_rate,
@@ -2154,12 +2141,17 @@ static void clk_change_rate(struct clk_core *core)
 		clk_core_prepare_enable(parent);
 
 	trace_clk_set_rate(core, core->new_rate);
+#if IS_ENABLED(CONFIG_SEC_DEBUG_POWER_LOG)
+	sec_debug_clock_rate_log(core->name, core->new_rate, raw_smp_processor_id());
+#endif
 
 	if (!skip_set_rate && core->ops->set_rate)
 		core->ops->set_rate(core->hw, core->new_rate, best_parent_rate);
 
 	trace_clk_set_rate_complete(core, core->new_rate);
-
+#if IS_ENABLED(CONFIG_SEC_DEBUG_POWER_LOG)
+	sec_debug_clock_rate_complete_log(core->name, core->new_rate, raw_smp_processor_id());
+#endif
 	core->rate = clk_recalc(core, best_parent_rate);
 
 	if (core->flags & CLK_SET_RATE_UNGATE) {
@@ -2249,6 +2241,23 @@ static int clk_core_set_rate_nolock(struct clk_core *core,
 		return -EBUSY;
 
 	/* calculate new rates and get the topmost changed clock */
+#if defined(CONFIG_DISPLAY_SAMSUNG)
+	top = clk_calc_new_rates(core, req_rate);
+	if (!top) {
+		if (!strcmp(core->name, "disp_cc_mdss_pclk0_clk")){
+			pr_err("%s: clk_calc_new_rates error disp_cc_mdss_pclk0_clk \n");
+		}
+		return -EINVAL;
+	}
+
+	ret = clk_pm_runtime_get(core);
+	if (ret) {
+		if (!strcmp(core->name, "disp_cc_mdss_pclk0_clk")){
+			pr_err("%s: clk_pm_runtime_get error disp_cc_mdss_pclk0_clk %d\n",ret);
+		}
+		return ret;
+	}
+#else
 	top = clk_calc_new_rates(core, req_rate);
 	if (!top)
 		return -EINVAL;
@@ -2256,6 +2265,7 @@ static int clk_core_set_rate_nolock(struct clk_core *core,
 	ret = clk_pm_runtime_get(core);
 	if (ret)
 		return ret;
+#endif
 
 	/* notify that we are about to change rates */
 	fail_clk = clk_propagate_rate_change(top, PRE_RATE_CHANGE);
@@ -2403,11 +2413,6 @@ int clk_set_rate_range(struct clk *clk, unsigned long min, unsigned long max)
 	clk->min_rate = min;
 	clk->max_rate = max;
 
-	if (!clk_core_check_boundaries(clk->core, min, max)) {
-		ret = -EINVAL;
-		goto out;
-	}
-
 	rate = clk_core_get_rate_nolock(clk->core);
 	if (rate < min || rate > max) {
 		/*
@@ -2436,7 +2441,6 @@ int clk_set_rate_range(struct clk *clk, unsigned long min, unsigned long max)
 		}
 	}
 
-out:
 	if (clk->exclusive_count)
 		clk_core_rate_protect(clk->core);
 
@@ -2975,6 +2979,59 @@ bool clk_is_match(const struct clk *p, const struct clk *q)
 }
 EXPORT_SYMBOL_GPL(clk_is_match);
 
+#if IS_ENABLED(CONFIG_SEC_PM)
+static DEFINE_MUTEX(sec_clk_debug_lock);
+static HLIST_HEAD(sec_clk_debug_list);
+
+static int sec_clock_debug_print_clock(struct clk_core *c)
+{
+	char *start = "\t";
+	struct clk *clk;
+
+	if (!c || !c->prepare_count)
+		return 0;
+
+	pr_info("    ");
+	clk = c->hw->clk;
+
+	do {
+		c = clk->core;
+		pr_cont("%s%s:%u:%u [%ld]", start,
+				c->name,
+				c->prepare_count,
+				c->enable_count,
+				c->rate);
+		start = " -> ";
+	} while ((clk = clk_get_parent(clk)));
+
+	pr_cont("\n");
+
+	return 1;
+}
+
+void sec_clock_debug_print_enabled(void)
+{
+	struct clk_core *core;
+	int cnt = 0;
+	
+	if (!mutex_trylock(&sec_clk_debug_lock))
+		return;
+
+	pr_info("Enabled clocks:\n");
+	
+	hlist_for_each_entry(core, &sec_clk_debug_list, sec_debug_node)
+		cnt += sec_clock_debug_print_clock(core);
+
+	if (cnt)
+		pr_info("Enabled clock count: %d\n", cnt);
+	else
+		pr_info("No clocks enabled.\n");
+
+	mutex_unlock(&sec_clk_debug_lock);
+}
+EXPORT_SYMBOL(sec_clock_debug_print_enabled);
+#endif
+
 /***        debugfs support        ***/
 
 #ifdef CONFIG_DEBUG_FS
@@ -3471,7 +3528,7 @@ static const struct file_operations clk_enabled_list_fops = {
 	.release	= seq_release,
 };
 
-static u32 debug_suspend;
+static u32 debug_suspend = 1;
 
 /*
  * Print the names of all enabled clocks and their parents if
@@ -3617,19 +3674,6 @@ static void clk_core_reparent_orphans_nolock(void)
 			__clk_recalc_accuracies(orphan);
 			__clk_recalc_rates(orphan, 0);
 			__clk_core_update_orphan_hold_state(orphan);
-
-			/*
-			 * __clk_init_parent() will set the initial req_rate to
-			 * 0 if the clock doesn't have clk_ops::recalc_rate and
-			 * is an orphan when it's registered.
-			 *
-			 * 'req_rate' is used by clk_set_rate_range() and
-			 * clk_put() to trigger a clk_set_rate() call whenever
-			 * the boundaries are modified. Let's make sure
-			 * 'req_rate' is set to something non-zero so that
-			 * clk_set_rate_range() doesn't drop the frequency.
-			 */
-			orphan->req_rate = orphan->rate;
 		}
 	}
 }
@@ -3650,14 +3694,6 @@ static int __clk_core_init(struct clk_core *core)
 		return -EINVAL;
 
 	clk_prepare_lock();
-
-	/*
-	 * Set hw->core after grabbing the prepare_lock to synchronize with
-	 * callers of clk_core_fill_parent_index() where we treat hw->core
-	 * being NULL as the clk not being registered yet. This is crucial so
-	 * that clks aren't parented until their parent is fully registered.
-	 */
-	core->hw->core = core;
 
 	ret = clk_pm_runtime_get(core);
 	if (ret)
@@ -3814,15 +3850,22 @@ static int __clk_core_init(struct clk_core *core)
 out:
 	clk_pm_runtime_put(core);
 unlock:
-	if (ret) {
+	if (ret)
 		hlist_del_init(&core->child_node);
-		core->hw->core = NULL;
-	}
 
 	clk_prepare_unlock();
 
+#if IS_ENABLED(CONFIG_SEC_PM)
+	if (!ret) {
+		clk_debug_register(core);
+		mutex_lock(&sec_clk_debug_lock);
+		hlist_add_head(&core->sec_debug_node, &sec_clk_debug_list);
+		mutex_unlock(&sec_clk_debug_lock);
+	}
+#else
 	if (!ret)
 		clk_debug_register(core);
+#endif
 
 	return ret;
 }
@@ -4063,6 +4106,7 @@ __clk_register(struct device *dev, struct device_node *np, struct clk_hw *hw)
 	core->num_parents = init->num_parents;
 	core->min_rate = 0;
 	core->max_rate = ULONG_MAX;
+	hw->core = core;
 
 	ret = clk_core_populate_parent_map(core, init);
 	if (ret)
@@ -4080,7 +4124,7 @@ __clk_register(struct device *dev, struct device_node *np, struct clk_hw *hw)
 		goto fail_create_clk;
 	}
 
-	clk_core_link_consumer(core, hw->clk);
+	clk_core_link_consumer(hw->core, hw->clk);
 
 	ret = __clk_core_init(core);
 	if (!ret)
@@ -4266,6 +4310,12 @@ void clk_unregister(struct clk *clk)
 		return;
 
 	clk_debug_unregister(clk->core);
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+	mutex_lock(&sec_clk_debug_lock);
+	hlist_del_init(&clk->core->sec_debug_node);
+	mutex_unlock(&sec_clk_debug_lock);	
+#endif
 
 	clk_prepare_lock();
 

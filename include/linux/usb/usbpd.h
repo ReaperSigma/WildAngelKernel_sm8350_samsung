@@ -16,7 +16,6 @@
 #include <linux/list.h>
 
 struct usbpd;
-struct device;
 
 /* Standard IDs */
 #define USBPD_SID			0xff00

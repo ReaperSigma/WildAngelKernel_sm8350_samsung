@@ -70,6 +70,10 @@ static struct ion_heap_desc ion_heap_meta[] = {
 		.name	= ION_SPSS_HEAP_NAME,
 	},
 	{
+		.id     = ION_CAMERA_HEAP_ID,
+		.name   = ION_CAMERA_HEAP_NAME,
+	},
+	{
 		.id	= ION_ADSP_HEAP_ID,
 		.name	= ION_ADSP_HEAP_NAME,
 	},
@@ -166,6 +170,11 @@ static struct ion_heap *ion_heap_create(struct ion_platform_heap *heap_data)
 {
 	struct ion_heap *heap = NULL;
 	int heap_type = heap_data->type;
+
+#ifndef CONFIG_QGKI
+	if (heap_data->id == ION_CAMERA_HEAP_ID)
+		return ERR_PTR(-EINVAL);
+#endif
 
 	switch (heap_type) {
 	case ION_HEAP_TYPE_MSM_SYSTEM:
@@ -606,7 +615,7 @@ static int msm_ion_probe(struct platform_device *pdev)
 
 		heaps[i] = ion_heap_create(heap_data);
 		if (IS_ERR_OR_NULL(heaps[i])) {
-			heaps[i] = NULL;
+			heaps[i] = 0;
 			continue;
 		} else {
 			if (heap_data->size)
@@ -639,60 +648,6 @@ out:
 	return err;
 }
 
-#ifdef CONFIG_HIBERNATION
-static int msm_ion_pm_freeze(struct device *dev)
-{
-	int i;
-	struct ion_heap *heap;
-	int ret = 0;
-
-	for (i = 0; i < num_heaps; i++) {
-		heap = heaps[i];
-		if (heap->ops->pm.freeze) {
-			ret = heap->ops->pm.freeze(heap);
-			if (ret) {
-				pr_err("%s: freeze callback failed\n", __func__, heap->name);
-				goto undo;
-			}
-		}
-	}
-
-	return 0;
-undo:
-	for (i = 0; i < num_heaps; i++) {
-		heap = heaps[i];
-		if (heap->ops->pm.restore)
-			heap->ops->pm.restore(heap);
-	}
-	return ret;
-}
-
-static int msm_ion_pm_restore(struct device *dev)
-{
-	int i;
-	struct ion_heap *heap;
-	int ret = 0;
-
-	for (i = 0; i < num_heaps; i++) {
-		heap = heaps[i];
-		if (heap->ops->pm.restore) {
-			ret = heap->ops->pm.restore(heap);
-			if (ret) {
-				pr_err("%s: %s restore callback failed\n", __func__, heap->name);
-				return ret;
-			}
-		}
-	}
-
-	return ret;
-}
-
-static const struct dev_pm_ops msm_ion_pm_ops = {
-	.freeze = msm_ion_pm_freeze,
-	.restore = msm_ion_pm_restore,
-};
-#endif
-
 static const struct of_device_id msm_ion_match_table[] = {
 	{.compatible = ION_COMPAT_STR},
 	{},
@@ -703,9 +658,6 @@ static struct platform_driver msm_ion_driver = {
 	.driver = {
 		.name = "ion-msm",
 		.of_match_table = msm_ion_match_table,
-#ifdef CONFIG_HIBERNATION
-		.pm = &msm_ion_pm_ops,
-#endif
 	},
 };
 

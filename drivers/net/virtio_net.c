@@ -213,14 +213,8 @@ struct virtnet_info {
 	/* Packet virtio header size */
 	u8 hdr_len;
 
-	/* Work struct for delayed refilling if we run low on memory. */
+	/* Work struct for refilling if we run low on memory. */
 	struct delayed_work refill;
-
-	/* Is delayed refill enabled? */
-	bool refill_enabled;
-
-	/* The lock to synchronize the access to refill_enabled */
-	spinlock_t refill_lock;
 
 	/* Work struct for config space updates */
 	struct work_struct config_work;
@@ -243,9 +237,6 @@ struct virtnet_info {
 
 	/* failover when STANDBY feature enabled */
 	struct failover *failover;
-
-	/* RX H/W timestamp control */
-	bool rx_hwts_enabled;
 };
 
 struct padded_vnet_hdr {
@@ -326,20 +317,6 @@ static struct page *get_a_page(struct receive_queue *rq, gfp_t gfp_mask)
 	} else
 		p = alloc_page(gfp_mask);
 	return p;
-}
-
-static void enable_delayed_refill(struct virtnet_info *vi)
-{
-	spin_lock_bh(&vi->refill_lock);
-	vi->refill_enabled = true;
-	spin_unlock_bh(&vi->refill_lock);
-}
-
-static void disable_delayed_refill(struct virtnet_info *vi)
-{
-	spin_lock_bh(&vi->refill_lock);
-	vi->refill_enabled = false;
-	spin_unlock_bh(&vi->refill_lock);
 }
 
 static void virtqueue_napi_schedule(struct napi_struct *napi,
@@ -1092,8 +1069,6 @@ static void receive_buf(struct virtnet_info *vi, struct receive_queue *rq,
 	struct net_device *dev = vi->dev;
 	struct sk_buff *skb;
 	struct virtio_net_hdr_mrg_rxbuf *hdr;
-	struct skb_shared_hwtstamps *ts;
-	s64 hwts;
 
 	if (unlikely(len < vi->hdr_len + ETH_HLEN)) {
 		pr_debug("%s: short packet %i\n", dev->name, len);
@@ -1120,17 +1095,6 @@ static void receive_buf(struct virtnet_info *vi, struct receive_queue *rq,
 		return;
 
 	hdr = skb_vnet_hdr(skb);
-
-	if (hdr->hdr.flags & VIRTIO_NET_HDR_F_TIMESTAMP) {
-		stats->bytes -= HW_TIMESTAMP_LEN;
-		skb_copy_bits(skb, skb->len - HW_TIMESTAMP_LEN, &hwts, HW_TIMESTAMP_LEN);
-		pskb_trim(skb, skb->len - HW_TIMESTAMP_LEN);
-		if (vi->rx_hwts_enabled) {
-			ts = skb_hwtstamps(skb);
-			if (ts)
-				ts->hwtstamp = ns_to_ktime(virtio64_to_cpu(vi->vdev, hwts));
-		}
-	}
 
 	if (hdr->hdr.flags & VIRTIO_NET_HDR_F_DATA_VALID)
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
@@ -1424,12 +1388,8 @@ static int virtnet_receive(struct receive_queue *rq, int budget,
 	}
 
 	if (rq->vq->num_free > min((unsigned int)budget, virtqueue_get_vring_size(rq->vq)) / 2) {
-		if (!try_fill_recv(vi, rq, GFP_ATOMIC)) {
-			spin_lock(&vi->refill_lock);
-			if (vi->refill_enabled)
-				schedule_delayed_work(&vi->refill, 0);
-			spin_unlock(&vi->refill_lock);
-		}
+		if (!try_fill_recv(vi, rq, GFP_ATOMIC))
+			schedule_delayed_work(&vi->refill, 0);
 	}
 
 	u64_stats_update_begin(&rq->stats.syncp);
@@ -1547,8 +1507,6 @@ static int virtnet_open(struct net_device *dev)
 {
 	struct virtnet_info *vi = netdev_priv(dev);
 	int i, err;
-
-	enable_delayed_refill(vi);
 
 	for (i = 0; i < vi->max_queue_pairs; i++) {
 		if (i < vi->curr_queue_pairs)
@@ -1920,8 +1878,6 @@ static int virtnet_close(struct net_device *dev)
 	struct virtnet_info *vi = netdev_priv(dev);
 	int i;
 
-	/* Make sure NAPI doesn't schedule refill work */
-	disable_delayed_refill(vi);
 	/* Make sure refill_work doesn't re-enable napi! */
 	cancel_delayed_work_sync(&vi->refill);
 
@@ -2418,31 +2374,6 @@ static void virtnet_update_settings(struct virtnet_info *vi)
 		vi->duplex = duplex;
 }
 
-static int ethtool_op_get_ts_info_plus(struct net_device *dev, struct ethtool_ts_info *eti)
-{
-	struct virtnet_info *vi = netdev_priv(dev);
-	int flag = ethtool_op_get_ts_info(dev, eti);
-
-	if (flag) {
-		/* calling the default failed */
-		return flag;
-	}
-
-	/* set TX */
-	eti->tx_types = HWTSTAMP_TX_OFF;
-
-	/* set RX */
-	if (virtio_has_feature(vi->vdev, VIRTIO_NET_F_GUEST_TS)) {
-		eti->rx_filters = HWTSTAMP_FILTER_ALL;
-		eti->so_timestamping |= (SOF_TIMESTAMPING_RX_HARDWARE
-					| SOF_TIMESTAMPING_RAW_HARDWARE);
-	} else {
-		eti->rx_filters = HWTSTAMP_FILTER_NONE;
-	}
-
-	return 0;
-}
-
 static const struct ethtool_ops virtnet_ethtool_ops = {
 	.get_drvinfo = virtnet_get_drvinfo,
 	.get_link = ethtool_op_get_link,
@@ -2452,7 +2383,7 @@ static const struct ethtool_ops virtnet_ethtool_ops = {
 	.get_ethtool_stats = virtnet_get_ethtool_stats,
 	.set_channels = virtnet_set_channels,
 	.get_channels = virtnet_get_channels,
-	.get_ts_info = ethtool_op_get_ts_info_plus,
+	.get_ts_info = ethtool_op_get_ts_info,
 	.get_link_ksettings = virtnet_get_link_ksettings,
 	.set_link_ksettings = virtnet_set_link_ksettings,
 	.set_coalesce = virtnet_set_coalesce,
@@ -2462,6 +2393,7 @@ static const struct ethtool_ops virtnet_ethtool_ops = {
 static void virtnet_freeze_down(struct virtio_device *vdev)
 {
 	struct virtnet_info *vi = vdev->priv;
+	int i;
 
 	/* Make sure no work handler is accessing the device */
 	flush_work(&vi->config_work);
@@ -2469,8 +2401,14 @@ static void virtnet_freeze_down(struct virtio_device *vdev)
 	netif_tx_lock_bh(vi->dev);
 	netif_device_detach(vi->dev);
 	netif_tx_unlock_bh(vi->dev);
-	if (netif_running(vi->dev))
-		virtnet_close(vi->dev);
+	cancel_delayed_work_sync(&vi->refill);
+
+	if (netif_running(vi->dev)) {
+		for (i = 0; i < vi->max_queue_pairs; i++) {
+			napi_disable(&vi->rq[i].napi);
+			virtnet_napi_tx_disable(&vi->sq[i].napi);
+		}
+	}
 }
 
 static int init_vqs(struct virtnet_info *vi);
@@ -2478,7 +2416,7 @@ static int init_vqs(struct virtnet_info *vi);
 static int virtnet_restore_up(struct virtio_device *vdev)
 {
 	struct virtnet_info *vi = vdev->priv;
-	int err;
+	int err, i;
 
 	err = init_vqs(vi);
 	if (err)
@@ -2486,12 +2424,16 @@ static int virtnet_restore_up(struct virtio_device *vdev)
 
 	virtio_device_ready(vdev);
 
-	enable_delayed_refill(vi);
-
 	if (netif_running(vi->dev)) {
-		err = virtnet_open(vi->dev);
-		if (err)
-			return err;
+		for (i = 0; i < vi->curr_queue_pairs; i++)
+			if (!try_fill_recv(vi, &vi->rq[i], GFP_KERNEL))
+				schedule_delayed_work(&vi->refill, 0);
+
+		for (i = 0; i < vi->max_queue_pairs; i++) {
+			virtnet_napi_enable(vi->rq[i].vq, &vi->rq[i].napi);
+			virtnet_napi_tx_enable(vi, vi->sq[i].vq,
+					       &vi->sq[i].napi);
+		}
 	}
 
 	netif_tx_lock_bh(vi->dev);
@@ -2724,54 +2666,6 @@ static int virtnet_set_features(struct net_device *dev,
 	return 0;
 }
 
-static int virtnet_ioctl(struct net_device *dev, struct ifreq *if_r, int io_cmd)
-{
-	struct virtnet_info *vi = netdev_priv(dev);
-	struct hwtstamp_config ts_cfg;
-	int flag = 0;
-
-	switch (io_cmd) {
-	case SIOCGHWTSTAMP:
-		memset(&ts_cfg, 0, sizeof(ts_cfg));
-		ts_cfg.tx_type = HWTSTAMP_TX_OFF;
-		ts_cfg.rx_filter = vi->rx_hwts_enabled ? HWTSTAMP_FILTER_ALL : HWTSTAMP_FILTER_NONE;
-		if (copy_to_user(if_r->ifr_data, &ts_cfg, sizeof(ts_cfg)))
-			flag = -EFAULT;
-
-		break;
-
-	case SIOCSHWTSTAMP:
-		if (copy_from_user(&ts_cfg, if_r->ifr_data, sizeof(ts_cfg))) {
-			flag = -EFAULT;
-		} else {
-			if (ts_cfg.flags || ts_cfg.tx_type != HWTSTAMP_TX_OFF) {
-				flag = -EINVAL;
-			} else {
-				if (ts_cfg.rx_filter != HWTSTAMP_FILTER_NONE)
-					ts_cfg.rx_filter = HWTSTAMP_FILTER_ALL;
-
-				if (virtio_has_feature(vi->vdev, VIRTIO_NET_F_GUEST_TS)) {
-					vi->rx_hwts_enabled = (ts_cfg.rx_filter ==
-								HWTSTAMP_FILTER_ALL);
-				} else {
-					vi->rx_hwts_enabled = false;
-					ts_cfg.rx_filter = HWTSTAMP_FILTER_NONE;
-				}
-
-				if (copy_to_user(if_r->ifr_data, &ts_cfg, sizeof(ts_cfg)))
-					flag = -EFAULT;
-			}
-		}
-		break;
-
-	default:
-		flag = -EOPNOTSUPP;
-		break;
-	}
-
-	return flag;
-}
-
 static const struct net_device_ops virtnet_netdev = {
 	.ndo_open            = virtnet_open,
 	.ndo_stop   	     = virtnet_close,
@@ -2787,7 +2681,6 @@ static const struct net_device_ops virtnet_netdev = {
 	.ndo_features_check	= passthru_features_check,
 	.ndo_get_phys_port_name	= virtnet_get_phys_port_name,
 	.ndo_set_features	= virtnet_set_features,
-	.ndo_do_ioctl		= virtnet_ioctl,
 };
 
 static void virtnet_config_changed_work(struct work_struct *work)
@@ -3263,7 +3156,6 @@ static int virtnet_probe(struct virtio_device *vdev)
 	vdev->priv = vi;
 
 	INIT_WORK(&vi->config_work, virtnet_config_changed_work);
-	spin_lock_init(&vi->refill_lock);
 
 	/* If we can receive ANY GSO packets, we must allocate large ones. */
 	if (virtio_has_feature(vdev, VIRTIO_NET_F_GUEST_TSO4) ||
@@ -3343,19 +3235,13 @@ static int virtnet_probe(struct virtio_device *vdev)
 		}
 	}
 
-	/* serialize netdev register + virtio_device_ready() with ndo_open() */
-	rtnl_lock();
-
-	err = register_netdevice(dev);
+	err = register_netdev(dev);
 	if (err) {
 		pr_debug("virtio_net: registering device failed\n");
-		rtnl_unlock();
 		goto free_failover;
 	}
 
 	virtio_device_ready(vdev);
-
-	rtnl_unlock();
 
 	err = virtnet_cpu_notif_add(vi);
 	if (err) {
@@ -3480,8 +3366,7 @@ static struct virtio_device_id id_table[] = {
 	VIRTIO_NET_F_GUEST_ANNOUNCE, VIRTIO_NET_F_MQ, \
 	VIRTIO_NET_F_CTRL_MAC_ADDR, \
 	VIRTIO_NET_F_MTU, VIRTIO_NET_F_CTRL_GUEST_OFFLOADS, \
-	VIRTIO_NET_F_SPEED_DUPLEX, VIRTIO_NET_F_STANDBY, \
-	VIRTIO_NET_F_GUEST_TS
+	VIRTIO_NET_F_SPEED_DUPLEX, VIRTIO_NET_F_STANDBY
 
 static unsigned int features[] = {
 	VIRTNET_FEATURES,

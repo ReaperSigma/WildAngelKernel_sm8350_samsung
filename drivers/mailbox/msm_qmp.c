@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/io.h>
@@ -390,14 +390,14 @@ static int qmp_send_data(struct mbox_chan *chan, void *data)
 	u32 size;
 	int i;
 
-	if (!mbox || !data)
+	if (!mbox || !data || !completion_done(&mbox->ch_complete))
 		return -EINVAL;
 
 	mdev = mbox->mdev;
 
 	spin_lock_irqsave(&mbox->tx_lock, flags);
 	addr = mbox->desc + mbox->mcore_mbox_offset;
-	if (mbox->tx_sent || !completion_done(&mbox->ch_complete)) {
+	if (mbox->tx_sent) {
 		spin_unlock_irqrestore(&mbox->tx_lock, flags);
 		return -EAGAIN;
 	}
@@ -406,7 +406,6 @@ static int qmp_send_data(struct mbox_chan *chan, void *data)
 		spin_unlock_irqrestore(&mbox->tx_lock, flags);
 		return -EINVAL;
 	}
-
 	memcpy32_toio(addr + sizeof(pkt->size), pkt->data, pkt->size);
 	iowrite32(pkt->size, addr);
 	/* readback to ensure write reflects in msgram */

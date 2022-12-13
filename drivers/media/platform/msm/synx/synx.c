@@ -705,7 +705,7 @@ int synx_release(struct synx_session session_id, s32 h_synx)
 			client->id, h_synx);
 	} else if (synx_data->rel_count == 0) {
 		pr_err("[sess: %u] released object handle %d\n",
-			client->id, h_synx);
+			client->id, h_synx);	
 	} else if (!kref_read(&synx_data->internal_refcount)) {
 		pr_err("[sess: %u] destroyed object handle %d\n",
 			client->id, h_synx);

@@ -41,13 +41,24 @@ int crypto_qti_program_key(struct crypto_vops_qti_entry *ice_entry,
 			   unsigned int data_unit_mask, int capid)
 {
 	int err = 0;
+	int i;
 	struct qtee_shm shm;
+	union {
+		u8 bytes[BLK_CRYPTO_MAX_WRAPPED_KEY_SIZE];
+		u32 words[BLK_CRYPTO_MAX_WRAPPED_KEY_SIZE / sizeof(u32)];
+	} key_new;
 
 	err = qtee_shmbridge_allocate_shm(key->size, &shm);
 	if (err)
 		return -ENOMEM;
 
-	memcpy(shm.vaddr, key->raw, key->size);
+	memcpy(key_new.bytes, key->raw, key->size);
+	if (!key->is_hw_wrapped) {
+		for (i = 0; i < ARRAY_SIZE(key_new.words); i++)
+			__cpu_to_be32s(&key_new.words[i]);
+	}
+
+	memcpy(shm.vaddr, key_new.bytes, key->size);
 	qtee_shmbridge_flush_shm_buf(&shm);
 
 	if (is_boot_dev_type_emmc())
@@ -92,42 +103,8 @@ int crypto_qti_derive_raw_secret_platform(
 				unsigned int wrapped_key_size, u8 *secret,
 				unsigned int secret_size)
 {
-	int err = 0;
-	struct qtee_shm shm_key, shm_secret;
-
-	err = qtee_shmbridge_allocate_shm(wrapped_key_size, &shm_key);
-	if (err)
-		return -ENOMEM;
-
-	err = qtee_shmbridge_allocate_shm(secret_size, &shm_secret);
-	if (err) {
-		err = -ENOMEM;
-		goto out_key;
-	}
-
-	memcpy(shm_key.vaddr, wrapped_key, wrapped_key_size);
-	qtee_shmbridge_flush_shm_buf(&shm_key);
-
-	memset(shm_secret.vaddr, 0, secret_size);
-	qtee_shmbridge_flush_shm_buf(&shm_secret);
-	err = qcom_scm_derive_raw_secret(shm_key.paddr, wrapped_key_size,
-					 shm_secret.paddr, secret_size);
-	if (err) {
-		pr_err("%s:SCM call Error for derive raw secret: 0x%x\n",
-			__func__, err);
-		goto out_secret;
-	}
-
-	qtee_shmbridge_inv_shm_buf(&shm_secret);
-	memcpy(secret, shm_secret.vaddr, secret_size);
-
-	qtee_shmbridge_inv_shm_buf(&shm_key);
-out_secret:
-	qtee_shmbridge_free_shm(&shm_secret);
-out_key:
-	qtee_shmbridge_free_shm(&shm_key);
-
-	return err;
+	memcpy(secret, wrapped_key, secret_size);
+	return 0;
 }
 EXPORT_SYMBOL(crypto_qti_derive_raw_secret_platform);
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/slab.h>
@@ -206,17 +206,30 @@ static void ion_system_secure_heap_prefetch_work(struct work_struct *work)
 	struct ion_heap *sys_heap = secure_heap->sys_heap;
 	struct prefetch_info *info, *tmp;
 	unsigned long flags;
+	int nr_entries = 0, idx = 0;
+	unsigned long long start, end;
 
 	spin_lock_irqsave(&secure_heap->work_lock, flags);
+
+	list_for_each_entry_safe(info, tmp,
+		&secure_heap->prefetch_list, list) {
+		nr_entries++;
+	}
+
 	list_for_each_entry_safe(info, tmp,
 				 &secure_heap->prefetch_list, list) {
 		list_del(&info->list);
 		spin_unlock_irqrestore(&secure_heap->work_lock, flags);
 
+		start = ktime_get_ns();
+
 		if (info->shrink)
 			process_one_shrink(secure_heap, sys_heap, info);
 		else
 			process_one_prefetch(sys_heap, info);
+
+		end = ktime_get_ns();
+		pr_info("[%d:%d] 0x%lx, 0x%x, %lld, %lld %d\n", idx++, nr_entries, info->size, info->vmid, start, end - start, info->shrink);
 
 		kfree(info);
 		spin_lock_irqsave(&secure_heap->work_lock, flags);
@@ -272,7 +285,7 @@ static int __ion_system_secure_heap_resize(struct ion_heap *heap,
 	}
 	list_splice_tail_init(&items, &secure_heap->prefetch_list);
 	queue_delayed_work(secure_heap->prefetch_wq,
-			   &secure_heap->prefetch_work,
+			&secure_heap->prefetch_work,
 			   shrink ?  msecs_to_jiffies(SHRINK_DELAY) : 0);
 	spin_unlock_irqrestore(&secure_heap->work_lock, flags);
 
@@ -311,51 +324,10 @@ static int ion_system_secure_heap_shrink(struct ion_heap *heap, gfp_t gfp_mask,
 						gfp_mask, nr_to_scan);
 }
 
-#ifdef CONFIG_HIBERNATION
-static int ion_system_secure_heap_pm_freeze(struct ion_heap *heap)
-{
-	struct ion_system_secure_heap *secure_heap;
-	unsigned long count;
-	long sz;
-	struct shrink_control sc = {
-		.gfp_mask = GFP_HIGHUSER,
-	};
-
-	secure_heap = to_system_secure_heap(heap);
-
-	sz = atomic_long_read(&heap->total_allocated);
-	if (sz) {
-		pr_err("%s: %lx bytes won't be saved across hibernation. Aborting.\n",
-		       __func__, sz);
-		return -EINVAL;
-	}
-
-	/* Since userspace is frozen, no more requests will be queued */
-	cancel_delayed_work_sync(&secure_heap->prefetch_work);
-
-	count = heap->shrinker.count_objects(&heap->shrinker, &sc);
-	sc.nr_to_scan = count;
-	heap->shrinker.scan_objects(&heap->shrinker, &sc);
-
-	count = heap->shrinker.count_objects(&heap->shrinker, &sc);
-	if (count) {
-		pr_err("%s: Failed to free all objects - %ld remaining\n",
-		       __func__, count);
-		return -EINVAL;
-	}
-	return 0;
-}
-#endif
-
 static struct ion_heap_ops system_secure_heap_ops = {
 	.allocate = ion_system_secure_heap_allocate,
 	.free = ion_system_secure_heap_free,
 	.shrink = ion_system_secure_heap_shrink,
-#ifdef CONFIG_HIBERNATION
-	.pm = {
-		.freeze = ion_system_secure_heap_pm_freeze,
-	}
-#endif
 };
 
 static struct msm_ion_heap_ops msm_system_secure_heap_ops = {
@@ -390,7 +362,7 @@ struct ion_heap *ion_system_secure_heap_create(struct ion_platform_heap *unused)
 			  ion_system_secure_heap_prefetch_work);
 
 	heap->prefetch_wq = alloc_workqueue("system_secure_prefetch_wq",
-					    WQ_UNBOUND | WQ_FREEZABLE, 0);
+		 WQ_UNBOUND | WQ_FREEZABLE, 0);
 	if (!heap->prefetch_wq) {
 		pr_err("Failed to create system secure prefetch workqueue\n");
 		kfree(heap);

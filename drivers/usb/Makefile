@@ -68,4 +68,4 @@ obj-$(CONFIG_TYPEC)		+= typec/
 
 obj-$(CONFIG_USB_ROLE_SWITCH)	+= roles/
 
-obj-$(CONFIG_USB_REDRIVER)	+= redriver/
+obj-$(CONFIG_USB_NOTIFY_LAYER)	+= notify/

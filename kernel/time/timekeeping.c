@@ -17,7 +17,6 @@
 #include <linux/clocksource.h>
 #include <linux/jiffies.h>
 #include <linux/time.h>
-#include <linux/timex.h>
 #include <linux/tick.h>
 #include <linux/stop_machine.h>
 #include <linux/pvclock_gtod.h>
@@ -53,6 +52,10 @@ static struct {
 
 static DEFINE_RAW_SPINLOCK(timekeeper_lock);
 static struct timekeeper shadow_timekeeper;
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+static struct timespec64 sleep_duration;
+#endif
 
 /**
  * struct tk_fast - NMI safe timekeeper
@@ -1237,7 +1240,8 @@ int do_settimeofday64(const struct timespec64 *ts)
 	timekeeping_forward_now(tk);
 
 	xt = tk_xtime(tk);
-	ts_delta = timespec64_sub(*ts, xt);
+	ts_delta.tv_sec = ts->tv_sec - xt.tv_sec;
+	ts_delta.tv_nsec = ts->tv_nsec - xt.tv_nsec;
 
 	if (timespec64_compare(&tk->wall_to_monotonic, &ts_delta) > 0) {
 		ret = -EINVAL;
@@ -1595,8 +1599,20 @@ static void __timekeeping_inject_sleeptime(struct timekeeper *tk,
 	tk_xtime_add(tk, delta);
 	tk_set_wall_to_mono(tk, timespec64_sub(tk->wall_to_monotonic, *delta));
 	tk_update_sleep_time(tk, timespec64_to_ktime(*delta));
+#if IS_ENABLED(CONFIG_SEC_PM)
+	sleep_duration = *delta;
+#endif
 	tk_debug_account_sleep_time(delta);
 }
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+void sec_debug_print_sleep_time(void)
+{
+	pr_info("PM: Timekeeping suspended for %lld.%03lu seconds\n",
+			   (s64)sleep_duration.tv_sec, sleep_duration.tv_nsec / NSEC_PER_MSEC);	
+}
+EXPORT_SYMBOL_GPL(sec_debug_print_sleep_time);
+#endif
 
 #if defined(CONFIG_PM_SLEEP) && defined(CONFIG_RTC_HCTOSYS_DEVICE)
 /**
@@ -2305,20 +2321,6 @@ static int timekeeping_validate_timex(const struct __kernel_timex *txc)
 	return 0;
 }
 
-/**
- * random_get_entropy_fallback - Returns the raw clock source value,
- * used by random.c for platforms with no valid random_get_entropy().
- */
-unsigned long random_get_entropy_fallback(void)
-{
-	struct tk_read_base *tkr = &tk_core.timekeeper.tkr_mono;
-	struct clocksource *clock = READ_ONCE(tkr->clock);
-
-	if (unlikely(timekeeping_suspended || !clock))
-		return 0;
-	return clock->read(clock);
-}
-EXPORT_SYMBOL_GPL(random_get_entropy_fallback);
 
 /**
  * do_adjtimex() - Accessor function to NTP __do_adjtimex function

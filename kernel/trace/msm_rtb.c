@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2013-2019,2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/atomic.h>
@@ -21,6 +21,8 @@
 #include <linux/msm_rtb.h>
 #include <asm/timex.h>
 #include <soc/qcom/minidump.h>
+
+#include <linux/sec_debug.h>
 
 #define SENTINEL_BYTE_1 0xFF
 #define SENTINEL_BYTE_2 0xAA
@@ -62,7 +64,7 @@ struct msm_rtb_state {
 };
 
 #if defined(CONFIG_QCOM_RTB_SEPARATE_CPUS)
-static DEFINE_PER_CPU(atomic_t, msm_rtb_idx_cpu);
+DEFINE_PER_CPU(atomic_t, msm_rtb_idx_cpu);
 #else
 static atomic_t msm_rtb_idx;
 #endif
@@ -249,7 +251,7 @@ static int msm_rtb_probe(struct platform_device *pdev)
 		pnode = of_parse_phandle(pdev->dev.of_node,
 						"linux,contiguous-region", 0);
 		if (pnode != NULL) {
-			const __be32 *addr;
+			const u32 *addr;
 
 			addr = of_get_address(pnode, 0, &size, NULL);
 			if (!addr) {
@@ -335,3 +337,38 @@ static struct platform_driver msm_rtb_driver = {
 	},
 };
 module_platform_driver(msm_rtb_driver);
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG_SUMMARY)
+#define __set_rtb_state_info(name, member)				\
+	apss->iolog.rtb_state.name.size = sizeof(msm_rtb.member);	\
+apss->iolog.rtb_state.name.offset =				\
+offsetof(struct msm_rtb_state, member)
+#define __set_rtb_entry_info(name, member)				\
+	apss->iolog.rtb_entry.name.size =				\
+sizeof(((struct msm_rtb_layout *)0)->member);	\
+apss->iolog.rtb_entry.name.offset =				\
+offsetof(struct msm_rtb_layout, member)
+
+void sec_debug_summary_set_rtb_info(struct sec_debug_summary_data_apss *apss)
+{
+	apss->iolog.rtb_state_pa = (uint64_t)virt_to_phys(&msm_rtb);
+
+	__set_rtb_state_info(rtb_phys, phys);
+	__set_rtb_state_info(nentries, nentries);
+	__set_rtb_state_info(size, size);
+	__set_rtb_state_info(enabled, enabled);
+	__set_rtb_state_info(initialized, initialized);
+	__set_rtb_state_info(step_size, step_size);
+
+	apss->iolog.rtb_entry.struct_size = sizeof(struct msm_rtb_layout);
+	__set_rtb_entry_info(log_type, log_type);
+	__set_rtb_entry_info(idx, idx);
+	__set_rtb_entry_info(caller, caller);
+	__set_rtb_entry_info(data, data);
+	__set_rtb_entry_info(timestamp, timestamp);
+	__set_rtb_entry_info(cycle_count, cycle_count);
+
+	apss->iolog.rtb_pcpu_idx_pa = virt_to_phys(&msm_rtb_idx_cpu);
+}
+#endif /* CONFIG_SEC_DEBUG_SUMMARY */
+

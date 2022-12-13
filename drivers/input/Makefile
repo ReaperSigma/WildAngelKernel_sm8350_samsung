@@ -29,5 +29,3 @@ obj-$(CONFIG_INPUT_MISC)	+= misc/
 obj-$(CONFIG_INPUT_APMPOWER)	+= apm-power.o
 
 obj-$(CONFIG_RMI4_CORE)		+= rmi4/
-obj-$(CONFIG_SMI130)		+= sensors/smi130/
-obj-$(CONFIG_INPUT_SMI230)	+= sensors/smi230/

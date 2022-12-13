@@ -38,6 +38,10 @@
 
 #include "peripheral-loader.h"
 
+#include <linux/sec_debug.h>
+#include <soc/qcom/watchdog.h>
+#include <linux/init.h>
+
 #define pil_err(desc, fmt, ...)						\
 	dev_err(desc->dev, "%s: " fmt, desc->name, ##__VA_ARGS__)
 #define pil_info(desc, fmt, ...)					\
@@ -69,7 +73,9 @@ module_param(proxy_timeout_ms, int, 0644);
 static bool disable_timeouts;
 
 static struct workqueue_struct *pil_wq;
-
+#if defined(CONFIG_QGKI)
+static bool disable_cpboot;
+#endif
 /**
  * struct pil_mdt - Representation of <name>.mdt file in memory
  * @hdr: ELF32 header
@@ -726,45 +732,15 @@ static int pil_init_entry_addr(struct pil_priv *priv, const struct pil_mdt *mdt)
 	return -EADDRNOTAVAIL;
 }
 
-/*
- * This value is used to represent that there is a memory
- * region for the firmware to be loaded in, it is just not
- * mapped.
- */
-#define PIL_DUMMY_ALLOC_VAL ((void *)0x222)
-
-
-static int pil_alloc_mem(struct pil_priv *priv, size_t aligned_size)
-{
-	struct device_node *of_node = priv->desc->dev->of_node, *mem_node;
-	struct resource res;
-	int ret;
-
-	mem_node = of_parse_phandle(of_node, "memory-region", 0);
-	if (mem_node) {
-		ret = of_address_to_resource(mem_node, 0, &res);
-		of_node_put(mem_node);
-		if (ret)
-			return ret;
-		priv->region = PIL_DUMMY_ALLOC_VAL;
-		priv->region_start = res.start;
-		return 0;
-	}
-
-	priv->region = dma_alloc_coherent(priv->desc->dev, aligned_size,
-				 &priv->region_start, GFP_KERNEL);
-	if (!priv->region)
-		return -ENOMEM;
-
-	return 0;
-}
-
 static int pil_alloc_region(struct pil_priv *priv, phys_addr_t min_addr,
 				phys_addr_t max_addr, size_t align)
 {
 	size_t size = max_addr - min_addr;
 	size_t aligned_size;
+	struct device_node *ofnode = priv->desc->dev->of_node;
+	struct device_node *mem_node;
 	int ret;
+	struct resource res;
 
 	/* Don't reallocate due to fragmentation concerns, just sanity check */
 	if (priv->is_region_allocated) {
@@ -781,22 +757,34 @@ static int pil_alloc_region(struct pil_priv *priv, phys_addr_t min_addr,
 	else
 		aligned_size = ALIGN(size, SZ_4K);
 
-	ret = pil_alloc_mem(priv, aligned_size);
-	if (ret) {
-		pil_err(priv->desc, "Failed to allocate relocatable region of size %zx\n",
-					size);
-		priv->region_start = 0;
-		priv->region_end = 0;
-		return ret;
+	/* read memory region here */
+	mem_node = of_parse_phandle(ofnode, "memory-region", 0);
+	if (!mem_node) {
+		pil_err(priv->desc, "No memory-region associated\n");
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	ret = of_address_to_resource(mem_node, 0, &res);
+	of_node_put(mem_node);
+	if (ret < 0) {
+		pil_err(priv->desc, "Failed to get the resource\n");
+		goto err;
 	}
 
 	priv->is_region_allocated = true;
+	priv->region_start = res.start;
 	priv->region_end = priv->region_start + size;
 	priv->base_addr = min_addr;
 	priv->region_size = aligned_size;
 
 	return 0;
 
+err:
+	priv->region_start = 0;
+	priv->region_end = 0;
+
+	return ret;
 }
 
 static int pil_setup_region(struct pil_priv *priv, const struct pil_mdt *mdt)
@@ -966,23 +954,15 @@ static void pil_clear_segment(struct pil_desc *desc)
 }
 
 #define IOMAP_SIZE SZ_1M
+
 static void __iomem *map_fw_mem(phys_addr_t paddr, size_t size, void *data)
 {
-	struct pil_map_fw_info *info = data;
-
-	if (info->region == PIL_DUMMY_ALLOC_VAL)
-		return ioremap_wc(paddr, size);
-
-	/* Calculate offset into VA space */
-	return (void __iomem *)(info->region + (paddr - info->base_addr));
+	return ioremap_wc(paddr, size);
 }
 
 static void unmap_fw_mem(void __iomem *vaddr, size_t size, void *data)
 {
-	struct pil_map_fw_info *info = data;
-
-	if (info->region == PIL_DUMMY_ALLOC_VAL)
-		iounmap(vaddr);
+	iounmap(vaddr);
 }
 
 static int pil_load_seg(struct pil_desc *desc, struct pil_seg *seg)
@@ -995,7 +975,6 @@ static int pil_load_seg(struct pil_desc *desc, struct pil_seg *seg)
 	void __iomem *firmware_buf;
 	struct pil_map_fw_info map_fw_info = {
 		.attrs = desc->attrs,
-		.region = desc->priv->region,
 		.base_addr = desc->priv->region_start,
 		.dev = desc->dev,
 	};
@@ -1091,9 +1070,6 @@ static int pil_parse_devicetree(struct pil_desc *desc)
 	}
 	desc->proxy_unvote_irq = clk_ready;
 
-	desc->sequential_loading = of_property_read_bool(ofnode,
-				"qcom,sequential-fw-load");
-
 
 	return 0;
 }
@@ -1114,6 +1090,21 @@ static int pil_notify_aop(struct pil_desc *desc, char *status)
 
 	return mbox_send_message(desc->mbox, &pkt);
 }
+
+#if defined(CONFIG_QGKI)
+static int __init get_cpboot_status(char *str)
+{
+
+	if(!strncmp(str,"disable",7))
+		disable_cpboot = true;
+	else
+		disable_cpboot = false;
+
+	pr_warn("%s : disable_cpboot:%u\n",__func__,disable_cpboot);
+	return 0;
+}
+early_param("androidboot.cpboot", get_cpboot_status);
+#endif
 
 /* Synchronize request_firmware() with suspend */
 static DECLARE_RWSEM(pil_pm_rwsem);
@@ -1217,10 +1208,20 @@ int pil_boot(struct pil_desc *desc)
 	struct pil_priv *priv = desc->priv;
 	bool mem_protect = false;
 	bool hyp_assign = false;
+#if IS_ENABLED(CONFIG_SEC_PERIPHERAL_SECURE_CHK)
+	bool secure_check_fail = false;
+#endif
 
+	pil_info(desc, "Sending ON message to AOP ...\n");
 	ret = pil_notify_aop(desc, "on");
 	if (ret < 0) {
 		pil_err(desc, "Failed to send ON message to AOP rc:%d\n", ret);
+#if IS_ENABLED(CONFIG_SEC_PERIPHERAL_SECURE_CHK)
+		if (ret == -ETIME) {
+			smp_send_stop();
+			qcom_wdt_trigger_bite();
+		}
+#endif
 		return ret;
 	}
 
@@ -1266,6 +1267,15 @@ int pil_boot(struct pil_desc *desc)
 		goto release_fw;
 	}
 
+#if defined(CONFIG_QGKI)
+	if(disable_cpboot){
+		if (!strcmp(desc->name, "mba") || !strcmp(desc->name, "modem")){
+			ret = -EIO;
+			goto release_fw;
+		}
+	}
+#endif
+
 	ret = pil_init_mmap(desc, mdt);
 	if (ret)
 		goto release_fw;
@@ -1284,6 +1294,9 @@ int pil_boot(struct pil_desc *desc)
 		/* S2 mapping not yet done */
 		desc->clear_fw_region = false;
 		pil_err(desc, "Initializing image failed(rc:%d)\n", ret);
+#if IS_ENABLED(CONFIG_SEC_PERIPHERAL_SECURE_CHK)
+		secure_check_fail = true;
+#endif
 		goto err_boot;
 	}
 
@@ -1360,6 +1373,9 @@ int pil_boot(struct pil_desc *desc)
 	ret = desc->ops->auth_and_reset(desc);
 	if (ret) {
 		pil_err(desc, "Failed to bring out of reset(rc:%d)\n", ret);
+#if IS_ENABLED(CONFIG_SEC_PERIPHERAL_SECURE_CHK)
+		secure_check_fail = true;
+#endif
 		goto err_auth_and_reset;
 	}
 	trace_pil_event("reset_done", desc);
@@ -1372,6 +1388,12 @@ int pil_boot(struct pil_desc *desc)
 	pil_info(desc, "Brought out of reset\n");
 	desc->modem_ssr = false;
 err_auth_and_reset:
+#if IS_ENABLED(CONFIG_SEC_PERIPHERAL_SECURE_CHK)
+	if (IS_ENABLED(CONFIG_SEC_PERIPHERAL_SECURE_CHK) &&
+			secure_check_fail && (ret == -EINVAL) &&
+			(!strcmp(desc->name, "mba") || !strcmp(desc->name, "modem")))
+		sec_peripheral_secure_check_fail();
+#endif
 	if (ret && desc->subsys_vmid > 0) {
 		pil_assign_mem_to_linux(desc, priv->region_start,
 				(priv->region_end - priv->region_start));
@@ -1400,10 +1422,15 @@ out:
 			if (desc->clear_fw_region && priv->region_start)
 				pil_clear_segment(desc);
 			priv->is_region_allocated = false;
-			pil_free_memory(desc);
 		}
 		pil_release_mmap(desc);
 		pil_notify_aop(desc, "off");
+#if IS_ENABLED(CONFIG_SEC_PERIPHERAL_SECURE_CHK)
+		if (IS_ENABLED(CONFIG_SEC_PERIPHERAL_SECURE_CHK) &&
+				secure_check_fail && (ret == -EINVAL) &&
+				(!strcmp(desc->name, "mba") || !strcmp(desc->name, "modem")))
+			sec_peripheral_secure_check_fail();
+#endif
 	}
 	return ret;
 }
@@ -1453,11 +1480,6 @@ void pil_free_memory(struct pil_desc *desc)
 			pil_assign_mem_to_linux(desc, priv->region_start,
 				(priv->region_end - priv->region_start));
 		priv->is_region_allocated = false;
-	}
-	if (priv->region && priv->region != PIL_DUMMY_ALLOC_VAL) {
-		dma_free_coherent(desc->dev, priv->region_size,
-			priv->region, priv->region_start);
-		priv->region = NULL;
 	}
 }
 EXPORT_SYMBOL(pil_free_memory);

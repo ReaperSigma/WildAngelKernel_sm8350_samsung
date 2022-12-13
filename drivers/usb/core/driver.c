@@ -1399,6 +1399,7 @@ static int usb_resume_both(struct usb_device *udev, pm_message_t msg)
 
 	if (udev->state == USB_STATE_NOTATTACHED) {
 		status = -ENODEV;
+		dev_err(&udev->dev, "%s: status %d\n", __func__, status);
 		goto done;
 	}
 	udev->can_submit = 1;
@@ -1415,10 +1416,13 @@ static int usb_resume_both(struct usb_device *udev, pm_message_t msg)
 					udev->reset_resume);
 		}
 	}
+	if (!udev)
+		goto done;
+
 	usb_mark_last_busy(udev);
+	dev_vdbg(&udev->dev, "%s: status %d\n", __func__, status);
 
  done:
-	dev_vdbg(&udev->dev, "%s: status %d\n", __func__, status);
 	if (!status)
 		udev->reset_resume = 0;
 	return status;
@@ -1429,10 +1433,10 @@ static void choose_wakeup(struct usb_device *udev, pm_message_t msg)
 	int	w;
 
 	/* Remote wakeup is needed only when we actually go to sleep.
-	 * For QUIESCE, if the device is already
+	 * For things like FREEZE and QUIESCE, if the device is already
 	 * autosuspended then its current wakeup setting is okay.
 	 */
-	if (msg.event == PM_EVENT_QUIESCE) {
+	if (msg.event == PM_EVENT_FREEZE || msg.event == PM_EVENT_QUIESCE) {
 		if (udev->state != USB_STATE_SUSPENDED)
 			udev->do_remote_wakeup = 0;
 		return;

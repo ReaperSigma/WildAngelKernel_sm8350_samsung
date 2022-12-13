@@ -2,7 +2,6 @@
 
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #define pr_fmt(fmt) "%s: " fmt, KBUILD_MODNAME
@@ -28,6 +27,12 @@
 
 #define GET_ADDR(REG, UNIT_NO) (REG + (UNIT_DIST * UNIT_NO))
 
+#ifdef CONFIG_SEC_PM
+#define MSM_ARCH_TIMER_FREQ	19200000
+#define GET_SEC(A)		((A) / (MSM_ARCH_TIMER_FREQ))
+#define GET_MSEC(A)		(((A) / (MSM_ARCH_TIMER_FREQ / 1000)) % 1000)
+#endif
+
 enum master_smem_id {
 	MPSS = 605,
 	ADSP,
@@ -37,7 +42,6 @@ enum master_smem_id {
 	DISPLAY,
 	SLPI_ISLAND = 613,
 	APSS = 631,
-	RPM = 635,
 };
 
 enum master_pid {
@@ -46,7 +50,6 @@ enum master_pid {
 	PID_ADSP = 2,
 	PID_SLPI = 3,
 	PID_CDSP = 5,
-	PID_RPM = 6,
 	PID_WPSS = 13,
 	PID_GPU = PID_APSS,
 	PID_DISPLAY = PID_APSS,
@@ -77,7 +80,6 @@ static const struct msm_rpmh_master_data rpmh_masters[] = {
 	{"SLPI_ISLAND", SLPI_ISLAND, PID_SLPI},
 	{"GPU", GPU, PID_GPU},
 	{"DISPLAY", DISPLAY, PID_DISPLAY},
-	{"DEEP", RPM, PID_RPM},
 };
 
 struct msm_rpmh_profile_unit {
@@ -94,6 +96,68 @@ static struct msm_rpmh_master_stats apss_master_stats;
 static void __iomem *rpmh_unit_base;
 
 static DEFINE_MUTEX(rpmh_stats_mutex);
+
+#if IS_ENABLED(CONFIG_SEC_PM)
+void debug_masterstats_show(char *annotation)
+{
+	int i = 0;
+	struct msm_rpmh_master_stats *record = NULL;
+	uint64_t accumulated_duration;
+	unsigned int duration_sec, duration_msec;
+	char buf[256];
+	char *buf_ptr = buf;
+
+	mutex_lock(&rpmh_stats_mutex);
+
+	buf_ptr += sprintf(buf_ptr, "PM: %s: ", annotation);
+	/* Read SMEM data written by other masters */
+	for (i = 0; i < ARRAY_SIZE(rpmh_masters); i++) {
+		/* for LA11: prevent WARN in qcom_smem_get */
+		if (rpmh_unit_base && i == 0)
+			continue;
+
+		record = (struct msm_rpmh_master_stats *) qcom_smem_get(
+					rpmh_masters[i].pid,
+					rpmh_masters[i].smem_id, NULL);
+
+		if (!IS_ERR_OR_NULL(record)) {
+			accumulated_duration = record->accumulated_duration;
+			if (record->last_entered > record->last_exited)
+				accumulated_duration +=
+					(__arch_counter_get_cntvct() -
+						record->last_entered);
+
+			if (accumulated_duration == record->accumulated_duration)
+				buf_ptr += sprintf(buf_ptr, "*");
+
+			duration_sec = GET_SEC(accumulated_duration);
+			duration_msec = GET_MSEC(accumulated_duration);
+#ifdef CONFIG_DSP_SLEEP_RECOVERY
+			subsystem_update_sleep_time(annotation,
+				rpmh_masters[i].master_name,
+				accumulated_duration);
+#endif
+			buf_ptr += sprintf(buf_ptr, "%s(%d, %u.%u), ",
+					rpmh_masters[i].master_name,
+					record->counts,
+					duration_sec, duration_msec);
+		} else {
+			continue;
+		}
+	}
+
+	buf_ptr--;
+	buf_ptr--;
+	buf_ptr += sprintf(buf_ptr, "\n");
+	mutex_unlock(&rpmh_stats_mutex);
+
+	printk(KERN_INFO "%s", buf);
+#ifdef CONFIG_DSP_SLEEP_RECOVERY
+	subsystem_monitor_sleep_issue();
+#endif
+}
+EXPORT_SYMBOL(debug_masterstats_show);
+#endif
 
 static ssize_t msm_rpmh_master_stats_print_data(char *prvbuf, ssize_t length,
 				struct msm_rpmh_master_stats *record,

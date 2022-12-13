@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2002,2008-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/debugfs.h>
@@ -9,11 +8,9 @@
 
 #include "kgsl_debugfs.h"
 #include "kgsl_device.h"
-#include "kgsl_pool.h"
 #include "kgsl_sharedmem.h"
 
 struct dentry *kgsl_debugfs_dir;
-static struct dentry *mempools_debugfs;
 static struct dentry *proc_d_debugfs;
 
 static int _strict_set(void *data, u64 val)
@@ -111,45 +108,6 @@ static const struct file_operations global_fops = {
 	.release = globals_release,
 };
 
-static int _pool_size_get(void *data, u64 *val)
-{
-	*val = (u64) kgsl_pool_size_total();
-	return 0;
-}
-
-DEFINE_DEBUGFS_ATTRIBUTE(_pool_size_fops, _pool_size_get, NULL, "%llu\n");
-
-DEFINE_DEBUGFS_ATTRIBUTE(_reserved_fops,
-					kgsl_pool_reserved_get, NULL, "%llu\n");
-DEFINE_DEBUGFS_ATTRIBUTE(_page_count_fops,
-					kgsl_pool_page_count_get, NULL, "%llu\n");
-
-void kgsl_pool_init_debugfs(struct dentry *pool_debugfs,
-					char *name, void *pool)
-{
-	struct dentry *dentry;
-
-	pool_debugfs = debugfs_create_dir(name, mempools_debugfs);
-
-	if (IS_ERR_OR_NULL(pool_debugfs)) {
-		WARN((pool_debugfs == NULL),
-			"Unable to create debugfs dir for %s\n", name);
-		pool_debugfs = NULL;
-		return;
-	}
-
-	dentry = debugfs_create_file("reserved", 0444,
-		pool_debugfs, pool, &_reserved_fops);
-
-	WARN((IS_ERR_OR_NULL(dentry)),
-		"Unable to create 'reserved' file for %s\n", name);
-
-	dentry = debugfs_create_file("count", 0444,
-		pool_debugfs, pool, &_page_count_fops);
-
-	WARN((IS_ERR_OR_NULL(dentry)),
-		"Unable to create 'count' file for %s\n", name);
-}
 
 void kgsl_device_debugfs_init(struct kgsl_device *device)
 {
@@ -242,7 +200,15 @@ static int print_mem_entry(void *data, void *ptr)
 		inode_number = kgsl_get_dmabuf_inode_number(entry);
 	}
 
-	seq_printf(s, "%pK %pK %16llu %5d %10s %10s %16s %5d %10d %6d %6d %10lu",
+#if defined(CONFIG_DISPLAY_SAMSUNG) && !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+	seq_printf(s, "%p %16llu %5d %9s %10s %16s %5d %6d %6d",
+			(uint64_t *)(uintptr_t) m->gpuaddr,
+			m->size, entry->id, flags,
+			memtype_str(usermem_type),
+			usage, (m->sgt ? m->sgt->nents : 0),
+			egl_surface_count, egl_image_count);
+#else
+	seq_printf(s, "%pK %pK %16llu %5d %9s %10s %16s %5d %16llu %6d %6d",
 			(uint64_t *)(uintptr_t) m->gpuaddr,
 			/*
 			 * Show zero for the useraddr - we can't reliably track
@@ -250,8 +216,9 @@ static int print_mem_entry(void *data, void *ptr)
 			 */
 			0, m->size, entry->id, flags,
 			memtype_str(usermem_type),
-			usage, (m->sgt ? m->sgt->nents : 0), map_count,
-			egl_surface_count, egl_image_count, inode_number);
+			usage, (m->sgt ? m->sgt->nents : 0), m->size,
+			egl_surface_count, egl_image_count);
+#endif
 
 	if (entry->metadata[0] != 0)
 		seq_printf(s, " %s", entry->metadata);
@@ -418,7 +385,7 @@ void kgsl_process_init_debugfs(struct kgsl_process_private *private)
 
 void kgsl_core_debugfs_init(void)
 {
-	struct dentry *debug_dir, *dentry;
+	struct dentry *debug_dir;
 
 	kgsl_debugfs_dir = debugfs_create_dir("kgsl", NULL);
 	if (IS_ERR_OR_NULL(kgsl_debugfs_dir))
@@ -430,17 +397,6 @@ void kgsl_core_debugfs_init(void)
 		&_strict_fops);
 
 	proc_d_debugfs = debugfs_create_dir("proc", kgsl_debugfs_dir);
-
-	mempools_debugfs = debugfs_create_dir("mempools", kgsl_debugfs_dir);
-
-	if (IS_ERR_OR_NULL(mempools_debugfs))
-		return;
-
-	dentry = debugfs_create_file("pool_size", 0444,
-		mempools_debugfs, NULL, &_pool_size_fops);
-
-	WARN((IS_ERR_OR_NULL(dentry)),
-		"Unable to create 'pool_size' file for mempools\n");
 }
 
 void kgsl_core_debugfs_close(void)

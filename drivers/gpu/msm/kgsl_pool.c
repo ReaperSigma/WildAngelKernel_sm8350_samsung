@@ -8,11 +8,14 @@
 #include <linux/of.h>
 #include <linux/scatterlist.h>
 
-#include "kgsl_debugfs.h"
 #include "kgsl_device.h"
 #include "kgsl_pool.h"
 #include "kgsl_sharedmem.h"
 #include "kgsl_trace.h"
+
+#ifdef CONFIG_HUGEPAGE_POOL
+#include <linux/hugepage_pool.h>
+#endif
 
 /**
  * struct kgsl_page_pool - Structure to hold information for the pool
@@ -21,7 +24,6 @@
  * @reserved_pages: Number of pages reserved at init for the pool
  * @list_lock: Spinlock for page list in the pool
  * @page_list: List of pages held/reserved in this pool
- * @debug_root: Pointer to the debugfs root for this pool
  */
 struct kgsl_page_pool {
 	unsigned int pool_order;
@@ -29,10 +31,13 @@ struct kgsl_page_pool {
 	unsigned int reserved_pages;
 	spinlock_t list_lock;
 	struct list_head page_list;
-	struct dentry *debug_root;
 };
 
+#ifdef CONFIG_HUGEPAGE_POOL
+static struct kgsl_page_pool kgsl_pools[7];
+#else
 static struct kgsl_page_pool kgsl_pools[6];
+#endif
 static int kgsl_num_pools;
 static int kgsl_pool_max_pages;
 
@@ -57,6 +62,11 @@ _kgsl_get_pool_from_order(int order)
 {
 	int index = kgsl_get_pool_index(order);
 
+#ifdef CONFIG_HUGEPAGE_POOL
+	if (order == HUGEPAGE_ORDER &&
+	    !is_hugepage_allowed(current, order, false, HPAGE_GPU))
+		return NULL;
+#endif
 	return index >= 0 ? &kgsl_pools[index] : NULL;
 }
 
@@ -141,7 +151,8 @@ _kgsl_pool_get_page(struct kgsl_page_pool *pool)
 	return p;
 }
 
-int kgsl_pool_size_total(void)
+/* Returns the number of pages in all kgsl page pools */
+static int kgsl_pool_size_total(void)
 {
 	int i;
 	int total = 0;
@@ -349,7 +360,11 @@ static int kgsl_get_page_size(size_t size, unsigned int align)
 {
 	size_t pool;
 
+#ifdef CONFIG_HUGEPAGE_POOL
+	for (pool = SZ_2M; pool > PAGE_SIZE; pool >>= 1)
+#else
 	for (pool = SZ_1M; pool > PAGE_SIZE; pool >>= 1)
+#endif
 		if ((align >= ilog2(pool)) && (size >= pool) &&
 			kgsl_pool_available(pool))
 			return pool;
@@ -428,7 +443,15 @@ static int kgsl_pool_alloc_page(int *page_size, struct page **pages,
 	if (page == NULL) {
 		gfp_t gfp_mask = kgsl_gfp_mask(order);
 
+#ifdef CONFIG_HUGEPAGE_POOL
+		if (order == HUGEPAGE_ORDER)
+			page = alloc_zeroed_hugepage(gfp_mask, order, false,
+						     HPAGE_GPU);
+		else
+			page = alloc_pages(gfp_mask, order);
+#else
 		page = alloc_pages(gfp_mask, order);
+#endif
 
 		if (!page) {
 			if (pool_idx > 0) {
@@ -474,11 +497,18 @@ int kgsl_pool_alloc_pages(u64 size, struct page ***pages, struct device *dev)
 	u32 page_size, align;
 	u64 len = size;
 
-	if (!local)
+	if (!local) {
+		pr_err("kvcalloc in kgsl_pool_alloc_pages failed, npages= %d\n", npages);
 		return -ENOMEM;
+	}
 
+#ifdef CONFIG_HUGEPAGE_POOL
+	/* Start with 2MB alignment to get the biggest page we can */
+	align = ilog2(SZ_2M);
+#else
 	/* Start with 1MB alignment to get the biggest page we can */
 	align = ilog2(SZ_1M);
+#endif
 
 	page_size = kgsl_get_page_size(len, align);
 
@@ -573,22 +603,6 @@ static struct shrinker kgsl_pool_shrinker = {
 	.batch = 0,
 };
 
-int kgsl_pool_reserved_get(void *data, u64 *val)
-{
-	struct kgsl_page_pool *pool = data;
-
-	*val = (u64) pool->reserved_pages;
-	return 0;
-}
-
-int kgsl_pool_page_count_get(void *data, u64 *val)
-{
-	struct kgsl_page_pool *pool = data;
-
-	*val = (u64) pool->page_count;
-	return 0;
-}
-
 static void kgsl_pool_reserve_pages(struct kgsl_page_pool *pool,
 		struct device_node *node)
 {
@@ -614,14 +628,17 @@ static int kgsl_of_parse_mempool(struct kgsl_page_pool *pool,
 {
 	u32 size;
 	int order;
-	unsigned char name[8];
 
 	if (of_property_read_u32(node, "qcom,mempool-page-size", &size))
 		return -EINVAL;
 
 	order = ilog2(size >> PAGE_SHIFT);
 
+#ifdef CONFIG_HUGEPAGE_POOL
+	if (order > 9) {
+#else
 	if (order > 8) {
+#endif
 		pr_err("kgsl: %pOF: pool order %d is too big\n", node, order);
 		return -EINVAL;
 	}
@@ -632,9 +649,6 @@ static int kgsl_of_parse_mempool(struct kgsl_page_pool *pool,
 	INIT_LIST_HEAD(&pool->page_list);
 
 	kgsl_pool_reserve_pages(pool, node);
-
-	snprintf(name, sizeof(name), "%d_order", (pool->pool_order));
-	kgsl_pool_init_debugfs(pool->debug_root, name, (void *) pool);
 
 	return 0;
 }

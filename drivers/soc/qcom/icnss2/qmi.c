@@ -41,6 +41,7 @@
 #define BIN_BDF_FILE_NAME		"bdwlan.bin"
 #define BIN_BDF_FILE_NAME_PREFIX	"bdwlan.b"
 #define REGDB_FILE_NAME			"regdb.bin"
+#define DUMMY_BDF_FILE_NAME		"bdwlan.dmy"
 
 #define QDSS_TRACE_CONFIG_FILE "qdss_trace_config.cfg"
 
@@ -655,7 +656,9 @@ int wlfw_cap_send_sync_msg(struct icnss_priv *priv)
 		goto out;
 	}
 
-	ret = qmi_txn_wait(&txn, priv->ctrl_params.qmi_timeout);
+	ret = qmi_txn_wait(&txn,
+			   priv->ctrl_params.qmi_timeout +
+			   msecs_to_jiffies(priv->wlan_en_delay_ms));
 	if (ret < 0) {
 		icnss_qmi_fatal_err("Capability resp wait failed with ret %d\n",
 				    ret);
@@ -959,6 +962,11 @@ static int icnss_get_bdf_file_name(struct icnss_priv *priv,
 	case ICNSS_BDF_REGDB:
 		snprintf(filename_tmp, filename_len, REGDB_FILE_NAME);
 		break;
+	case ICNSS_BDF_DUMMY:
+		icnss_pr_dbg("CNSS_BDF_DUMMY is set, sending dummy BDF\n");
+		snprintf(filename_tmp, filename_len, DUMMY_BDF_FILE_NAME);
+		ret = ICNSS_MAX_FILE_NAME;
+		break;
 	default:
 		icnss_pr_err("Invalid BDF type: %d\n",
 			     priv->ctrl_params.bdf_type);
@@ -966,7 +974,7 @@ static int icnss_get_bdf_file_name(struct icnss_priv *priv,
 		break;
 	}
 
-	if (!ret)
+	if (ret >= 0)
 		icnss_add_fw_prefix_name(priv, filename, filename_tmp);
 
 	return ret;
@@ -981,6 +989,8 @@ static char *icnss_bdf_type_to_str(enum icnss_bdf_type bdf_type)
 		return "BDF";
 	case ICNSS_BDF_REGDB:
 		return "REGDB";
+	case ICNSS_BDF_DUMMY:
+		return "BDF";
 	default:
 		return "UNKNOWN";
 	}
@@ -1012,8 +1022,13 @@ int icnss_wlfw_bdf_dnld_send_sync(struct icnss_priv *priv, u32 bdf_type)
 
 	ret = icnss_get_bdf_file_name(priv, bdf_type,
 				      filename, sizeof(filename));
-	if (ret)
+	if (ret > 0) {
+		temp = DUMMY_BDF_FILE_NAME;
+		remaining = ICNSS_MAX_FILE_NAME;
+		goto bypass_bdf;
+	} else if (ret < 0) {
 		goto err_req_fw;
+	}
 
 	ret = request_firmware(&fw_entry, filename, &priv->pdev->dev);
 	if (ret) {
@@ -1025,6 +1040,7 @@ int icnss_wlfw_bdf_dnld_send_sync(struct icnss_priv *priv, u32 bdf_type)
 	temp = fw_entry->data;
 	remaining = fw_entry->size;
 
+bypass_bdf:
 	icnss_pr_dbg("Downloading %s: %s, size: %u\n",
 		     icnss_bdf_type_to_str(bdf_type), filename, remaining);
 
@@ -1089,14 +1105,16 @@ int icnss_wlfw_bdf_dnld_send_sync(struct icnss_priv *priv, u32 bdf_type)
 		req->seg_id++;
 	}
 
-	release_firmware(fw_entry);
+	if (bdf_type != ICNSS_BDF_DUMMY)
+		release_firmware(fw_entry);
 
 	kfree(req);
 	kfree(resp);
 	return 0;
 
 err_send:
-	release_firmware(fw_entry);
+	if (bdf_type != ICNSS_BDF_DUMMY)
+		release_firmware(fw_entry);
 err_req_fw:
 	if (bdf_type != ICNSS_BDF_REGDB)
 		ICNSS_QMI_ASSERT();
@@ -1395,7 +1413,9 @@ int wlfw_wlan_mode_send_sync_msg(struct icnss_priv *priv,
 		goto out;
 	}
 
-	ret = qmi_txn_wait(&txn, priv->ctrl_params.qmi_timeout);
+	ret = qmi_txn_wait(&txn,
+			   priv->ctrl_params.qmi_timeout +
+			   msecs_to_jiffies(priv->wlan_en_delay_ms));
 	if (ret < 0) {
 		icnss_qmi_fatal_err("Mode resp wait failed with ret %d\n", ret);
 		goto out;
@@ -3118,6 +3138,13 @@ int wlfw_host_cap_send_sync(struct icnss_priv *priv)
 	req->host_build_type_valid = 1;
 	req->host_build_type = icnss_get_host_build_type();
 
+	if (priv->wlan_en_delay_ms >= 100) {
+		icnss_pr_dbg("Setting WLAN_EN delay: %d ms\n",
+			     priv->wlan_en_delay_ms);
+		req->wlan_enable_delay_valid = 1;
+		req->wlan_enable_delay = priv->wlan_en_delay_ms;
+	}
+
 	ret = qmi_txn_init(&priv->qmi, &txn,
 			   wlfw_host_cap_resp_msg_v01_ei, resp);
 	if (ret < 0) {
@@ -3305,72 +3332,5 @@ out:
 	kfree(req);
 	kfree(resp);
 	penv->stats.restart_level_err++;
-	return ret;
-}
-
-int wlfw_wlan_hw_init_cfg_msg(struct icnss_priv *penv,
-			      enum wlfw_wlan_rf_subtype_v01 type)
-{
-	int ret;
-	struct wlfw_wlan_hw_init_cfg_req_msg_v01 *req;
-	struct wlfw_wlan_hw_init_cfg_resp_msg_v01 *resp;
-	struct qmi_txn txn;
-
-	if (!penv)
-		return -ENODEV;
-
-	icnss_pr_dbg("Sending hw init cfg, rf_subtype: 0x%x\n", type);
-
-	req = kzalloc(sizeof(*req), GFP_KERNEL);
-	if (!req)
-		return -ENOMEM;
-
-	resp = kzalloc(sizeof(*resp), GFP_KERNEL);
-	if (!resp) {
-		kfree(req);
-		return -ENOMEM;
-	}
-
-	req->rf_subtype_valid = 1;
-	req->rf_subtype = type;
-
-	ret = qmi_txn_init(&penv->qmi, &txn,
-			   wlfw_wlan_hw_init_cfg_resp_msg_v01_ei, resp);
-	if (ret < 0) {
-		icnss_pr_err("Fail to init txn for hw init cfg, resp %d\n",
-			     ret);
-		goto out;
-	}
-
-	ret = qmi_send_request(&penv->qmi, NULL, &txn,
-			       QMI_WLFW_WLAN_HW_INIT_CFG_REQ_V01,
-			       WLFW_WLAN_HW_INIT_CFG_REQ_MSG_V01_MAX_MSG_LEN,
-			       wlfw_wlan_hw_init_cfg_req_msg_v01_ei, req);
-	if (ret < 0) {
-		qmi_txn_cancel(&txn);
-		icnss_pr_err("Fail to send hw init cfg %d\n", ret);
-		goto out;
-	}
-
-	ret = qmi_txn_wait(&txn, penv->ctrl_params.qmi_timeout);
-	if (ret < 0) {
-		icnss_pr_err("HW init cfg timed out with ret %d\n",
-			     ret);
-		goto out;
-
-	} else if (resp->resp.result != QMI_RESULT_SUCCESS_V01) {
-		icnss_pr_err("HW init cfg request rejected,result:%d error:%d\n",
-			     resp->resp.result, resp->resp.error);
-		ret = -resp->resp.result;
-		goto out;
-	}
-
-	kfree(resp);
-	kfree(req);
-	return 0;
-
-out:
-	kfree(req);
-	kfree(resp);
 	return ret;
 }

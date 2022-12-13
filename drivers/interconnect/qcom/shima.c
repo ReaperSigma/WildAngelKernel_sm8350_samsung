@@ -2548,12 +2548,12 @@ static int qnoc_probe(struct platform_device *pdev)
 	if (qp->num_clks < 0)
 		return qp->num_clks;
 
-	for (i = 0; i < qp->num_bcms; i++)
-		qcom_icc_bcm_init(qp->bcms[i], &pdev->dev);
+	ret = clk_bulk_prepare_enable(qp->num_clks, qp->clks);
 
-	ret = qcom_icc_enable_qos_deps(qp);
-	if (ret)
+	if (ret) {
+		dev_err(&pdev->dev, "failed to enable clocks\n");
 		return ret;
+	}
 
 	for (i = 0; i < num_nodes; i++) {
 		size_t j;
@@ -2589,7 +2589,11 @@ static int qnoc_probe(struct platform_device *pdev)
 	}
 	data->num_nodes = num_nodes;
 
-	qcom_icc_disable_qos_deps(qp);
+	clk_bulk_disable_unprepare(qp->num_clks, qp->clks);
+
+	for (i = 0; i < qp->num_bcms; i++)
+		qcom_icc_bcm_init(qp->bcms[i], &pdev->dev);
+
 	platform_set_drvdata(pdev, qp);
 
 	dev_info(&pdev->dev, "Registered SHIMA ICC\n");
@@ -2605,7 +2609,6 @@ err:
 		icc_node_destroy(node->id);
 	}
 
-	qcom_icc_disable_qos_deps(qp);
 	clk_bulk_put_all(qp->num_clks, qp->clks);
 
 	icc_provider_del(provider);

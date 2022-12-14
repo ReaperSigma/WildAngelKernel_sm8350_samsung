@@ -504,7 +504,8 @@ static bool scm_is_security_match(struct scan_filter *filter,
 			match = scm_check_open(filter, db_entry, security);
 			if (match)
 				break;
-		/* If not OPEN, then check WEP match so fall through */
+		/* If not OPEN, then check WEP match */
+		/* fallthrough */
 		case WLAN_CRYPTO_AUTH_SHARED:
 			match = scm_check_wep(filter, db_entry, security);
 			break;
@@ -578,15 +579,15 @@ static bool scm_is_fils_config_match(struct scan_filter *filter,
 		data += HESSID_LEN;
 
 	for (i = 1; i <= indication_ie->realm_identifiers_cnt &&
-	     (data + REAM_HASH_LEN) <= end_ptr; i++) {
+	     (data + REALM_HASH_LEN) <= end_ptr; i++) {
 		if (!qdf_mem_cmp(filter->fils_scan_filter.fils_realm,
-				 data, REAM_HASH_LEN))
+				 data, REALM_HASH_LEN))
 			return true;
 		/* Max realm count reached */
 		if (indication_ie->realm_identifiers_cnt == i)
 			break;
 
-		data = data + REAM_HASH_LEN;
+		data = data + REALM_HASH_LEN;
 	}
 
 	return false;
@@ -653,6 +654,10 @@ bool scm_filter_match(struct wlan_objmgr_psoc *psoc,
 	if (filter->dot11mode && !scm_check_dot11mode(db_entry, filter))
 		return false;
 
+	if (filter->ignore_6ghz_channel &&
+	    WLAN_REG_IS_6GHZ_CHAN_FREQ(db_entry->channel.chan_freq))
+		return false;
+
 	if (filter->age_threshold && filter->age_threshold <
 					util_scan_entry_age(db_entry))
 		return false;
@@ -716,8 +721,18 @@ bool scm_filter_match(struct wlan_objmgr_psoc *psoc,
 		}
 	}
 
-	if (!match && filter->num_of_channels)
+	if (!match && filter->num_of_channels) {
+		/*
+		 * Do not print if bssid/ssid is not present in filter to avoid
+		 * excessive prints (e.g RRM case where only freq list is
+		 * provided to get AP's in specific frequencies)
+		 */
+		if (filter->num_of_bssid || filter->num_of_ssid)
+			scm_debug(QDF_MAC_ADDR_FMT" : Ignore as AP's freq %d is not in freq list",
+				  QDF_MAC_ADDR_REF(db_entry->bssid.bytes),
+				  db_entry->channel.chan_freq);
 		return false;
+	}
 
 	if (filter->rrm_measurement_filter)
 		return true;
@@ -742,6 +757,13 @@ bool scm_filter_match(struct wlan_objmgr_psoc *psoc,
 				      db_entry, 0)) {
 		scm_debug(QDF_MAC_ADDR_FMT" : Ignore as CCX validateion failed",
 			  QDF_MAC_ADDR_REF(db_entry->bssid.bytes));
+		return false;
+	}
+
+	if (!util_is_bss_type_match(filter->bss_type, db_entry->cap_info)) {
+		scm_debug(QDF_MAC_ADDR_FMT" : Ignore as bss type didn't match cap_info %x bss_type %d",
+			  QDF_MAC_ADDR_REF(db_entry->bssid.bytes),
+			  db_entry->cap_info.value, filter->bss_type);
 		return false;
 	}
 

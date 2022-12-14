@@ -67,6 +67,7 @@ hdd_cfr_disconnect(struct wlan_objmgr_vdev *vdev)
 	return QDF_STATUS_SUCCESS;
 }
 #endif
+
 extern const struct nla_policy cfr_config_policy[
 			QCA_WLAN_VENDOR_ATTR_PEER_CFR_MAX + 1];
 

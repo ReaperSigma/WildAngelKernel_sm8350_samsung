@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -288,7 +288,7 @@ static QDF_STATUS hdd_print_acl(struct hdd_adapter *adapter)
 {
 	eSapMacAddrACL acl_mode;
 	struct qdf_mac_addr maclist[MAX_ACL_MAC_ADDRESS];
-	uint8_t listnum;
+	uint16_t listnum;
 	struct sap_context *sap_ctx;
 
 	sap_ctx = WLAN_HDD_GET_SAP_CTX_PTR(adapter);
@@ -2138,8 +2138,7 @@ __iw_softap_stopbss(struct net_device *dev,
 		status = wlansap_stop_bss(
 			WLAN_HDD_GET_SAP_CTX_PTR(adapter));
 		if (QDF_IS_STATUS_SUCCESS(status)) {
-			status =
-				qdf_wait_for_event_completion(&hostapd_state->
+			status = qdf_wait_single_event(&hostapd_state->
 					qdf_stop_bss_event,
 					SME_CMD_STOP_BSS_TIMEOUT);
 
@@ -2612,14 +2611,14 @@ __iw_get_peer_rssi(struct net_device *dev, struct iw_request_info *info,
 			hdd_err("String to Hex conversion Failed");
 	}
 
-	vdev = hdd_objmgr_get_vdev(adapter);
+	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_STATS_ID);
 	if (!vdev)
 		return -EINVAL;
 
 	rssi_info = wlan_cfg80211_mc_cp_stats_get_peer_rssi(vdev,
 							    macaddress.bytes,
 							    &ret);
-	hdd_objmgr_put_vdev(vdev);
+	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_STATS_ID);
 	if (ret || !rssi_info) {
 		wlan_cfg80211_mc_cp_stats_free_stats_event(rssi_info);
 		return ret;

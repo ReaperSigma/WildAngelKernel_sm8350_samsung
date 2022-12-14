@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -33,6 +33,7 @@
 #include <cdp_txrx_cmn.h>
 #include <wlan_lmac_if_def.h>
 #include <target_if_vdev_mgr_tx_ops.h>
+#include "connection_mgr/core/src/wlan_cm_main.h"
 
 static QDF_STATUS mlme_vdev_obj_create_handler(struct wlan_objmgr_vdev *vdev,
 					       void *arg)
@@ -103,6 +104,11 @@ static QDF_STATUS mlme_vdev_obj_create_handler(struct wlan_objmgr_vdev *vdev,
 		goto init_failed;
 	}
 
+	if (QDF_IS_STATUS_ERROR(wlan_cm_init(vdev_mlme))) {
+		mlme_err("CM SM create failed");
+		goto cm_sm_create_failed;
+	}
+
 	if (mlme_vdev_ops_ext_hdl_create(vdev_mlme) !=
 						QDF_STATUS_SUCCESS) {
 		mlme_err("Legacy vdev object creation failed");
@@ -127,9 +133,13 @@ ext_hdl_post_create_failed:
 	wlan_objmgr_vdev_component_obj_detach(vdev, WLAN_UMAC_COMP_MLME,
 					      vdev_mlme);
 ext_hdl_create_failed:
+	wlan_cm_deinit(vdev_mlme);
+cm_sm_create_failed:
 	mlme_vdev_sm_destroy(vdev_mlme);
 init_failed:
-	wlan_minidump_remove(vdev_mlme);
+	wlan_minidump_remove(vdev_mlme, sizeof(*vdev_mlme), psoc,
+			     WLAN_MD_OBJMGR_VDEV_MLME, "vdev_mlme");
+
 	qdf_mem_free(vdev_mlme);
 	return QDF_STATUS_E_FAILURE;
 }
@@ -150,13 +160,16 @@ static QDF_STATUS mlme_vdev_obj_destroy_handler(struct wlan_objmgr_vdev *vdev,
 		return QDF_STATUS_SUCCESS;
 	}
 
+	wlan_cm_deinit(vdev_mlme);
 	mlme_vdev_sm_destroy(vdev_mlme);
-
 	mlme_vdev_ops_ext_hdl_destroy(vdev_mlme);
-
 	wlan_objmgr_vdev_component_obj_detach(vdev, WLAN_UMAC_COMP_MLME,
 					      vdev_mlme);
-	wlan_minidump_remove(vdev_mlme);
+
+	wlan_minidump_remove(vdev_mlme, sizeof(*vdev_mlme),
+			     wlan_vdev_get_psoc(vdev),
+			     WLAN_MD_OBJMGR_VDEV_MLME, "vdev_mlme");
+
 	qdf_mem_free(vdev_mlme);
 
 	return QDF_STATUS_SUCCESS;

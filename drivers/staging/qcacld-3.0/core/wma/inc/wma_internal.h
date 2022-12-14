@@ -171,12 +171,6 @@ QDF_STATUS wma_set_ppsconfig(uint8_t vdev_id, uint16_t pps_param,
  */
 
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
-void wma_process_roam_invoke(WMA_HANDLE handle,
-				struct wma_roam_invoke_cmd *roaminvoke);
-
-void wma_process_roam_synch_fail(WMA_HANDLE handle,
-				 struct roam_offload_synch_fail *synch_fail);
-
 int wma_roam_synch_event_handler(void *handle, uint8_t *event,
 					uint32_t len);
 
@@ -255,33 +249,6 @@ int wma_roam_stats_event_handler(WMA_HANDLE handle, uint8_t *event,
 				 uint32_t len);
 
 /**
- * wma_mlme_roam_synch_event_handler_cb() - roam synch event handler
- * @handle: wma handle
- * @event: event data
- * @len: length of data
- *
- * This function is roam synch event handler. It sends roam
- * indication for upper layer.
- *
- * Return: Success or Failure status
- */
-int wma_mlme_roam_synch_event_handler_cb(void *handle, uint8_t *event,
-					 uint32_t len);
-
-/**
- * wma_roam_synch_frame_event_handler() - roam synch frame event handler
- * @handle: wma handle
- * @event: event data
- * @len: length of data
- *
- * This function is roam synch frame event handler.
- *
- * Return: Success or Failure status
- */
-int wma_roam_synch_frame_event_handler(void *handle, uint8_t *event,
-					uint32_t len);
-
-/**
  * wma_roam_vdev_disconnect_event_handler() - Handles roam vdev disconnect event
  * @handle: wma_handle
  * @event: pmkid request event data pointer
@@ -346,11 +313,6 @@ wma_roam_scan_chan_list_event_handler(WMA_HANDLE handle, uint8_t *event,
 
 QDF_STATUS wma_update_channel_list(WMA_HANDLE handle,
 				   tSirUpdateChanList *chan_list);
-
-A_UINT32 e_csr_auth_type_to_rsn_authmode(enum csr_akm_type authtype,
-					 eCsrEncryptionType encr);
-
-A_UINT32 e_csr_encryption_type_to_rsn_cipherset(eCsrEncryptionType encr);
 
 QDF_STATUS wma_roam_scan_bmiss_cnt(tp_wma_handle wma_handle,
 				   A_INT32 first_bcnt,
@@ -562,10 +524,6 @@ void wma_roam_better_ap_handler(tp_wma_handle wma, uint32_t vdev_id);
 int wma_roam_event_callback(WMA_HANDLE handle, uint8_t *event_buf,
 			    uint32_t len);
 
-#ifdef WLAN_FEATURE_ROAM_OFFLOAD
-void wma_process_roam_synch_complete(WMA_HANDLE handle, uint8_t vdev_id);
-#endif
-
 /*
  * wma_dev_if.c functions declarations
  */
@@ -767,10 +725,6 @@ void wma_set_sta_keep_alive(tp_wma_handle wma, uint8_t vdev_id,
 				   uint32_t method, uint32_t timeperiod,
 				   uint8_t *hostv4addr, uint8_t *destv4addr,
 				   uint8_t *destmac);
-
-int wma_vdev_install_key_complete_event_handler(void *handle,
-						uint8_t *event,
-						uint32_t len);
 
 /**
  * wma_objmgr_set_peer_mlme_phymode() - set phymode to peer object
@@ -1131,13 +1085,14 @@ int wma_link_status_event_handler(void *handle, uint8_t *cmd_param_info,
 
 /**
  * wma_rso_cmd_status_event_handler() - RSO Command status event handler
- * @wmi_event: WMI event
+ * @vdev_id: VDEV id
+ * @notif: roam notification
  *
  * This function is used to send RSO command status to upper layer
  *
  * Return: 0 for success
  */
-int wma_rso_cmd_status_event_handler(wmi_roam_event_fixed_param *wmi_event);
+int wma_rso_cmd_status_event_handler(uint8_t vdev_id, uint32_t notif);
 
 int wma_stats_event_handler(void *handle, uint8_t *cmd_param_info,
 			    uint32_t len);
@@ -1160,13 +1115,14 @@ int wma_unified_debug_print_event_handler(void *handle, uint8_t *datap,
  * @ch_width: supported channel width
  * @is_vht: is vht supported
  * @is_he: is HE supported
+ * @is_eht: is EHT supported
  *
  * Return: host phymode
  */
 enum wlan_phymode
 wma_peer_phymode(tSirNwType nw_type, uint8_t sta_type,
 		 uint8_t is_ht, uint8_t ch_width,
-		 uint8_t is_vht, bool is_he);
+		 uint8_t is_vht, bool is_he, bool is_eht);
 
 int32_t wma_txrx_fw_stats_reset(tp_wma_handle wma_handle,
 				uint8_t vdev_id, uint32_t value);
@@ -1310,6 +1266,28 @@ int wma_vdev_tsf_handler(void *handle, uint8_t *data, uint32_t data_len);
 QDF_STATUS wma_capture_tsf(tp_wma_handle wma_handle, uint32_t vdev_id);
 QDF_STATUS wma_reset_tsf_gpio(tp_wma_handle wma_handle, uint32_t vdev_id);
 QDF_STATUS wma_set_tsf_gpio_pin(WMA_HANDLE handle, uint32_t pin);
+
+#ifdef WLAN_FEATURE_TSF_UPLINK_DELAY
+/**
+ * wma_set_tsf_auto_report() - Set TSF auto report in firmware
+ * @wma_handle: wma handle
+ * @vdev_id: vdev id
+ * @param_id: enum GEN_PARAM
+ * @ena: true for enable, and false for disable
+ *
+ * Return: QDF_STATUS_SUCCESS for success, otherwise for failure
+ */
+QDF_STATUS wma_set_tsf_auto_report(WMA_HANDLE handle, uint32_t vdev_id,
+				   uint32_t param_id, bool ena);
+#else /* !WLAN_FEATURE_TSF_UPLINK_DELAY */
+static inline QDF_STATUS wma_set_tsf_auto_report(WMA_HANDLE handle,
+						 uint32_t vdev_id,
+						 uint32_t param_id, bool ena)
+{
+	return QDF_STATUS_E_FAILURE;
+}
+#endif /* WLAN_FEATURE_TSF_UPLINK_DELAY */
+
 #else
 static inline QDF_STATUS wma_capture_tsf(tp_wma_handle wma_handle,
 					uint32_t vdev_id)

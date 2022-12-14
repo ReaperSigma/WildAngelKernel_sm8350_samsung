@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -79,6 +79,7 @@ QDF_STATUS lim_populate_peer_rate_set(struct mac_context *mac,
 				      struct pe_session *pe_session,
 				      tDot11fIEVHTCaps *pVHTCaps,
 				      tDot11fIEhe_cap *he_caps,
+				      tDot11fIEeht_cap *eht_caps,
 				      struct sDphHashNode *sta_ds,
 				      struct bss_description *bss_desc);
 
@@ -92,6 +93,7 @@ QDF_STATUS lim_populate_peer_rate_set(struct mac_context *mac,
  * @session_entry: pe session entry
  * @vht_caps: pointer to vht capability
  * @he_caps: pointer to HE capability
+ * @eht_caps: pointer to EHT capability
  *
  * This function is called by limProcessAssocRsp() or
  * lim_add_staInIBSS()
@@ -111,7 +113,8 @@ QDF_STATUS lim_populate_own_rate_set(struct mac_context *mac_ctx,
 				     uint8_t basic_only,
 				     struct pe_session *session_entry,
 				     struct sDot11fIEVHTCaps *vht_caps,
-				     struct sDot11fIEhe_cap *he_caps);
+				     struct sDot11fIEhe_cap *he_caps,
+				     struct sDot11fIEeht_cap *eht_caps);
 
 QDF_STATUS lim_populate_matching_rate_set(struct mac_context *mac_ctx,
 					  tpDphHashNode sta_ds,
@@ -120,7 +123,8 @@ QDF_STATUS lim_populate_matching_rate_set(struct mac_context *mac_ctx,
 					  uint8_t *supported_mcs_set,
 					  struct pe_session *session_entry,
 					  tDot11fIEVHTCaps *vht_caps,
-					  tDot11fIEhe_cap *he_caps);
+					  tDot11fIEhe_cap *he_caps,
+					  tDot11fIEeht_cap *eht_caps);
 
 QDF_STATUS lim_add_sta(struct mac_context *, tpDphHashNode, uint8_t, struct pe_session *);
 QDF_STATUS lim_del_bss(struct mac_context *, tpDphHashNode, uint16_t, struct pe_session *);
@@ -318,13 +322,10 @@ QDF_STATUS lim_is_dot11h_power_capabilities_in_range(struct mac_context *mac,
 void lim_fill_rx_highest_supported_rate(struct mac_context *mac,
 					uint16_t *rxHighestRate,
 					uint8_t *pSupportedMCSSet);
-#ifdef WLAN_FEATURE_11W
 void lim_send_sme_unprotected_mgmt_frame_ind(struct mac_context *mac, uint8_t frameType,
 					     uint8_t *frame, uint32_t frameLen,
 					     uint16_t sessionId,
 					     struct pe_session *pe_session);
-#endif
-
 /**
  * lim_send_sme_tsm_ie_ind() - Send TSM IE information to SME
  * @mac: Global MAC context
@@ -400,4 +401,23 @@ void lim_update_vhtcaps_assoc_resp(struct mac_context *mac_ctx,
 				   struct bss_params *pAddBssParams,
 				   tDot11fIEVHTCaps *vht_caps,
 				   struct pe_session *pe_session);
+
+/**
+ * lim_free_assoc_req_frm_buf() - free assoc request frame buffer
+ * @assoc_req: pointer to tpSirAssocReq
+ *
+ * Return : void
+ */
+void lim_free_assoc_req_frm_buf(tpSirAssocReq assoc_req);
+
+/**
+ * lim_alloc_assoc_req_frm_buf() - allocate assoc request frame buffer
+ * @assoc_req: pointer to tpSirAssocReq
+ * @buf: pointer to assoc request frame
+ * @mac_header_len: ieee80211 header length
+ * @frame_len: payload length of assoc request frame
+ */
+bool lim_alloc_assoc_req_frm_buf(tpSirAssocReq assoc_req,
+				 qdf_nbuf_t buf, uint32_t mac_header_len,
+				 uint32_t frame_len);
 #endif /* __LIM_ASSOC_UTILS_H */

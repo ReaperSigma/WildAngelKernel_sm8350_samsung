@@ -23,13 +23,8 @@
 #ifndef __CFG_MLME_GENERIC_H
 #define __CFG_MLME_GENERIC_H
 
-#ifdef WLAN_FEATURE_11W
 #define CFG_PMF_SA_QUERY_MAX_RETRIES_TYPE	CFG_INI_UINT
 #define CFG_PMF_SA_QUERY_RETRY_INTERVAL_TYPE	CFG_INI_UINT
-#else
-#define CFG_PMF_SA_QUERY_MAX_RETRIES_TYPE	CFG_UINT
-#define CFG_PMF_SA_QUERY_RETRY_INTERVAL_TYPE	CFG_UINT
-#endif /*WLAN_FEATURE_11W*/
 
 /**
  * enum monitor_mode_concurrency - Monitor mode concurrency
@@ -42,6 +37,22 @@ enum monitor_mode_concurrency {
 	MONITOR_MODE_CONC_AFTER_LAST,
 	MONITOR_MODE_CONC_MAX = MONITOR_MODE_CONC_AFTER_LAST - 1,
 };
+
+/**
+ * enum wds_mode_type: wds mode
+ * @WLAN_WDS_MODE_DISABLED: WDS is disabled
+ * @WLAN_WDS_MODE_REPEATER: WDS repeater mode
+ *
+ * This is used for 'type' values in wds_mode
+ */
+enum wlan_wds_mode {
+	WLAN_WDS_MODE_DISABLED  =  0,
+	WLAN_WDS_MODE_REPEATER  =  1,
+	/* keep this last */
+	WLAN_WDS_MODE_LAST,
+	WLAN_WDS_MODE_MAX = WLAN_WDS_MODE_LAST - 1,
+};
+
 /*
  * pmfSaQueryMaxRetries - Control PMF SA query retries for SAP
  * @Min: 0
@@ -89,7 +100,7 @@ enum monitor_mode_concurrency {
  * enable_rtt_mac_randomization - Enable/Disable rtt mac randomization
  * @Min: 0
  * @Max: 1
- * @Default: 0
+ * @Default: 1
  *
  * Usage: External
  *
@@ -97,7 +108,7 @@ enum monitor_mode_concurrency {
  */
 #define CFG_ENABLE_RTT_MAC_RANDOMIZATION CFG_INI_BOOL( \
 	"enable_rtt_mac_randomization", \
-	0, \
+	1, \
 	"Enable RTT MAC randomization")
 
 #define CFG_RTT3_ENABLE CFG_BOOL( \
@@ -153,7 +164,7 @@ enum monitor_mode_concurrency {
  * rf_test_mode_enabled - Enable rf test mode support
  * @Min: 0
  * @Max: 1
- * @Default: 1
+ * @Default: 0
  *
  * This cfg is used to set rf test mode support flag
  *
@@ -163,7 +174,7 @@ enum monitor_mode_concurrency {
  */
 #define CFG_RF_TEST_MODE_SUPP_ENABLED CFG_BOOL( \
 		"rf_test_mode_enabled", \
-		1, \
+		0, \
 		"rf test mode Enable Flag")
 
 /*
@@ -218,7 +229,7 @@ enum monitor_mode_concurrency {
  *
  * </ini>
  */
-#if defined(QCA_WIFI_NAPIER_EMULATION) || defined(QCA_WIFI_QCA6290)
+#if defined(QCA_WIFI_EMULATION) || defined(QCA_WIFI_QCA6290)
 #define CFG_PREVENT_LINK_DOWN CFG_INI_BOOL( \
 	"gPreventLinkDown", \
 	1, \
@@ -228,7 +239,7 @@ enum monitor_mode_concurrency {
 	"gPreventLinkDown", \
 	0, \
 	"Prevent Bus Link Down")
-#endif /* QCA_WIFI_NAPIER_EMULATION */
+#endif /* QCA_WIFI_EMULATION */
 
 /*
  * <ini>
@@ -333,7 +344,7 @@ enum monitor_mode_concurrency {
  * gEnableLpassSupport - Enable/disable LPASS Support
  * @Min: 0 (disabled)
  * @Max: 1 (enabled)
- * @Default: 0 (disabled)
+ * @Default: 1 (disabled) if WLAN_FEATURE_LPSS is defined, 0 otherwise
  *
  * Related: None
  *
@@ -346,7 +357,7 @@ enum monitor_mode_concurrency {
 #ifdef WLAN_FEATURE_LPSS
 #define CFG_ENABLE_LPASS_SUPPORT CFG_INI_BOOL( \
 	"gEnableLpassSupport", \
-	0, \
+	1, \
 	"Enable LPASS Support")
 #else
 #define CFG_ENABLE_LPASS_SUPPORT CFG_BOOL( \
@@ -618,7 +629,7 @@ enum monitor_mode_concurrency {
  * gRemoveTimeStampSyncCmd - Enable/Disable to remove time stamp sync cmd
  * @Min: 0
  * @Max: 1
- * @Default: 0
+ * @Default: 1
  *
  * This ini is used to enable/disable the removal of time stamp sync cmd.
  * If we disable this periodic time sync update to firmware then roaming
@@ -633,7 +644,7 @@ enum monitor_mode_concurrency {
  */
 #define CFG_REMOVE_TIME_STAMP_SYNC_CMD CFG_INI_BOOL( \
 	"gRemoveTimeStampSyncCmd", \
-	0, \
+	1, \
 	"Enable to remove time stamp sync cmd")
 
 /*
@@ -853,6 +864,40 @@ enum monitor_mode_concurrency {
 	CFG_VALUE_OR_DEFAULT, \
 	"Monitor mode concurrency supported")
 
+#ifdef FEATURE_WDS
+/*
+ * <ini>
+ *
+ * wds_mode - wds mode supported
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * Related: None
+ *
+ * wds mode supported
+ * 0 - wds mode disabled
+ * 1 - wds repeater mode
+ *
+ * Supported Feature: General
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_WDS_MODE CFG_INI_UINT( \
+	"wds_mode", \
+	WLAN_WDS_MODE_DISABLED, \
+	WLAN_WDS_MODE_MAX, \
+	WLAN_WDS_MODE_DISABLED, \
+	CFG_VALUE_OR_DEFAULT, \
+	"wds mode supported")
+
+#define CFG_WDS_MODE_ALL CFG(CFG_WDS_MODE)
+#else
+#define CFG_WDS_MODE_ALL
+#endif
+
 #define CFG_GENERIC_ALL \
 	CFG(CFG_ENABLE_DEBUG_PACKET_LOG) \
 	CFG(CFG_PMF_SA_QUERY_MAX_RETRIES) \
@@ -881,11 +926,12 @@ enum monitor_mode_concurrency {
 	CFG(CFG_ENABLE_BEACON_RECEPTION_STATS) \
 	CFG(CFG_REMOVE_TIME_STAMP_SYNC_CMD) \
 	CFG(CFG_MGMT_RETRY_MAX) \
-	CFG(CFG_RF_TEST_MODE_SUPP_ENABLED) \
 	CFG(CFG_BMISS_SKIP_FULL_SCAN) \
 	CFG(CFG_ENABLE_RING_BUFFER) \
 	CFG(CFG_DFS_CHAN_AGEOUT_TIME) \
 	CFG(CFG_SAE_CONNECION_RETRIES) \
 	CFG(CFG_WLS_6GHZ_CAPABLE) \
-	CFG(CFG_MONITOR_MODE_CONCURRENCY)
+	CFG(CFG_MONITOR_MODE_CONCURRENCY) \
+	CFG(CFG_RF_TEST_MODE_SUPP_ENABLED) \
+	CFG_WDS_MODE_ALL
 #endif /* __CFG_MLME_GENERIC_H */

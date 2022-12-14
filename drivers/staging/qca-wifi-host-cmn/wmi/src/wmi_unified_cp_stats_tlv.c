@@ -375,6 +375,15 @@ send_infra_cp_stats_request_cmd_tlv(wmi_unified_t wmi_handle,
 }
 #endif
 
+#ifdef QCA_WIFI_EMULATION
+static QDF_STATUS
+send_stats_request_cmd_tlv(wmi_unified_t wmi_handle,
+			   uint8_t macaddr[QDF_MAC_ADDR_SIZE],
+			   struct stats_request_params *param)
+{
+	return QDF_STATUS_SUCCESS;
+}
+#else
 /**
  * send_stats_request_cmd_tlv() - WMI request stats function
  * @param wmi_handle: handle to WMI.
@@ -424,6 +433,7 @@ send_stats_request_cmd_tlv(wmi_unified_t wmi_handle,
 
 	return qdf_status_from_os_return(ret);
 }
+#endif
 
 #ifdef WLAN_FEATURE_BIG_DATA_STATS
 /**
@@ -701,6 +711,9 @@ extract_pdev_stats_tlv(wmi_unified_t wmi_handle, void *evt_buf, uint32_t index,
 
 	param_buf = (WMI_UPDATE_STATS_EVENTID_param_tlvs *) evt_buf;
 	ev_param = (wmi_stats_event_fixed_param *) param_buf->fixed_param;
+	pdev_stats->pdev_id =
+	     wmi_handle->ops->convert_pdev_id_target_to_host(wmi_handle,
+							     ev_param->pdev_id);
 
 	data = param_buf->data;
 

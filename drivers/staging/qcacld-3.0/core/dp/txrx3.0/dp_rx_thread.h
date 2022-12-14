@@ -25,10 +25,16 @@
 #include <wlan_objmgr_vdev_obj.h>
 
 /* Maximum number of REO rings supported (for stats tracking) */
-#define DP_RX_TM_MAX_REO_RINGS 4
-
+#ifdef CONFIG_BERYLLIUM
+#define DP_RX_TM_MAX_REO_RINGS 8
 /* Number of DP RX threads supported */
+#define DP_MAX_RX_THREADS 3
+#else
+#define DP_RX_TM_MAX_REO_RINGS 4
 #define DP_MAX_RX_THREADS DP_RX_TM_MAX_REO_RINGS
+#endif
+
+#define DP_REDUCED_NUM_RX_THREADS 3
 
 /*
  * struct dp_rx_tm_handle_cmn - Opaque handle for rx_threads to store
@@ -53,6 +59,7 @@ struct dp_rx_tm_handle_cmn;
  * @dropped_invalid_peer: packets(nbuf_list) dropped due to no peer
  * @dropped_others: packets dropped due to other reasons
  * @dropped_enq_fail: packets dropped due to pending queue full
+ * @rx_nbufq_loop_yield: rx loop yield counter
  */
 struct dp_rx_thread_stats {
 	unsigned int nbuf_queued[DP_RX_TM_MAX_REO_RINGS];
@@ -68,6 +75,7 @@ struct dp_rx_thread_stats {
 	unsigned int dropped_invalid_os_rx_handles;
 	unsigned int dropped_others;
 	unsigned int dropped_enq_fail;
+	unsigned int rx_nbufq_loop_yield;
 };
 
 /**
@@ -188,7 +196,7 @@ struct dp_rx_tm_handle {
  * @DP_RX_GRO_LOW_TPUT_FLUSH: Flush during low tput level
  */
 enum dp_rx_gro_flush_code {
-	DP_RX_GRO_NOT_FLUSH,
+	DP_RX_GRO_NOT_FLUSH = 0,
 	DP_RX_GRO_NORMAL_FLUSH,
 	DP_RX_GRO_LOW_TPUT_FLUSH
 };

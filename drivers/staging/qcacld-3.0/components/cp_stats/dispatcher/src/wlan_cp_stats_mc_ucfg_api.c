@@ -72,7 +72,7 @@ ucfg_twt_get_peer_session_param_by_dlg_id(struct peer_mc_cp_stats *mc_stats,
 		src_param = &mc_stats->twt_param[i];
 		if (!event_type ||
 		    (src_param->dialog_id != input_dialog_id &&
-		     input_dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID))
+		     input_dialog_id != TWT_ALL_SESSIONS_DIALOG_ID))
 			continue;
 
 		if ((event_type == HOST_TWT_SESSION_SETUP) ||
@@ -764,6 +764,42 @@ QDF_STATUS ucfg_send_big_data_stats_request(struct wlan_objmgr_vdev *vdev,
 		return status;
 	}
 	return tgt_send_mc_cp_stats_req(wlan_vdev_get_psoc(vdev), type, info);
+}
+
+void ucfg_mc_cp_set_big_data_fw_support(struct wlan_objmgr_psoc *psoc,
+					bool enable)
+{
+	struct psoc_mc_cp_stats *psoc_mc_stats;
+	struct psoc_cp_stats *psoc_cp_stats_priv;
+
+	psoc_cp_stats_priv = wlan_cp_stats_get_psoc_stats_obj(psoc);
+	if (!psoc_cp_stats_priv) {
+		cp_stats_err("psoc cp stats object is null");
+		return;
+	}
+
+	wlan_cp_stats_psoc_obj_lock(psoc_cp_stats_priv);
+	psoc_mc_stats = psoc_cp_stats_priv->obj_stats;
+	psoc_mc_stats->big_data_fw_support_enable = enable;
+	wlan_cp_stats_psoc_obj_unlock(psoc_cp_stats_priv);
+}
+
+void ucfg_mc_cp_get_big_data_fw_support(struct wlan_objmgr_psoc *psoc,
+					bool *enable)
+{
+	struct psoc_mc_cp_stats *psoc_mc_stats;
+	struct psoc_cp_stats *psoc_cp_stats_priv;
+
+	psoc_cp_stats_priv = wlan_cp_stats_get_psoc_stats_obj(psoc);
+	if (!psoc_cp_stats_priv) {
+		cp_stats_err("psoc cp stats object is null");
+		return;
+	}
+
+	wlan_cp_stats_psoc_obj_lock(psoc_cp_stats_priv);
+	psoc_mc_stats = psoc_cp_stats_priv->obj_stats;
+	*enable = psoc_mc_stats->big_data_fw_support_enable;
+	wlan_cp_stats_psoc_obj_unlock(psoc_cp_stats_priv);
 }
 #endif
 

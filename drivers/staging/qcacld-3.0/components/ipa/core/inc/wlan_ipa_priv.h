@@ -26,7 +26,11 @@
 
 #ifdef IPA_OFFLOAD
 
-#ifdef CONFIG_IPA_WDI_UNIFIED_API
+#include <linux/version.h>
+#include <linux/kernel.h>
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)) || \
+	defined(CONFIG_IPA_WDI_UNIFIED_API)
 #include <qdf_ipa_wdi3.h>
 #else
 #include <qdf_ipa.h>
@@ -191,7 +195,8 @@ struct wlan_ipa_tx_hdr {
  * @reserved2: Reserved not used
  */
 #if defined(QCA_WIFI_QCA6290) || defined(QCA_WIFI_QCA6390) || \
-    defined(QCA_WIFI_QCA6490) || defined(QCA_WIFI_QCA6750)
+    defined(QCA_WIFI_QCA6490) || defined(QCA_WIFI_QCA6750) || \
+    defined(QCA_WIFI_WCN7850)
 struct frag_header {
 	uint8_t reserved[0];
 };
@@ -217,7 +222,8 @@ struct frag_header {
  */
 
 #if defined(QCA_WIFI_QCA6290) || defined(QCA_WIFI_QCA6390) || \
-    defined(QCA_WIFI_QCA6490) || defined(QCA_WIFI_QCA6750)
+    defined(QCA_WIFI_QCA6490) || defined(QCA_WIFI_QCA6750) || \
+    defined(QCA_WIFI_WCN7850)
 struct ipa_header {
 	uint8_t reserved[0];
 };
@@ -473,6 +479,7 @@ struct ipa_uc_fw_stats {
  * @session_id: Session ID
  * @mac_addr: Mac address
  * @is_loading: Driver loading flag
+ * @is_2g_iface: true if interface is operating on 2G band, otherwise false
  */
 struct wlan_ipa_uc_pending_event {
 	qdf_list_node_t node;
@@ -482,6 +489,7 @@ struct wlan_ipa_uc_pending_event {
 	uint8_t session_id;
 	uint8_t mac_addr[QDF_MAC_ADDR_SIZE];
 	bool is_loading;
+	bool is_2g_iface;
 };
 
 /**
@@ -704,8 +712,9 @@ struct wlan_ipa_priv {
 	wlan_ipa_softap_xmit softap_xmit;
 	wlan_ipa_send_to_nw send_to_nw;
 	ipa_uc_offload_control_req ipa_tx_op;
+	ipa_intrabss_control_req ipa_intrabss_op;
 
-#ifdef IPA_LAN_RX_NAPI_SUPPORT
+#ifdef QCA_CONFIG_RPS
 	/*Callback to enable RPS for STA in STA+SAP scenario*/
 	wlan_ipa_rps_enable rps_enable;
 #endif

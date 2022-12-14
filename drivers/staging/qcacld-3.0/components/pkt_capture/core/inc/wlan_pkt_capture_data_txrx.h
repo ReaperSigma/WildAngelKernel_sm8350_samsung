@@ -29,7 +29,6 @@
 
 #include "cdp_txrx_cmn_struct.h"
 #include <qdf_nbuf.h>
-#include <qdf_list.h>
 #ifndef WLAN_FEATURE_PKT_CAPTURE_V2
 #include <htt_internal.h>
 #endif

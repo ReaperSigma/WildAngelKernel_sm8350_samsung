@@ -278,7 +278,7 @@ ucfg_mlme_is_twt_setup_in_progress(struct wlan_objmgr_psoc *psoc,
  *
  * Check if the number of active TWT sessions is equal to the maximum number
  * of TWT sessions supported. Only count the TWT session slot if it not
- * WLAN_ALL_SESSIONS_DIALOG_ID and dialog id is different from input dialog_id,
+ * TWT_ALL_SESSIONS_DIALOG_ID and dialog id is different from input dialog_id,
  * because if same dialog_id already exists in the TWT sessions, we should
  * return false since re-negotiation is supported on existing dialog_id.
  *
@@ -747,14 +747,6 @@ ucfg_mlme_get_twt_session_state(struct wlan_objmgr_psoc *psoc,
 }
 
 static inline QDF_STATUS
-ucfg_mlme_reset_twt_active_cmd(struct wlan_objmgr_psoc *psoc,
-			       struct qdf_mac_addr *peer_mac,
-			       uint8_t dialog_id)
-{
-	return QDF_STATUS_E_NOSUPPORT;
-}
-
-static inline QDF_STATUS
 ucfg_mlme_set_twt_res_service_cap(struct wlan_objmgr_psoc *psoc, bool val)
 {
 	return QDF_STATUS_E_NOSUPPORT;
@@ -764,6 +756,14 @@ static inline QDF_STATUS
 ucfg_mlme_get_twt_res_service_cap(struct wlan_objmgr_psoc *psoc, bool *val)
 {
 	*val = false;
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline QDF_STATUS
+ucfg_mlme_reset_twt_active_cmd(struct wlan_objmgr_psoc *psoc,
+			       struct qdf_mac_addr *peer_mac,
+			       uint8_t dialog_id)
+{
 	return QDF_STATUS_E_NOSUPPORT;
 }
 

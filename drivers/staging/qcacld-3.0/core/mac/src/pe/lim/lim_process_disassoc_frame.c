@@ -42,6 +42,7 @@
 #include "lim_send_messages.h"
 #include "sch_api.h"
 #include "wlan_blm_api.h"
+#include "wlan_connectivity_logging.h"
 
 /**
  * lim_process_disassoc_frame
@@ -111,7 +112,6 @@ lim_process_disassoc_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 		}
 		return;
 	}
-#ifdef WLAN_FEATURE_11W
 	/* PMF: If this session is a PMF session, then ensure that this frame was protected */
 	if (pe_session->limRmfEnabled
 	    && (WMA_GET_RX_DPU_FEEDBACK(pRxPacketInfo) &
@@ -137,7 +137,6 @@ lim_process_disassoc_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 							pe_session);
 		return;
 	}
-#endif
 
 	if (frame_len < 2) {
 		pe_err("frame len less than 2");
@@ -153,6 +152,10 @@ lim_process_disassoc_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 			reasonCode, pe_session->limMlmState,
 			pe_session->limSmeState,
 			GET_LIM_SYSTEM_ROLE(pe_session));
+	wlan_connectivity_mgmt_event((struct wlan_frame_hdr *)pHdr,
+				     pe_session->vdev_id, reasonCode,
+				     0, frame_rssi, 0, 0, 0,
+				     WLAN_DISASSOC_RX);
 	lim_diag_event_report(mac, WLAN_PE_DIAG_DISASSOC_FRAME_EVENT,
 		pe_session, 0, reasonCode);
 

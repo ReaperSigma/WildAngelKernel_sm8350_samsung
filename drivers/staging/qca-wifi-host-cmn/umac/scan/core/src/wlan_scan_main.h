@@ -30,7 +30,7 @@
 #include <wlan_scan_public_structs.h>
 #include "wlan_scan_cache_db.h"
 #include "wlan_scan_11d.h"
-#include "wlan_scan_cfg.h"
+#include "cfg_scan.h"
 
 #define scm_alert(params...) \
 	QDF_TRACE_FATAL(QDF_MODULE_ID_SCAN, params)
@@ -158,6 +158,9 @@ struct probe_time_dwell_time {
 /* RRM scan type indication */
 #define SCAN_FLAG_EXT_RRM_SCAN_IND 0x400
 
+/* Probe request frame with unicast RA indication */
+#define SCAN_FLAG_EXT_FORCE_UNICAST_RA  0x1000
+
 /* Passive dwell time if bt_a2dp is enabled. Time in msecs*/
 #define PASSIVE_DWELL_TIME_BT_A2DP_ENABLED 28
 
@@ -251,6 +254,7 @@ struct scan_vdev_obj {
  * @max_sched_scan_plan_iterations: PNO scan number of iterations
  * @scan_backoff_multiplier: Scan banckoff multiplier
  * @pno_wake_lock: pno wake lock
+ * @pno_runtime_pm_lock: pno runtime pm lock
  * @pno_cb: callback to call on PNO completion
  * @mawc_params: Configuration parameters for NLO MAWC.
  * @user_config_sched_scan_plan: if enabled set user confing sched scan plan
@@ -270,6 +274,7 @@ struct pno_def_config {
 	uint32_t max_sched_scan_plan_iterations;
 	uint8_t scan_backoff_multiplier;
 	qdf_wake_lock_t pno_wake_lock;
+	qdf_runtime_lock_t pno_runtime_pm_lock;
 	struct cb_handler pno_cb;
 	struct nlo_mawc_params mawc_params;
 	bool user_config_sched_scan_plan;
@@ -514,6 +519,7 @@ struct scan_cb {
  * @miracast_enabled: miracast enabled
  * @disable_timeout: command timeout disabled
  * @drop_bcn_on_chan_mismatch: drop bcn if channel mismatch
+ * @obss_scan_offload: if obss scan offload is enabled
  * @drop_bcn_on_invalid_freq: drop bcn if freq is invalid in IEs (DS/HT/HE)
  * @scan_start_request_buff: buffer used to pass
  *      scan config to event handlers
@@ -547,6 +553,7 @@ struct wlan_scan_obj {
 	bool disable_timeout;
 	bool drop_bcn_on_chan_mismatch;
 	bool drop_bcn_on_invalid_freq;
+	bool obss_scan_offload;
 	struct scan_start_request scan_start_request_buff;
 #ifdef FEATURE_6G_SCAN_CHAN_SORT_ALGO
 	struct channel_list_db rnr_channel_db;
@@ -850,6 +857,50 @@ wlan_vdev_get_def_scan_params(struct wlan_objmgr_vdev *vdev)
 	psoc = wlan_vdev_get_psoc(vdev);
 
 	return wlan_scan_psoc_get_def_params(psoc);
+}
+
+/**
+ * wlan_scan_psoc_set_disable() - private API to disable scans for psoc
+ * @psoc: psoc on which scans need to be disabled
+ * @reason: reason for enable/disabled
+ *
+ * Return: QDF_STATUS.
+ */
+static inline QDF_STATUS
+wlan_scan_psoc_set_disable(struct wlan_objmgr_psoc *psoc,
+			   enum scan_disable_reason reason)
+{
+	struct wlan_scan_obj *scan_obj;
+
+	scan_obj = wlan_psoc_get_scan_obj(psoc);
+	if (!scan_obj) {
+		scm_err("Failed to get scan object");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	scan_obj->scan_disabled |= reason;
+
+	scm_debug("Psoc scan_disabled %x", scan_obj->scan_disabled);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline QDF_STATUS
+wlan_scan_psoc_set_enable(struct wlan_objmgr_psoc *psoc,
+			  enum scan_disable_reason reason)
+{
+	struct wlan_scan_obj *scan_obj;
+
+	scan_obj = wlan_psoc_get_scan_obj(psoc);
+	if (!scan_obj) {
+		scm_err("Failed to get scan object");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	scan_obj->scan_disabled &= ~reason;
+	scm_debug("Psoc scan_disabled %x", scan_obj->scan_disabled);
+
+	return QDF_STATUS_SUCCESS;
 }
 
 /**

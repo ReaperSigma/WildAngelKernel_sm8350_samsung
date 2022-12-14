@@ -48,7 +48,7 @@ static unsigned int ep_debug_mask =
 	(1 << ENDPOINT_0) | (1 << ENDPOINT_1) | (1 << ENDPOINT_2);
 #endif
 
-#ifdef QCA_WIFI_NAPIER_EMULATION
+#ifdef QCA_WIFI_EMULATION
 #define HTC_EMULATION_DELAY_IN_MS 20
 /**
  * htc_add_delay(): Adds a delay in before proceeding, only for emulation
@@ -760,6 +760,7 @@ static QDF_STATUS htc_issue_packets(HTC_TARGET *target,
 					    (pEndpoint) < 1)
 						break;
 				}
+				/* fallthrough */
 			case QDF_BUS_TYPE_USB:
 				htc_issue_packets_bundle(target,
 							pEndpoint,
@@ -1704,6 +1705,7 @@ static enum HTC_SEND_QUEUE_RESULT htc_try_send(HTC_TARGET *target,
 					pEndpoint->total_num_requeues++;
 					pEndpoint->num_requeues_warn = 0;
 				}
+				/* fallthrough */
 			default:
 				QDF_TRACE(QDF_MODULE_ID_HIF, QDF_TRACE_LEVEL_INFO,
 					  "htc_issue_packets, failed status:%d"
@@ -2471,7 +2473,9 @@ QDF_STATUS htc_tx_completion_handler(void *Context,
 			netbuf = NULL;
 			break;
 		}
-		if (pPacket->PktInfo.AsTx.Tag != HTC_TX_PACKET_TAG_AUTO_PM)
+		if (pPacket->PktInfo.AsTx.Tag != HTC_TX_PACKET_TAG_AUTO_PM &&
+		    pPacket->PktInfo.AsTx.Tag != HTC_TX_PACKET_TAG_RUNTIME_PUT &&
+		    pPacket->PktInfo.AsTx.Tag != HTC_TX_PACKET_TAG_RTPM_PUT_RC)
 			hif_pm_runtime_put(target->hif_dev,
 					   RTPM_ID_WMI);
 

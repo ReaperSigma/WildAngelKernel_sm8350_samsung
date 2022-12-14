@@ -72,6 +72,19 @@ wmi_unified_send_dscp_tip_map_cmd(struct wmi_unified *wmi_handle,
 }
 #endif /* WLAN_SEND_DSCP_UP_MAP_TO_FW */
 
+#ifdef WLAN_FEATURE_MDNS_OFFLOAD
+QDF_STATUS
+wmi_unified_send_set_mdns_config_cmd(struct wmi_unified *wmi_handle,
+				     struct mdns_config_info *mdns_info)
+{
+	if (wmi_handle->ops->send_set_mdns_config_cmd)
+		return wmi_handle->ops->send_set_mdns_config_cmd(wmi_handle,
+								 mdns_info);
+
+	return QDF_STATUS_E_FAILURE;
+}
+#endif /* WLAN_FEATURE_MDNS_OFFLOAD */
+
 #ifdef THERMAL_STATS_SUPPORT
 QDF_STATUS
 wmi_unified_send_get_thermal_stats_cmd(struct wmi_unified *wmi_handle,

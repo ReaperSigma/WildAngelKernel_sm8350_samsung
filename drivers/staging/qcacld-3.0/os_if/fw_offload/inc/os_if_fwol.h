@@ -83,6 +83,39 @@ static inline int os_if_fwol_send_dscp_up_map_to_fw(
 }
 #endif /* WLAN_SEND_DSCP_UP_MAP_TO_FW */
 
+#ifdef WLAN_FEATURE_MDNS_OFFLOAD
+/**
+ * os_if_fwol_enable_mdns_offload() - Enable mdns offload
+ * @vdev: Pointer to vdev
+ *
+ * This function will offload mdns response to FW.
+ *
+ * Return: 0 on success; error number otherwise
+ */
+int os_if_fwol_enable_mdns_offload(struct wlan_objmgr_psoc *psoc,
+				   struct mdns_config_info *mdns_info);
+
+/**
+ * os_if_fwol_diasable_mdns_offload() - Disable mdns offload
+ * @vdev: Pointer to vdev
+ *
+ * This function will disable the mdns offload feature.
+ *
+ * Return: 0 on success; error number otherwise
+ */
+int os_if_fwol_disable_mdns_offload(struct wlan_objmgr_psoc *psoc);
+#else
+static inline int os_if_fwol_enable_mdns_offload(struct wlan_objmgr_psoc *psoc)
+{
+	return 0;
+}
+
+static inline int os_if_fwol_disable_mdns_offload(struct wlan_objmgr_psoc *psoc)
+{
+	return 0;
+}
+#endif /* WLAN_FEATURE_MDNS_OFFLOAD */
+
 #ifdef THERMAL_STATS_SUPPORT
 int os_if_fwol_get_thermal_stats_req(struct wlan_objmgr_psoc *psoc,
 				     enum thermal_stats_request_type req,

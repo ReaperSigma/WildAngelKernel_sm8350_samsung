@@ -61,8 +61,11 @@ static void hif_initialize_default_ops(struct hif_softc *hif_sc)
 	bus_ops->hif_grp_irq_deconfigure = &hif_dummy_grp_irq_deconfigure;
 	bus_ops->hif_config_irq_affinity =
 		&hif_dummy_config_irq_affinity;
+	bus_ops->hif_config_irq_by_ceid = &hif_dummy_config_irq_by_ceid;
 	bus_ops->hif_enable_grp_irqs = &hif_dummy_enable_grp_irqs;
 	bus_ops->hif_disable_grp_irqs = &hif_dummy_enable_grp_irqs;
+	bus_ops->hif_config_irq_clear_cpu_affinity =
+		&hif_dummy_config_irq_clear_cpu_affinity;
 }
 
 #define NUM_OPS (sizeof(struct hif_bus_ops) / sizeof(void *))
@@ -477,7 +480,6 @@ int hif_apps_irqs_disable(struct hif_opaque_softc *hif_ctx)
 		return -EINVAL;
 
 	/* if the wake_irq is shared, don't disable it twice */
-	disable_irq(scn->wake_irq);
 	for (i = 0; i < scn->ce_count; ++i) {
 		int irq = scn->bus_ops.hif_map_ce_to_irq(scn, i);
 
@@ -499,7 +501,6 @@ int hif_apps_irqs_enable(struct hif_opaque_softc *hif_ctx)
 		return -EINVAL;
 
 	/* if the wake_irq is shared, don't enable it twice */
-	enable_irq(scn->wake_irq);
 	for (i = 0; i < scn->ce_count; ++i) {
 		int irq = scn->bus_ops.hif_map_ce_to_irq(scn, i);
 
@@ -617,12 +618,32 @@ void hif_config_irq_affinity(struct hif_softc *hif_sc)
 	hif_sc->bus_ops.hif_config_irq_affinity(hif_sc);
 }
 
+int hif_config_irq_by_ceid(struct hif_softc *hif_sc, int ce_id)
+{
+	return hif_sc->bus_ops.hif_config_irq_by_ceid(hif_sc, ce_id);
+}
+
+#ifdef HIF_CPU_CLEAR_AFFINITY
+void hif_config_irq_clear_cpu_affinity(struct hif_opaque_softc *scn,
+				       int intr_ctxt_id, int cpu)
+{
+	struct hif_softc *hif_sc = HIF_GET_SOFTC(scn);
+
+	hif_sc->bus_ops.hif_config_irq_clear_cpu_affinity(hif_sc,
+							  intr_ctxt_id, cpu);
+}
+
+qdf_export_symbol(hif_config_irq_clear_affinity);
+#endif
+
 #ifdef HIF_BUS_LOG_INFO
-void hif_log_bus_info(struct hif_softc *hif_sc, uint8_t *data,
+bool hif_log_bus_info(struct hif_softc *hif_sc, uint8_t *data,
 		      unsigned int *offset)
 {
 	if (hif_sc->bus_ops.hif_log_bus_info)
-		hif_sc->bus_ops.hif_log_bus_info(hif_sc, data, offset);
+		return hif_sc->bus_ops.hif_log_bus_info(hif_sc, data, offset);
+
+	return false;
 }
 #endif
 

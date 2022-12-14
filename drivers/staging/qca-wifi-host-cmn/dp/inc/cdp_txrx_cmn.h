@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -97,6 +97,24 @@ enum verbose_debug_module {
 #define dp_warn_rl(params...) QDF_TRACE_WARN_RL(QDF_MODULE_ID_DP, params)
 #define dp_debug_rl(params...) QDF_TRACE_DEBUG_RL(QDF_MODULE_ID_DP, params)
 
+#define dp_cdp_alert(params...) QDF_TRACE_FATAL(QDF_MODULE_ID_DP_CDP, params)
+#define dp_cdp_err(params...) QDF_TRACE_ERROR(QDF_MODULE_ID_DP_CDP, params)
+#define dp_cdp_warn(params...) QDF_TRACE_WARN(QDF_MODULE_ID_DP_CDP, params)
+#define dp_cdp_info(params...) \
+	__QDF_TRACE_FL(QDF_TRACE_LEVEL_INFO_HIGH, QDF_MODULE_ID_DP_CDP, ## params)
+#define dp_cdp_debug(params...) QDF_TRACE_DEBUG(QDF_MODULE_ID_DP_CDP, params)
+
+#define dp_cdp_nofl_alert(params...) \
+	QDF_TRACE_FATAL_NO_FL(QDF_MODULE_ID_DP_CDP, params)
+#define dp_cdp_nofl_err(params...) \
+	QDF_TRACE_ERROR_NO_FL(QDF_MODULE_ID_DP_CDP, params)
+#define dp_cdp_nofl_warn(params...) \
+	QDF_TRACE_WARN_NO_FL(QDF_MODULE_ID_DP_CDP, params)
+#define dp_cdp_nofl_info(params...) \
+	QDF_TRACE_DEBUG_NO_FL(QDF_MODULE_ID_DP_CDP, params)
+#define dp_cdp_nofl_debug(params...) \
+	QDF_TRACE_DEBUG_NO_FL(QDF_MODULE_ID_DP_CDP, params)
+
 /**
  * @enum vdev_host_stats_id:
  * host stats update from CDP have to set one of the following stats ID
@@ -113,8 +131,7 @@ static inline QDF_STATUS
 cdp_soc_attach_target(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_INVAL;
 	}
@@ -129,12 +146,10 @@ cdp_soc_attach_target(ol_txrx_soc_handle soc)
 
 static inline QDF_STATUS
 cdp_vdev_attach(ol_txrx_soc_handle soc, uint8_t pdev_id,
-		uint8_t *vdev_mac_addr, uint8_t vdev_id,
-		enum wlan_op_mode op_mode, enum wlan_op_subtype subtype)
+		struct cdp_vdev_info *vdev_info)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -143,9 +158,7 @@ cdp_vdev_attach(ol_txrx_soc_handle soc, uint8_t pdev_id,
 	    !soc->ops->cmn_drv_ops->txrx_vdev_attach)
 		return QDF_STATUS_E_FAILURE;
 
-	return soc->ops->cmn_drv_ops->txrx_vdev_attach(soc, pdev_id,
-						       vdev_mac_addr, vdev_id,
-						       op_mode, subtype);
+	return soc->ops->cmn_drv_ops->txrx_vdev_attach(soc, pdev_id, vdev_info);
 }
 
 #ifdef DP_FLOW_CTL
@@ -163,8 +176,7 @@ static inline QDF_STATUS cdp_flow_pool_map(ol_txrx_soc_handle soc,
 					   uint8_t pdev_id, uint8_t vdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_INVAL;
 	}
@@ -191,8 +203,7 @@ static inline void cdp_flow_pool_unmap(ol_txrx_soc_handle soc,
 				       uint8_t pdev_id, uint8_t vdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -211,8 +222,7 @@ cdp_vdev_detach(ol_txrx_soc_handle soc, uint8_t vdev_id,
 		ol_txrx_vdev_delete_cb callback, void *cb_context)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -229,8 +239,7 @@ static inline int
 cdp_pdev_attach_target(ol_txrx_soc_handle soc, uint8_t pdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -247,8 +256,7 @@ static inline QDF_STATUS cdp_pdev_attach
 	 uint8_t pdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -274,8 +282,7 @@ static inline QDF_STATUS cdp_pdev_attach
 static inline int cdp_pdev_post_attach(ol_txrx_soc_handle soc, uint8_t pdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -304,8 +311,7 @@ static inline void
 cdp_pdev_pre_detach(ol_txrx_soc_handle soc, uint8_t pdev_id, int force)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -321,8 +327,7 @@ static inline QDF_STATUS
 cdp_pdev_detach(ol_txrx_soc_handle soc, uint8_t pdev_id, int force)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -338,8 +343,7 @@ static inline void
 cdp_pdev_deinit(ol_txrx_soc_handle soc, uint8_t pdev_id, int force)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -356,8 +360,7 @@ static inline QDF_STATUS cdp_peer_create
 	uint8_t *peer_mac_addr)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -367,15 +370,15 @@ static inline QDF_STATUS cdp_peer_create
 		return QDF_STATUS_E_FAILURE;
 
 	return soc->ops->cmn_drv_ops->txrx_peer_create(soc, vdev_id,
-			peer_mac_addr);
+			peer_mac_addr, CDP_LINK_PEER_TYPE);
 }
 
 static inline void cdp_peer_setup
-	(ol_txrx_soc_handle soc, uint8_t vdev_id, uint8_t *peer_mac)
+	(ol_txrx_soc_handle soc, uint8_t vdev_id, uint8_t *peer_mac,
+	 struct cdp_peer_setup_info *setup_info)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -385,7 +388,7 @@ static inline void cdp_peer_setup
 		return;
 
 	soc->ops->cmn_drv_ops->txrx_peer_setup(soc, vdev_id,
-			peer_mac);
+			peer_mac, setup_info);
 }
 
 /*
@@ -402,8 +405,7 @@ static inline QDF_STATUS cdp_cp_peer_del_response
 	 uint8_t *peer_mac_addr)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -434,8 +436,7 @@ static inline bool cdp_peer_get_ast_info_by_soc
 	 struct cdp_ast_entry_info *ast_entry_info)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return false;
 	}
@@ -468,8 +469,7 @@ static inline bool cdp_peer_get_ast_info_by_pdev
 	 struct cdp_ast_entry_info *ast_entry_info)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return false;
 	}
@@ -504,8 +504,7 @@ static inline QDF_STATUS cdp_peer_ast_delete_by_soc
 	 void *cookie)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_INVAL;
 	}
@@ -541,8 +540,7 @@ static inline QDF_STATUS cdp_peer_ast_delete_by_pdev
 	 void *cookie)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_INVAL;
 	}
@@ -565,8 +563,7 @@ static inline int cdp_peer_add_ast
 	enum cdp_txrx_ast_entry_type type, uint32_t flags)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -589,8 +586,7 @@ static inline QDF_STATUS cdp_peer_reset_ast
 {
 
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -606,8 +602,7 @@ static inline QDF_STATUS cdp_peer_reset_ast_table
 	(ol_txrx_soc_handle soc, uint8_t vdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -623,8 +618,7 @@ static inline void cdp_peer_flush_ast_table
 	(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -641,8 +635,7 @@ static inline int cdp_peer_update_ast
 	 uint8_t *wds_macaddr, uint32_t flags)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -663,8 +656,7 @@ static inline void cdp_peer_teardown
 	(ol_txrx_soc_handle soc, uint8_t vdev_id, uint8_t *peer_mac)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -681,8 +673,7 @@ cdp_peer_delete(ol_txrx_soc_handle soc, uint8_t vdev_id,
 		uint8_t *peer_mac, uint32_t bitmap)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -713,8 +704,7 @@ cdp_peer_delete_sync(ol_txrx_soc_handle soc, uint8_t vdev_id, uint8_t *peer_mac,
 		     uint32_t bitmap)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -733,8 +723,7 @@ cdp_set_monitor_mode(ol_txrx_soc_handle soc, uint8_t vdev_id,
 		     uint8_t smart_monitor)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -753,8 +742,7 @@ cdp_set_curchan(ol_txrx_soc_handle soc,
 	uint32_t chan_mhz)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -771,8 +759,7 @@ cdp_set_privacy_filters(ol_txrx_soc_handle soc, uint8_t vdev_id,
 			void *filter, uint32_t num)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -806,8 +793,7 @@ cdp_vdev_register(ol_txrx_soc_handle soc, uint8_t vdev_id,
 		  struct ol_txrx_ops *txrx_ops)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -825,8 +811,7 @@ cdp_mgmt_send(ol_txrx_soc_handle soc, uint8_t vdev_id,
 	      qdf_nbuf_t tx_mgmt_frm,	uint8_t type)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -845,8 +830,7 @@ cdp_mgmt_send_ext(ol_txrx_soc_handle soc, uint8_t vdev_id,
 		  uint8_t use_6mbps, uint16_t chanfreq)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -866,8 +850,7 @@ cdp_mgmt_tx_cb_set(ol_txrx_soc_handle soc, uint8_t pdev_id,
 		   ol_txrx_mgmt_tx_cb ota_ack_cb, void *ctxt)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -897,8 +880,7 @@ cdp_peer_unmap_sync_cb_set(ol_txrx_soc_handle soc,
 					uint16_t *peerid_list))
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -924,8 +906,7 @@ cdp_data_tx_cb_set(ol_txrx_soc_handle soc, uint8_t vdev_id,
 		   ol_txrx_data_tx_cb callback, void *ctxt)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -965,8 +946,7 @@ cdp_aggr_cfg(ol_txrx_soc_handle soc, uint8_t vdev_id,
 	     int max_subfrms_amsdu)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -985,8 +965,7 @@ cdp_fw_stats_get(ol_txrx_soc_handle soc, uint8_t vdev_id,
 		 bool response_expected)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1003,8 +982,7 @@ static inline int
 cdp_debug(ol_txrx_soc_handle soc, uint8_t vdev_id, int debug_specs)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1021,8 +999,7 @@ cdp_fw_stats_cfg(ol_txrx_soc_handle soc,
 		 uint8_t vdev_id, uint8_t cfg_stats_type, uint32_t cfg_val)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -1038,8 +1015,7 @@ cdp_fw_stats_cfg(ol_txrx_soc_handle soc,
 static inline void cdp_print_level_set(ol_txrx_soc_handle soc, unsigned level)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -1063,8 +1039,7 @@ static inline uint8_t *
 cdp_get_vdev_mac_addr(ol_txrx_soc_handle soc, uint8_t vdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return NULL;
 	}
@@ -1093,8 +1068,7 @@ void cdp_get_os_rx_handles_from_vdev(ol_txrx_soc_handle soc,
 				     ol_osif_vdev_handle *osif_handle_p)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -1119,8 +1093,7 @@ static inline struct cdp_cfg *
 cdp_get_ctrl_pdev_from_vdev(ol_txrx_soc_handle soc, uint8_t vdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return NULL;
 	}
@@ -1144,8 +1117,7 @@ static inline uint8_t
 cdp_get_mon_vdev_from_pdev(ol_txrx_soc_handle soc, uint8_t pdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return -EINVAL;
 	}
@@ -1161,8 +1133,7 @@ static inline void
 cdp_soc_detach(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -1194,8 +1165,7 @@ cdp_soc_init(ol_txrx_soc_handle soc, u_int16_t devid,
 	     struct ol_if_ops *dp_ol_if_ops)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return NULL;
 	}
@@ -1228,8 +1198,7 @@ cdp_pdev_init(ol_txrx_soc_handle soc,
 	      uint8_t pdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1253,8 +1222,7 @@ static inline void
 cdp_soc_deinit(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -1279,8 +1247,7 @@ static inline QDF_STATUS
 cdp_tso_soc_attach(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1305,8 +1272,7 @@ static inline QDF_STATUS
 cdp_tso_soc_detach(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1335,8 +1301,7 @@ static inline int cdp_addba_resp_tx_completion(ol_txrx_soc_handle soc,
 					       uint8_t tid, int status)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1354,8 +1319,7 @@ static inline int cdp_addba_requestprocess(ol_txrx_soc_handle soc,
 	uint16_t batimeout, uint16_t buffersize, uint16_t startseqnum)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1377,8 +1341,7 @@ cdp_addba_responsesetup(ol_txrx_soc_handle soc,
 			uint16_t *batimeout)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -1397,8 +1360,7 @@ static inline int cdp_delba_process(ol_txrx_soc_handle soc, uint8_t *peer_mac,
 				    uint16_t reasoncode)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1429,8 +1391,7 @@ static inline int cdp_delba_tx_completion(ol_txrx_soc_handle soc,
 					  uint8_t tid, int status)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1450,8 +1411,7 @@ cdp_set_addbaresponse(ol_txrx_soc_handle soc,
 		      uint16_t statuscode)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -1477,8 +1437,7 @@ cdp_set_vdev_dscp_tid_map(ol_txrx_soc_handle soc,
 			  uint8_t vdev_id, uint8_t map_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -1506,8 +1465,7 @@ QDF_STATUS cdp_set_vlan_groupkey(ol_txrx_soc_handle soc, uint8_t vdev_id,
 				 uint16_t vlan_id, uint16_t group_key)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1532,8 +1490,7 @@ static inline
 int cdp_ath_get_total_per(ol_txrx_soc_handle soc, uint8_t pdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1558,8 +1515,7 @@ static inline void cdp_set_pdev_dscp_tid_map(ol_txrx_soc_handle soc,
 		uint8_t pdev_id, uint8_t map_id, uint8_t tos, uint8_t tid)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -1580,8 +1536,7 @@ static inline void cdp_set_pdev_dscp_tid_map(ol_txrx_soc_handle soc,
 static inline void cdp_flush_cache_rx_queue(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -1605,8 +1560,7 @@ int cdp_txrx_stats_request(ol_txrx_soc_handle soc, uint8_t vdev_id,
 			   struct cdp_txrx_stats_req *req)
 {
 	if (!soc || !soc->ops || !soc->ops->cmn_drv_ops || !req) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_ASSERT(0);
 		return 0;
 	}
@@ -1625,8 +1579,7 @@ int cdp_txrx_stats_request(ol_txrx_soc_handle soc, uint8_t vdev_id,
 static inline QDF_STATUS cdp_txrx_intr_attach(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1645,8 +1598,7 @@ static inline QDF_STATUS cdp_txrx_intr_attach(ol_txrx_soc_handle soc)
 static inline void cdp_txrx_intr_detach(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -1668,8 +1620,7 @@ cdp_display_stats(ol_txrx_soc_handle soc, uint16_t value,
 		  enum qdf_stats_verbosity_level level)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1695,8 +1646,7 @@ static inline int cdp_set_pn_check(ol_txrx_soc_handle soc,
 		enum cdp_sec_type sec_type,  uint32_t *rx_pn)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1725,8 +1675,7 @@ static inline int cdp_set_key_sec_type(ol_txrx_soc_handle soc,
 				       bool is_unicast)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1747,8 +1696,7 @@ cdp_set_key(ol_txrx_soc_handle soc,
 	    bool is_unicast, uint32_t *key)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -1776,8 +1724,7 @@ QDF_STATUS cdp_update_config_parameters(ol_txrx_soc_handle soc,
 	struct cdp_soc *psoc = (struct cdp_soc *)soc;
 
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1801,8 +1748,7 @@ static inline void *
 cdp_pdev_get_dp_txrx_handle(ol_txrx_soc_handle soc, uint8_t pdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1826,8 +1772,7 @@ cdp_pdev_set_dp_txrx_handle(ol_txrx_soc_handle soc, uint8_t pdev_id,
 			    void *dp_hdl)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -1850,8 +1795,7 @@ static inline void *
 cdp_vdev_get_dp_ext_txrx_handle(ol_txrx_soc_handle soc, uint8_t vdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -1876,8 +1820,7 @@ cdp_vdev_set_dp_ext_txrx_handle(ol_txrx_soc_handle soc, uint8_t vdev_id,
 				uint16_t size)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -1901,8 +1844,7 @@ static inline void *
 cdp_soc_get_dp_txrx_handle(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return NULL;
 	}
@@ -1925,8 +1867,7 @@ static inline void
 cdp_soc_set_dp_txrx_handle(ol_txrx_soc_handle soc, void *dp_handle)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -1951,8 +1892,7 @@ cdp_soc_handle_mode_change(ol_txrx_soc_handle soc, uint8_t pdev_id,
 			   uint32_t lmac_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -1977,8 +1917,7 @@ cdp_soc_map_pdev_to_lmac(ol_txrx_soc_handle soc, uint8_t pdev_id,
 			 uint32_t lmac_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -2005,8 +1944,7 @@ cdp_txrx_set_pdev_status_down(ol_txrx_soc_handle soc,
 			      bool is_pdev_down)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -2034,8 +1972,7 @@ static inline void
 cdp_tx_send(ol_txrx_soc_handle soc, uint8_t vdev_id, qdf_nbuf_t nbuf)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-				"%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -2065,8 +2002,7 @@ QDF_STATUS cdp_set_pdev_pcp_tid_map(ol_txrx_soc_handle soc,
 				    uint32_t pcp, uint32_t tid)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		return QDF_STATUS_E_INVAL;
 	}
 
@@ -2204,21 +2140,21 @@ void cdp_if_mgmt_drain(ol_txrx_soc_handle soc,
  * @soc: opaque soc handle
  * @max_peers: number of peers created in FW
  * @max_ast_index: max number of AST index supported in FW
- * @peer_map_unmap_v2: flag indicates HTT peer map v2 is enabled in FW
+ * @peer_map_unmap_v: Indicates HTT peer map/unmap versions enabled in FW
  *
  *
  * Return: QDF_STATUS
  */
 static inline QDF_STATUS
 cdp_peer_map_attach(ol_txrx_soc_handle soc, uint32_t max_peers,
-		    uint32_t max_ast_index, bool peer_map_unmap_v2)
+		    uint32_t max_ast_index, uint8_t peer_map_unmap_v)
 {
 	if (soc && soc->ops && soc->ops->cmn_drv_ops &&
 	    soc->ops->cmn_drv_ops->txrx_peer_map_attach)
 		return soc->ops->cmn_drv_ops->txrx_peer_map_attach(soc,
 							max_peers,
 							max_ast_index,
-							peer_map_unmap_v2);
+							peer_map_unmap_v);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -2259,8 +2195,7 @@ cdp_txrx_classify_and_update(ol_txrx_soc_handle soc,
 			     struct ol_txrx_nbuf_classify *nbuf_class)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -2348,8 +2283,7 @@ static inline void cdp_set_ba_timeout(ol_txrx_soc_handle soc,
 				      uint8_t ac, uint32_t value)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		QDF_BUG(0);
 		return;
 	}
@@ -2374,8 +2308,7 @@ static inline void cdp_get_ba_timeout(ol_txrx_soc_handle soc,
 				      uint8_t ac, uint32_t *value)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		QDF_BUG(0);
 		return;
 	}
@@ -2398,8 +2331,7 @@ static inline void cdp_get_ba_timeout(ol_txrx_soc_handle soc,
 static inline uint32_t cdp_cfg_get(ol_txrx_soc_handle soc, enum cdp_dp_cfg cfg)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		return 0;
 	}
 
@@ -2421,8 +2353,7 @@ cdp_soc_set_rate_stats_ctx(ol_txrx_soc_handle soc,
 			   void *ctx)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -2445,8 +2376,7 @@ static inline void*
 cdp_soc_get_rate_stats_ctx(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return NULL;
 	}
@@ -2469,8 +2399,7 @@ cdp_peer_flush_rate_stats(ol_txrx_soc_handle soc, uint8_t pdev_id,
 			  void *buf)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return;
 	}
@@ -2493,8 +2422,7 @@ static inline void
 			  uint8_t *mac_addr)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return NULL;
 	}
@@ -2517,8 +2445,7 @@ static inline QDF_STATUS
 cdp_flush_rate_stats_request(struct cdp_soc_t *soc, uint8_t pdev_id)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance:", __func__);
+		dp_cdp_debug("Invalid Instance:");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -2549,8 +2476,7 @@ QDF_STATUS cdp_set_vdev_pcp_tid_map(ol_txrx_soc_handle soc,
 				    uint8_t pcp, uint8_t tid)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		return QDF_STATUS_E_INVAL;
 	}
 
@@ -2580,8 +2506,7 @@ cdp_tx_send_exc(ol_txrx_soc_handle soc,
 		struct cdp_tx_exception_metadata *tx_exc_metadata)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -2611,8 +2536,7 @@ cdp_vdev_get_peer_mac_list(ol_txrx_soc_handle soc,
 			   uint16_t mac_cnt, bool limit)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -2640,8 +2564,7 @@ static inline QDF_STATUS
 cdp_soc_config_full_mon_mode(ol_txrx_soc_handle soc, uint8_t val)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		return QDF_STATUS_E_INVAL;
 	}
 
@@ -2675,8 +2598,7 @@ static inline uint16_t
 cdp_wds_ext_get_peer_id(ol_txrx_soc_handle soc, uint8_t vdev_id, uint8_t *mac)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		QDF_BUG(0);
 		return 0;
 	}
@@ -2695,8 +2617,7 @@ cdp_wds_ext_set_peer_rx(ol_txrx_soc_handle soc, uint8_t vdev_id,
 			ol_osif_peer_handle osif_peer)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAULT;
 	}
@@ -2718,8 +2639,7 @@ static inline void
 cdp_drain_txrx(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		QDF_TRACE(QDF_MODULE_ID_CDP, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Invalid Instance", __func__);
+		dp_cdp_debug("Invalid Instance");
 		QDF_BUG(0);
 		return;
 	}
@@ -2729,5 +2649,68 @@ cdp_drain_txrx(ol_txrx_soc_handle soc)
 		return;
 
 	return soc->ops->cmn_drv_ops->txrx_drain(soc);
+}
+
+/**
+ * cdp_get_free_desc_poolsize() - get free desc pool size
+ * @soc: opaque soc handle
+ */
+static inline int
+cdp_get_free_desc_poolsize(ol_txrx_soc_handle soc)
+{
+	if (!soc || !soc->ops) {
+		dp_cdp_debug("Invalid Instance");
+		QDF_BUG(0);
+		return 0;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->get_free_desc_poolsize)
+		return 0;
+
+	return soc->ops->cmn_drv_ops->get_free_desc_poolsize(soc);
+}
+
+#ifdef WLAN_FEATURE_PKT_CAPTURE_V2
+/**
+ * cdp_set_pkt_capture_mode() - set pkt capture mode in dp ctx
+ * @soc: opaque soc handle
+ * @val: value to be set
+ */
+static inline void
+cdp_set_pkt_capture_mode(ol_txrx_soc_handle soc, bool val)
+{
+	if (!soc || !soc->ops) {
+		dp_cdp_debug("Invalid Instance");
+		QDF_BUG(0);
+		return;
+	}
+
+	if (!soc->ops->cmn_drv_ops ||
+	    !soc->ops->cmn_drv_ops->set_pkt_capture_mode)
+		return;
+
+	soc->ops->cmn_drv_ops->set_pkt_capture_mode(soc, val);
+}
+#else
+static inline void
+cdp_set_pkt_capture_mode(ol_txrx_soc_handle soc, bool val)
+{
+}
+#endif
+
+/**
+ * cdp_rx_get_pending() - Get number of pending frames of RX threads
+ * @soc: opaque soc handle
+ * Return: number of pending frames
+ */
+static inline uint32_t
+cdp_get_tx_inqueue(ol_txrx_soc_handle soc)
+{
+	if (!soc || !soc->ol_ops ||
+	    !soc->ol_ops->dp_get_tx_inqueue)
+		return 0;
+
+	return soc->ol_ops->dp_get_tx_inqueue(soc);
 }
 #endif /* _CDP_TXRX_CMN_H_ */

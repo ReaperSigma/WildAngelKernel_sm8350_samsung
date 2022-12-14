@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -31,6 +31,7 @@
 #include "wlan_policy_mgr_tables_2x2_dbs_i.h"
 #include "wlan_policy_mgr_tables_2x2_5g_1x1_2g.h"
 #include "wlan_policy_mgr_tables_2x2_2g_1x1_5g.h"
+#include "wlan_policy_mgr_tables_2x2_dbs_sbs_i.h"
 #include "wlan_policy_mgr_i.h"
 #include "qdf_types.h"
 #include "qdf_trace.h"
@@ -338,6 +339,8 @@ QDF_STATUS policy_mgr_psoc_open(struct wlan_objmgr_psoc *psoc)
 		return QDF_STATUS_E_FAILURE;
 	}
 	pm_ctx->sta_ap_intf_check_work_info->psoc = psoc;
+	pm_ctx->sta_ap_intf_check_work_info->go_plus_go_force_scc.vdev_id =
+						WLAN_UMAC_VDEV_ID_MAX;
 	if (QDF_IS_STATUS_ERROR(qdf_delayed_work_create(
 				&pm_ctx->sta_ap_intf_check_work,
 				policy_mgr_check_sta_ap_concurrent_ch_intf,
@@ -381,34 +384,6 @@ QDF_STATUS policy_mgr_psoc_close(struct wlan_objmgr_psoc *psoc)
 	}
 
 	return QDF_STATUS_SUCCESS;
-}
-
-/**
- * policy_mgr_update_5g_scc_prefer() - Update pcl if 5g scc is preferred
- * @psoc: psoc object
- *
- * Return: void
- */
-static void policy_mgr_update_5g_scc_prefer(struct wlan_objmgr_psoc *psoc)
-{
-	enum policy_mgr_con_mode mode;
-
-	for (mode = PM_STA_MODE; mode < PM_MAX_NUM_OF_MODE; mode++) {
-		if (policy_mgr_get_5g_scc_prefer(psoc, mode)) {
-			(*second_connection_pcl_dbs_table)
-				[PM_STA_5_1x1][mode][PM_THROUGHPUT] =
-					PM_SCC_CH_24G;
-			policy_mgr_info("overwrite pm_second_connection_pcl_dbs_2x2_table, index %d mode %d system prefer %d new pcl %d",
-					PM_STA_5_1x1, mode,
-					PM_THROUGHPUT, PM_SCC_CH_24G);
-			(*second_connection_pcl_dbs_table)
-				[PM_STA_5_2x2][mode][PM_THROUGHPUT] =
-					PM_SCC_CH_24G;
-			policy_mgr_info("overwrite pm_second_connection_pcl_dbs_2x2_table, index %d mode %d system prefer %d new pcl %d",
-					PM_STA_5_2x2, mode,
-					PM_THROUGHPUT, PM_SCC_CH_24G);
-		}
-	}
 }
 
 #ifdef FEATURE_NO_DBS_INTRABAND_MCC_SUPPORT
@@ -513,19 +488,25 @@ QDF_STATUS policy_mgr_psoc_enable(struct wlan_objmgr_psoc *psoc)
 		policy_mgr_get_current_pref_hw_mode_ptr =
 		policy_mgr_get_current_pref_hw_mode_dbs_1x1;
 
-	if (policy_mgr_is_hw_dbs_2x2_capable(psoc) ||
+	if (policy_mgr_is_hw_dbs_2x2_capable(psoc) &&
+	    policy_mgr_is_hw_sbs_capable(psoc))
+		second_connection_pcl_dbs_table =
+		&pm_second_connection_pcl_dbs_sbs_2x2_table;
+	else if (policy_mgr_is_hw_dbs_2x2_capable(psoc) ||
 	    policy_mgr_is_hw_dbs_required_for_band(psoc,
 						   HW_MODE_MAC_BAND_2G) ||
-	    policy_mgr_is_2x2_1x1_dbs_capable(psoc)) {
+	    policy_mgr_is_2x2_1x1_dbs_capable(psoc))
 		second_connection_pcl_dbs_table =
 		&pm_second_connection_pcl_dbs_2x2_table;
-		policy_mgr_update_5g_scc_prefer(psoc);
-	} else {
+	else
 		second_connection_pcl_dbs_table =
 		&pm_second_connection_pcl_dbs_1x1_table;
-	}
 
-	if (policy_mgr_is_hw_dbs_2x2_capable(psoc) ||
+	if (policy_mgr_is_hw_dbs_2x2_capable(psoc) &&
+	    policy_mgr_is_hw_sbs_capable(psoc))
+		third_connection_pcl_dbs_table =
+		&pm_third_connection_pcl_dbs_sbs_2x2_table;
+	else if (policy_mgr_is_hw_dbs_2x2_capable(psoc) ||
 	    policy_mgr_is_hw_dbs_required_for_band(psoc,
 						   HW_MODE_MAC_BAND_2G) ||
 	    policy_mgr_is_2x2_1x1_dbs_capable(psoc))
@@ -538,11 +519,17 @@ QDF_STATUS policy_mgr_psoc_enable(struct wlan_objmgr_psoc *psoc)
 	/* Initialize non-DBS pcl table pointer to particular table*/
 	policy_mgr_init_non_dbs_pcl(psoc);
 
-	if (policy_mgr_is_hw_dbs_2x2_capable(psoc) ||
-	    policy_mgr_is_hw_dbs_required_for_band(psoc,
-						   HW_MODE_MAC_BAND_2G)) {
-		next_action_two_connection_table =
-		&pm_next_action_two_connection_dbs_2x2_table;
+	if (policy_mgr_is_hw_dbs_2x2_capable(psoc)) {
+		if (policy_mgr_is_hw_dbs_required_for_band(psoc,
+							HW_MODE_MAC_BAND_2G)) {
+			next_action_two_connection_table =
+				&pm_next_action_two_connection_dbs_2x2_table;
+			policy_mgr_debug("using hst/hsp policy manager table");
+		} else {
+			next_action_two_connection_table =
+			      &pm_next_action_two_connection_dbs_2x2_table_v2;
+			policy_mgr_debug("using hmt policy manager table");
+		}
 	} else if (policy_mgr_is_2x2_1x1_dbs_capable(psoc)) {
 		next_action_two_connection_table =
 		&pm_next_action_two_connection_dbs_2x2_5g_1x1_2g_table;
@@ -674,16 +661,13 @@ QDF_STATUS policy_mgr_register_sme_cb(struct wlan_objmgr_psoc *psoc,
 		sme_cbacks->sme_get_nss_for_vdev;
 	pm_ctx->sme_cbacks.sme_nss_update_request =
 		sme_cbacks->sme_nss_update_request;
-	pm_ctx->sme_cbacks.sme_pdev_set_hw_mode =
-		sme_cbacks->sme_pdev_set_hw_mode;
+	if (!policy_mgr_is_hwmode_offload_enabled(psoc))
+		pm_ctx->sme_cbacks.sme_pdev_set_hw_mode =
+			sme_cbacks->sme_pdev_set_hw_mode;
 	pm_ctx->sme_cbacks.sme_soc_set_dual_mac_config =
 		sme_cbacks->sme_soc_set_dual_mac_config;
 	pm_ctx->sme_cbacks.sme_change_mcc_beacon_interval =
 		sme_cbacks->sme_change_mcc_beacon_interval;
-	pm_ctx->sme_cbacks.sme_get_ap_channel_from_scan =
-		sme_cbacks->sme_get_ap_channel_from_scan;
-	pm_ctx->sme_cbacks.sme_scan_result_purge =
-		sme_cbacks->sme_scan_result_purge;
 	pm_ctx->sme_cbacks.sme_rso_start_cb =
 		sme_cbacks->sme_rso_start_cb;
 	pm_ctx->sme_cbacks.sme_rso_stop_cb =

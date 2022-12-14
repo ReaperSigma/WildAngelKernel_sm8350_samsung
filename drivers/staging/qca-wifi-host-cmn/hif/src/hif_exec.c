@@ -96,7 +96,7 @@ hif_hist_skip_event_record(struct hif_event_history *hist_ev,
 					    HIF_EVENT_HIST_MAX)) {
 			last_irq_rec =
 				&hist_ev->event[hist_ev->misc.last_irq_index];
-			last_irq_rec->timestamp = qdf_get_log_timestamp();
+			last_irq_rec->timestamp = hif_get_log_timestamp();
 			last_irq_rec->cpu_id = qdf_get_cpu();
 			last_irq_rec->hp++;
 			last_irq_rec->tp = last_irq_rec->timestamp -
@@ -106,7 +106,7 @@ hif_hist_skip_event_record(struct hif_event_history *hist_ev,
 		break;
 	case HIF_EVENT_BH_SCHED:
 		if (rec->type == HIF_EVENT_BH_SCHED) {
-			rec->timestamp = qdf_get_log_timestamp();
+			rec->timestamp = hif_get_log_timestamp();
 			rec->cpu_id = qdf_get_cpu();
 			return true;
 		}
@@ -117,6 +117,11 @@ hif_hist_skip_event_record(struct hif_event_history *hist_ev,
 		break;
 	case HIF_EVENT_SRNG_ACCESS_END:
 		if (rec->type != HIF_EVENT_SRNG_ACCESS_START)
+			return true;
+		break;
+	case HIF_EVENT_BH_COMPLETE:
+	case HIF_EVENT_BH_FORCE_BREAK:
+		if (rec->type != HIF_EVENT_SRNG_ACCESS_END)
 			return true;
 		break;
 	default:
@@ -318,7 +323,7 @@ void hif_exec_fill_poll_time_histogram(struct hif_exec_context *hif_ext_group)
 	uint32_t bucket;
 	uint32_t cpu_id = qdf_get_cpu();
 
-	poll_time_ns = sched_clock() - hif_ext_group->poll_start_time;
+	poll_time_ns = qdf_time_sched_clock() - hif_ext_group->poll_start_time;
 	poll_time_us = qdf_do_div(poll_time_ns, 1000);
 
 	napi_stat = &hif_ext_group->stats[cpu_id];
@@ -345,7 +350,7 @@ static bool hif_exec_poll_should_yield(struct hif_exec_context *hif_ext_group)
 	struct hif_softc *scn = HIF_GET_SOFTC(hif_ext_group->hif);
 	struct hif_config_info *cfg = &scn->hif_config;
 
-	poll_time_ns = sched_clock() - hif_ext_group->poll_start_time;
+	poll_time_ns = qdf_time_sched_clock() - hif_ext_group->poll_start_time;
 	time_limit_reached =
 		poll_time_ns > cfg->rx_softirq_max_yield_duration_ns ? 1 : 0;
 
@@ -388,7 +393,7 @@ bool hif_exec_should_yield(struct hif_opaque_softc *hif_ctx, uint grp_id)
 static inline
 void hif_exec_update_service_start_time(struct hif_exec_context *hif_ext_group)
 {
-	hif_ext_group->poll_start_time = sched_clock();
+	hif_ext_group->poll_start_time = qdf_time_sched_clock();
 }
 
 void hif_print_napi_stats(struct hif_opaque_softc *hif_ctx)
@@ -405,7 +410,7 @@ void hif_print_napi_stats(struct hif_opaque_softc *hif_ctx)
 	 */
 	char hist_str[(QCA_NAPI_NUM_BUCKETS * 11) + 1] = {'\0'};
 
-	QDF_TRACE(QDF_MODULE_ID_HIF, QDF_TRACE_LEVEL_ERROR,
+	QDF_TRACE(QDF_MODULE_ID_HIF, QDF_TRACE_LEVEL_INFO_HIGH,
 		  "NAPI[#]CPU[#] |scheds |polls  |comps  |dones  |t-lim  |max(us)|hist(500us buckets)");
 
 	for (i = 0;
@@ -421,7 +426,7 @@ void hif_print_napi_stats(struct hif_opaque_softc *hif_ctx)
 						    hist_str,
 						    sizeof(hist_str));
 			QDF_TRACE(QDF_MODULE_ID_HIF,
-				  QDF_TRACE_LEVEL_ERROR,
+				  QDF_TRACE_LEVEL_INFO_HIGH,
 				  "NAPI[%d]CPU[%d]: %7u %7u %7u %7u %7u %7llu %s",
 				  i, j,
 				  napi_stats->napi_schedules,
@@ -623,6 +628,8 @@ static int hif_exec_poll(struct napi_struct *napi, int budget)
 	actual_dones = work_done;
 
 	if (!hif_ext_group->force_break && work_done < normalized_budget) {
+		hif_record_event(hif_ext_group->hif, hif_ext_group->grp_id,
+				 0, 0, 0, HIF_EVENT_BH_COMPLETE);
 		napi_complete(napi);
 		qdf_atomic_dec(&scn->active_grp_tasklet_cnt);
 		hif_ext_group->irq_enable(hif_ext_group);
@@ -630,6 +637,8 @@ static int hif_exec_poll(struct napi_struct *napi, int budget)
 	} else {
 		/* if the ext_group supports time based yield, claim full work
 		 * done anyways */
+		hif_record_event(hif_ext_group->hif, hif_ext_group->grp_id,
+				 0, 0, 0, HIF_EVENT_BH_FORCE_BREAK);
 		work_done = normalized_budget;
 	}
 
@@ -1044,7 +1053,10 @@ struct hif_exec_context *hif_exec_create(enum hif_exec_type type,
  */
 void hif_exec_destroy(struct hif_exec_context *ctx)
 {
-	qdf_spinlock_destroy(&ctx->irq_lock);
+	struct hif_softc *scn = HIF_GET_SOFTC(ctx->hif);
+
+	if (scn->ext_grp_irq_configured)
+		qdf_spinlock_destroy(&ctx->irq_lock);
 	qdf_mem_free(ctx);
 }
 

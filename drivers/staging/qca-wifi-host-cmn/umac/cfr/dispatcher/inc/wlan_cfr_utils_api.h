@@ -1,6 +1,6 @@
 
 /*
- * Copyright (c) 2019-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -62,11 +62,20 @@
 #define DEFAULT_SRNGID_CFR 0
 #endif
 
+#define MAX_CFR_PRD  (10 * 60 * 1000)   /* 10 minutes */
+#define CFR_MOD_PRD  10                 /* CFR period to be multiples of 10ms */
+
+#define MAX_AGC_GAIN 62
+
 enum cfrmetaversion {
 	CFR_META_VERSION_NONE,
-	CFR_META_VERSION_1,
-	CFR_META_VERSION_2,
-	CFR_META_VERSION_3,
+	CFR_META_VERSION_1, /* initial version for legacy_cfr_metadata */
+	CFR_META_VERSION_2, /* initial version for dbr_cfr_metadata */
+	CFR_META_VERSION_3, /* initial version for enh_cfr_metadata */
+	CFR_META_VERSION_4, /* agc gain, cfo, rx_start_ts in dbr_cfr_metadata */
+	CFR_META_VERSION_5, /* agc gain, cfo, rx_start_ts in enh_cfr_metadata */
+	CFR_META_VERSION_6, /* mcs, gi_type in dbr_cfr_metadata */
+	CFR_META_VERSION_7, /* mcs, gi_type, sig_info in enh_cfr_metadata */
 	CFR_META_VERSION_MAX = 0xFF,
 };
 
@@ -104,6 +113,7 @@ enum cfrradiotype {
 	CFR_CAPTURE_RADIO_ADRASTEA,
 	CFR_CAPTURE_RADIO_MAPLE,
 	CFR_CAPTURE_RADIO_MOSELLE,
+	CFR_CAPTURE_RADIO_SPRUCE,
 	CFR_CAPTURE_RADIO_MAX = 0xFF,
 };
 
@@ -132,7 +142,8 @@ enum cfr_capture_type {
 	CFR_TYPE_METHOD_MAX,
 };
 
-struct cfr_metadata_version_1 {
+/* ensure to add new members at the end of the structure only */
+struct legacy_cfr_metadata {
 	u_int8_t    peer_addr[QDF_MAC_ADDR_SIZE];
 	u_int8_t    status;
 	u_int8_t    capture_bw;
@@ -151,7 +162,8 @@ struct cfr_metadata_version_1 {
 
 #define HOST_MAX_CHAINS 8
 
-struct cfr_metadata_version_2 {
+/* ensure to add new members at the end of the structure only */
+struct dbr_cfr_metadata {
 	u_int8_t    peer_addr[QDF_MAC_ADDR_SIZE];
 	u_int8_t    status;
 	u_int8_t    capture_bw;
@@ -168,10 +180,27 @@ struct cfr_metadata_version_2 {
 	u_int32_t   length;
 	u_int32_t   chain_rssi[HOST_MAX_CHAINS];
 	u_int16_t   chain_phase[HOST_MAX_CHAINS];
+	u_int32_t   rtt_cfo_measurement;
+	u_int8_t    agc_gain[HOST_MAX_CHAINS];
+	u_int32_t   rx_start_ts;
+	u_int16_t   mcs_rate;
+	u_int16_t   gi_type;
+	u_int8_t    agc_gain_tbl_index[HOST_MAX_CHAINS];
 } __attribute__ ((__packed__));
 
 #ifdef WLAN_ENH_CFR_ENABLE
-struct cfr_metadata_version_3 {
+struct cfr_su_sig_info {
+	u_int8_t coding;
+	u_int8_t stbc;
+	u_int8_t beamformed;
+	u_int8_t dcm;
+	u_int8_t ltf_size;
+	u_int8_t sgi;
+	u_int16_t reserved;
+} __attribute__ ((__packed__));
+
+/* ensure to add new members at the end of the structure only */
+struct enh_cfr_metadata {
 	u_int8_t    status;
 	u_int8_t    capture_bw;
 	u_int8_t    channel_bw;
@@ -193,23 +222,36 @@ struct cfr_metadata_version_3 {
 	} peer_addr;
 	u_int32_t   chain_rssi[HOST_MAX_CHAINS];
 	u_int16_t   chain_phase[HOST_MAX_CHAINS];
+	u_int32_t   rtt_cfo_measurement;
+	u_int8_t    agc_gain[HOST_MAX_CHAINS];
+	u_int32_t   rx_start_ts;
+	u_int16_t   mcs_rate;
+	u_int16_t   gi_type;
+	struct cfr_su_sig_info sig_info;
+	u_int8_t    agc_gain_tbl_index[HOST_MAX_CHAINS];
 } __attribute__ ((__packed__));
 #endif
 
-struct csi_cfr_header {
+#define  CFR_META_DATA_LEN \
+	(sizeof(struct csi_cfr_header) - sizeof(struct cfr_header_cmn))
+
+struct cfr_header_cmn {
 	u_int32_t   start_magic_num;
 	u_int32_t   vendorid;
 	u_int8_t    cfr_metadata_version;
 	u_int8_t    cfr_data_version;
 	u_int8_t    chip_type;
 	u_int8_t    pltform_type;
-	u_int32_t   Reserved;
+	u_int32_t   cfr_metadata_len;
+} __attribute__ ((__packed__));
 
+struct csi_cfr_header {
+	struct cfr_header_cmn cmn;
 	union {
-		struct cfr_metadata_version_1 meta_v1;
-		struct cfr_metadata_version_2 meta_v2;
+		struct legacy_cfr_metadata meta_legacy;
+		struct dbr_cfr_metadata meta_dbr;
 #ifdef WLAN_ENH_CFR_ENABLE
-		struct cfr_metadata_version_3 meta_v3;
+		struct enh_cfr_metadata meta_enh;
 #endif
 	} u;
 } __attribute__ ((__packed__));
@@ -241,6 +283,7 @@ struct psoc_cfr {
 #ifdef WLAN_ENH_CFR_ENABLE
 	uint8_t is_cap_interval_mode_sel_support;
 	uint8_t is_mo_marking_support;
+	uint8_t is_aoa_for_rcc_support;
 #endif
 };
 
@@ -515,6 +558,7 @@ struct nl_event_cb {
  * cfr_dma_aborts: No. of CFR DMA aborts in ucode
  * is_cap_interval_mode_sel_support: flag to determine if target supports both
  * is_mo_marking_support: flag to determine if MO marking is supported or not
+ * is_aoa_for_rcc_support: flag to determine if AoA is available for RCC or not
  * capture_count and capture_duration modes with a nob provided to configure.
  * unassoc_pool: Pool of un-associated clients used when capture method is
  * CFR_CAPTURE_METHOD_PROBE_RESPONSE
@@ -523,6 +567,12 @@ struct nl_event_cb {
  * is_prevent_suspend: CFR wake lock acquired or not
  * wake_lock: wake lock for cfr
  * runtime_lock: runtime lock for cfr
+ * freq: current operating freq for which AoA Phase delta values reported by FW
+ * max_aoa_chains: Indicate the max number of chains to which target supports
+ * AoA data.
+ * phase_delta: per chain phase delta associated with 62 gain values reported by
+ * FW via WMI_PDEV_AOA_PHASEDELTA_EVENTID.
+ * ibf_cal_val: Per chain IBF cal value from FW.
  */
 /*
  * To be extended if we get more capbality info
@@ -567,6 +617,7 @@ struct pdev_cfr {
 	uint64_t cfr_dma_aborts;
 	uint8_t is_cap_interval_mode_sel_support;
 	uint8_t is_mo_marking_support;
+	uint8_t is_aoa_for_rcc_support;
 #endif
 	struct unassoc_pool_entry unassoc_pool[MAX_CFR_ENABLED_CLIENTS];
 	struct nl_event_cb nl_cb;
@@ -575,6 +626,12 @@ struct pdev_cfr {
 	bool is_prevent_suspend;
 	qdf_wake_lock_t wake_lock;
 	qdf_runtime_lock_t runtime_lock;
+#endif
+#ifdef WLAN_ENH_CFR_ENABLE
+	uint32_t freq;
+	uint32_t max_aoa_chains;
+	uint16_t phase_delta[HOST_MAX_CHAINS][MAX_AGC_GAIN];
+	uint32_t ibf_cal_val[HOST_MAX_CHAINS];
 #endif
 };
 

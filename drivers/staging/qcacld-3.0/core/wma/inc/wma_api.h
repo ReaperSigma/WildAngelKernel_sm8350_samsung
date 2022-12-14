@@ -50,6 +50,8 @@ typedef void *WMA_HANDLE;
  * @GEN_VDEV_PARAM_RX_AMPDU: Set rx ampdu size
  * @GEN_VDEV_PARAM_TX_AMSDU: Set tx amsdu size
  * @GEN_VDEV_PARAM_RX_AMSDU: Set rx amsdu size
+ * @GEN_PARAM_TSF_AUTO_REPORT_ENABLE: Enable auto report of clock delta change
+ * @GEN_PARAM_TSF_AUTO_REPORT_DISABLE: Disable auto report of clock delta change
  */
 enum GEN_PARAM {
 	GEN_VDEV_PARAM_AMPDU = 0x1,
@@ -62,6 +64,8 @@ enum GEN_PARAM {
 	GEN_VDEV_PARAM_RX_AMPDU,
 	GEN_VDEV_PARAM_TX_AMSDU,
 	GEN_VDEV_PARAM_RX_AMSDU,
+	GEN_PARAM_TSF_AUTO_REPORT_ENABLE,
+	GEN_PARAM_TSF_AUTO_REPORT_DISABLE,
 };
 
 /**
@@ -292,7 +296,7 @@ bool wma_capability_enhanced_mcast_filter(void);
 void wma_process_pdev_hw_mode_trans_ind(void *wma,
 	wmi_pdev_hw_mode_transition_event_fixed_param *fixed_param,
 	wmi_pdev_set_hw_mode_response_vdev_mac_entry *vdev_mac_entry,
-	struct sir_hw_mode_trans_ind *hw_mode_trans_ind);
+	struct cm_hw_mode_trans_ind *hw_mode_trans_ind);
 
 /**
  * wma_set_cts2self_for_p2p_go() - set CTS2SELF command for P2P GO.
@@ -561,20 +565,6 @@ bool wma_get_channel_switch_in_progress(struct wma_txrx_node *iface);
  */
 QDF_STATUS wma_sta_mlme_vdev_start_continue(struct vdev_mlme_obj *vdev_mlme,
 					    uint16_t data_len, void *data);
-
-/**
- * wma_sta_mlme_vdev_roam_notify() - VDEV roam notify handling
- * @vdev_mlme_obj:  VDEV MLME comp object
- * @data_len: data size
- * @data: event data
- *
- * API invokes VDEV roam event handling
- *
- * Return: SUCCESS on successful completion of roam event handling
- *         FAILURE, if it fails due to any
- */
-QDF_STATUS wma_sta_mlme_vdev_roam_notify(struct vdev_mlme_obj *vdev_mlme,
-					 uint16_t data_len, void *data);
 
 /**
  * wma_ap_mlme_vdev_start_continue() - VDEV start response handling

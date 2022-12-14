@@ -795,7 +795,6 @@ struct hecap_6ghz {
 	uint8_t a_mpdu_params; /* B0..B7 */
 	uint8_t info; /* B8..B15 */
 };
-
 #endif
 
 struct tdls_update_peer_params {

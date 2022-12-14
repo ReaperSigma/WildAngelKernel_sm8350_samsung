@@ -167,6 +167,17 @@ QDF_STATUS ipa_send_uc_offload_enable_disable(struct wlan_objmgr_pdev *pdev,
 				struct ipa_uc_offload_control_params *req);
 
 /**
+ * ipa_send_intrabss_enable_disable() - wdi intrabss enable/disable notify to fw
+ * @pdev: objmgr pdev object
+ * @req: ipa intrabss control request
+ *
+ * Return: QDF status success or failure
+ */
+QDF_STATUS
+ipa_send_intrabss_enable_disable(struct wlan_objmgr_pdev *pdev,
+				 struct ipa_intrabss_control_params *req);
+
+/**
  * ipa_set_dp_handle() - set dp soc handle
  * @psoc: psoc handle
  * @dp_soc: dp soc handle
@@ -268,7 +279,7 @@ void ipa_reg_sap_xmit_cb(struct wlan_objmgr_pdev *pdev,
 void ipa_reg_send_to_nw_cb(struct wlan_objmgr_pdev *pdev,
 			   wlan_ipa_send_to_nw cb);
 
-#ifdef IPA_LAN_RX_NAPI_SUPPORT
+#ifdef QCA_CONFIG_RPS
 /**
  * ipa_reg_rps_enable_cb() - Register cb to enable RPS
  * @pdev: pdev obj
@@ -385,13 +396,14 @@ QDF_STATUS ipa_send_mcc_scc_msg(struct wlan_objmgr_pdev *pdev,
  * @session_id: session id for the event
  * @type: event enum of type ipa_wlan_event
  * @mac_address: MAC address associated with the event
+ * @is_2g_iface: true if interface is operating on 2G band, otherwise false
  *
  * Return: QDF_STATUS
  */
 QDF_STATUS ipa_wlan_evt(struct wlan_objmgr_pdev *pdev, qdf_netdev_t net_dev,
 			uint8_t device_mode, uint8_t session_id,
 			enum wlan_ipa_wlan_event ipa_event_type,
-			uint8_t *mac_addr);
+			uint8_t *mac_addr, bool is_2g_iface);
 
 /**
  * ipa_uc_smmu_map() - Map / Unmap DMA buffer to IPA UC
@@ -506,12 +518,12 @@ void ipa_flush_pending_vdev_events(struct wlan_objmgr_pdev *pdev,
 				   uint8_t vdev_id);
 
 /**
- * ipa_is_ready() - Is IPA register callback is invoked
+ * ipa_cb_is_ready() - Is IPA register callback is invoked
  *
  * Return: true if IPA register callback is invoked or false
  * otherwise
  */
-bool ipa_is_ready(void);
+bool ipa_cb_is_ready(void);
 
 /**
  * ipa_init_deinit_lock() - lock ipa init deinit lock

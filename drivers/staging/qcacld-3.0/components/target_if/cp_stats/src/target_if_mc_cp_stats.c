@@ -270,7 +270,7 @@ target_if_twt_session_params_unregister_evt_hdlr(struct wlan_objmgr_psoc *psoc)
 static QDF_STATUS
 target_if_twt_session_params_register_evt_hdlr(struct wlan_objmgr_psoc *psoc)
 {
-	int ret_val;
+	QDF_STATUS ret_val;
 	struct wmi_unified *wmi_handle;
 
 	if (!psoc) {
@@ -290,10 +290,10 @@ target_if_twt_session_params_register_evt_hdlr(struct wlan_objmgr_psoc *psoc)
 			target_if_twt_session_params_event_handler,
 			WMI_RX_WORK_CTX);
 
-	if (ret_val)
+	if (QDF_IS_STATUS_ERROR(ret_val))
 		target_if_err("Failed to register twt session stats event cb");
 
-	return qdf_status_from_os_return(ret_val);
+	return ret_val;
 }
 #else
 static QDF_STATUS
@@ -349,7 +349,7 @@ static QDF_STATUS target_if_cp_stats_extract_pdev_stats(
 {
 	uint32_t i;
 	QDF_STATUS status;
-	wmi_host_pdev_stats pdev_stats;
+	wmi_host_pdev_stats *pdev_stats;
 	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
 	cdp_config_param_type val;
 
@@ -366,17 +366,44 @@ static QDF_STATUS target_if_cp_stats_extract_pdev_stats(
 	if (!ev->pdev_stats)
 		return QDF_STATUS_E_NOMEM;
 
+	pdev_stats = qdf_mem_malloc(sizeof(*pdev_stats));
+
+	if (!pdev_stats) {
+		cp_stats_err("malloc failed for pdev_stats");
+		return QDF_STATUS_E_NOMEM;
+	}
+
 	for (i = 0; i < ev->num_pdev_stats; i++) {
-		status = wmi_extract_pdev_stats(wmi_hdl, data, i, &pdev_stats);
+		status = wmi_extract_pdev_stats(wmi_hdl, data, i, pdev_stats);
 		if (QDF_IS_STATUS_ERROR(status)) {
 			cp_stats_err("wmi_extract_pdev_stats failed");
+			qdf_mem_free(pdev_stats);
 			return status;
 		}
-		ev->pdev_stats[i].max_pwr = pdev_stats.chan_tx_pwr;
 
-		val.cdp_pdev_param_chn_noise_flr = pdev_stats.chan_nf;
+		/*
+		 * It's 0.5 db unit from halphy. so correct the value here
+		 */
+		ev->pdev_stats[i].max_pwr = pdev_stats->chan_tx_pwr >> 1;
+
+		/*
+		 * if pdev_stats->pdev_id is 0, then the event contains all
+		 * pdev info, else only contains 1 pdev with pdev id set.
+		 * minus 1: align fw pdev_id and driver
+		 */
+		if (pdev_stats->pdev_id)
+			ev->pdev_stats[i].pdev_id = pdev_stats->pdev_id - 1;
+		else
+			ev->pdev_stats[i].pdev_id = i;
+
+		ev->pdev_stats[i].rx_clear_count = pdev_stats->rx_clear_count;
+		ev->pdev_stats[i].tx_frame_count = pdev_stats->tx_frame_count;
+		ev->pdev_stats[i].cycle_count = pdev_stats->cycle_count;
+
+		val.cdp_pdev_param_chn_noise_flr = pdev_stats->chan_nf;
 		cdp_txrx_set_pdev_param(soc, 0, CDP_CHAN_NOISE_FLOOR, val);
 	}
+	qdf_mem_free(pdev_stats);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -623,7 +650,7 @@ static QDF_STATUS target_if_cp_stats_extract_vdev_summary_stats(
 	uint32_t i, j;
 	QDF_STATUS status;
 	int32_t bcn_snr, dat_snr;
-	wmi_host_vdev_stats vdev_stats;
+	wmi_host_vdev_stats *vdev_stats;
 	bool db2dbm_enabled;
 
 	ev->num_summary_stats = stats_param->num_vdev_stats;
@@ -638,40 +665,47 @@ static QDF_STATUS target_if_cp_stats_extract_vdev_summary_stats(
 
 	db2dbm_enabled = wmi_service_enabled(wmi_hdl,
 					     wmi_service_hw_db2dbm_support);
+
+	vdev_stats = qdf_mem_malloc(sizeof(*vdev_stats));
+	if (!vdev_stats) {
+		cp_stats_err("malloc failed for vdev stats");
+		return QDF_STATUS_E_NOMEM;
+	}
+
 	for (i = 0; i < ev->num_summary_stats; i++) {
-		status = wmi_extract_vdev_stats(wmi_hdl, data, i, &vdev_stats);
+		status = wmi_extract_vdev_stats(wmi_hdl, data, i, vdev_stats);
 		if (QDF_IS_STATUS_ERROR(status))
 			continue;
 
-		bcn_snr = vdev_stats.vdev_snr.bcn_snr;
-		dat_snr = vdev_stats.vdev_snr.dat_snr;
-		ev->vdev_summary_stats[i].vdev_id = vdev_stats.vdev_id;
+		bcn_snr = vdev_stats->vdev_snr.bcn_snr;
+		dat_snr = vdev_stats->vdev_snr.dat_snr;
+		ev->vdev_summary_stats[i].vdev_id = vdev_stats->vdev_id;
 
 		cp_stats_debug("vdev %d SNR bcn: %d data: %d",
 			       ev->vdev_summary_stats[i].vdev_id, bcn_snr,
 			       dat_snr);
 
 		for (j = 0; j < 4; j++) {
-			ev->vdev_summary_stats[i].stats.tx_frm_cnt[j]
-					= vdev_stats.tx_frm_cnt[j];
-			ev->vdev_summary_stats[i].stats.fail_cnt[j]
-					= vdev_stats.fail_cnt[j];
-			ev->vdev_summary_stats[i].stats.multiple_retry_cnt[j]
-					= vdev_stats.multiple_retry_cnt[j];
+			ev->vdev_summary_stats[i].stats.tx_frm_cnt[j] =
+					vdev_stats->tx_frm_cnt[j];
+			ev->vdev_summary_stats[i].stats.fail_cnt[j] =
+					vdev_stats->fail_cnt[j];
+			ev->vdev_summary_stats[i].stats.multiple_retry_cnt[j] =
+					vdev_stats->multiple_retry_cnt[j];
 		}
 
 		ev->vdev_summary_stats[i].stats.rx_frm_cnt =
-						vdev_stats.rx_frm_cnt;
+						vdev_stats->rx_frm_cnt;
 		ev->vdev_summary_stats[i].stats.rx_error_cnt =
-						vdev_stats.rx_err_cnt;
+						vdev_stats->rx_err_cnt;
 		ev->vdev_summary_stats[i].stats.rx_discard_cnt =
-						vdev_stats.rx_discard_cnt;
+						vdev_stats->rx_discard_cnt;
 		ev->vdev_summary_stats[i].stats.ack_fail_cnt =
-						vdev_stats.ack_fail_cnt;
+						vdev_stats->ack_fail_cnt;
 		ev->vdev_summary_stats[i].stats.rts_succ_cnt =
-						vdev_stats.rts_succ_cnt;
+						vdev_stats->rts_succ_cnt;
 		ev->vdev_summary_stats[i].stats.rts_fail_cnt =
-						vdev_stats.rts_fail_cnt;
+						vdev_stats->rts_fail_cnt;
 		/* Update SNR and RSSI in SummaryStats */
 		wlan_util_stats_get_rssi(db2dbm_enabled, bcn_snr, dat_snr,
 					 &ev->vdev_summary_stats[i].stats.rssi);
@@ -679,6 +713,7 @@ static QDF_STATUS target_if_cp_stats_extract_vdev_summary_stats(
 				ev->vdev_summary_stats[i].stats.rssi -
 				TGT_NOISE_FLOOR_DBM;
 	}
+	qdf_mem_free(vdev_stats);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -801,7 +836,6 @@ static QDF_STATUS target_if_cp_stats_extract_event(struct wmi_unified *wmi_hdl,
 	status = target_if_cp_stats_extract_pmf_bcn_protect_stats(wmi_hdl,
 								  &stats_param,
 								  ev, data);
-
 	return status;
 }
 
@@ -831,7 +865,7 @@ static int target_if_mc_cp_stats_stats_event_handler(ol_scn_t scn,
 						     uint32_t datalen)
 {
 	QDF_STATUS status;
-	struct stats_event ev = {0};
+	struct stats_event *ev;
 	struct wlan_objmgr_psoc *psoc;
 	struct wmi_unified *wmi_handle;
 	struct wlan_lmac_if_cp_stats_rx_ops *rx_ops;
@@ -858,16 +892,23 @@ static int target_if_mc_cp_stats_stats_event_handler(ol_scn_t scn,
 		return -EINVAL;
 	}
 
-	status = target_if_cp_stats_extract_event(wmi_handle, &ev, data);
+	ev = qdf_mem_malloc(sizeof(*ev));
+	if (!ev) {
+		cp_stats_err("");
+		return -EINVAL;
+	}
+
+	status = target_if_cp_stats_extract_event(wmi_handle, ev, data);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		cp_stats_err("extract event failed");
 		goto end;
 	}
 
-	status = rx_ops->process_stats_event(psoc, &ev);
+	status = rx_ops->process_stats_event(psoc, ev);
 
 end:
-	target_if_cp_stats_free_stats_event(&ev);
+	target_if_cp_stats_free_stats_event(ev);
+	qdf_mem_free(ev);
 
 	return qdf_status_to_os_return(status);
 }
@@ -1199,21 +1240,21 @@ target_if_unregister_big_data_event_handler(struct wmi_unified *wmi_handle)
 
 static QDF_STATUS
 target_if_big_data_stats_register_tx_ops(struct wlan_lmac_if_cp_stats_tx_ops
-					   *cp_stats_tx_ops)
+					 *cp_stats_tx_ops)
 {
 	return QDF_STATUS_SUCCESS;
 }
 
 static void
 target_if_big_data_stats_unregister_tx_ops(struct wlan_lmac_if_cp_stats_tx_ops
-					 *cp_stats_tx_ops)
+					   *cp_stats_tx_ops)
 {}
 #endif
 
 static QDF_STATUS
 target_if_mc_cp_stats_register_event_handler(struct wlan_objmgr_psoc *psoc)
 {
-	int ret_val;
+	QDF_STATUS ret_val;
 	struct wmi_unified *wmi_handle;
 
 	if (!psoc) {
@@ -1232,21 +1273,21 @@ target_if_mc_cp_stats_register_event_handler(struct wlan_objmgr_psoc *psoc)
 			wmi_update_stats_event_id,
 			target_if_mc_cp_stats_stats_event_handler,
 			WMI_RX_WORK_CTX);
-	if (ret_val)
+	if (QDF_IS_STATUS_ERROR(ret_val))
 		cp_stats_err("Failed to register stats event cb");
 
 	ret_val = wmi_unified_register_event_handler(wmi_handle,
 			    wmi_peer_stats_info_event_id,
 			    target_if_mc_cp_stats_peer_stats_info_event_handler,
 			    WMI_RX_WORK_CTX);
-	if (ret_val)
+	if (QDF_IS_STATUS_ERROR(ret_val))
 		cp_stats_err("Failed to register peer stats info event cb");
 
 	ret_val = target_if_register_big_data_event_handler(wmi_handle);
 	if (QDF_IS_STATUS_ERROR(ret_val))
 		cp_stats_err("Failed to register big data stats info event cb");
 
-	return qdf_status_from_os_return(ret_val);
+	return ret_val;
 }
 
 static QDF_STATUS
@@ -1281,6 +1322,7 @@ static uint32_t get_stats_id(enum stats_req_type type)
 	default:
 		break;
 	case TYPE_CONNECTION_TX_POWER:
+	case TYPE_CONGESTION_STATS:
 		return WMI_REQUEST_PDEV_STAT;
 	case TYPE_PEER_STATS:
 		return WMI_REQUEST_PEER_STAT | WMI_REQUEST_PEER_EXTD_STAT;
@@ -1444,6 +1486,7 @@ target_if_mc_cp_stats_unregister_tx_ops(struct wlan_lmac_if_tx_ops *tx_ops)
 		cp_stats_err("lmac tx ops is NULL!");
 		return QDF_STATUS_E_FAILURE;
 	}
+
 	target_if_big_data_stats_unregister_tx_ops(cp_stats_tx_ops);
 	cp_stats_tx_ops->inc_wake_lock_stats = NULL;
 	cp_stats_tx_ops->send_req_stats = NULL;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -30,7 +30,6 @@
 #include "sir_api.h"
 
 #include "csr_api.h"
-#include "sme_ft_api.h"
 #include "csr_support.h"
 #include "sme_internal.h"
 #include "sap_api.h"
@@ -746,7 +745,6 @@ struct mac_context {
 	struct wlan_mlme_chain_cfg fw_chain_cfg;
 	struct wlan_mlme_cfg *mlme_cfg;
 	tAniSirLim lim;
-	uint8_t nud_fail_behaviour;
 	struct sch_context sch;
 	tAniSirSys sys;
 
@@ -760,7 +758,6 @@ struct mac_context {
 	tRrmContext rrm;
 	uint8_t beacon_offload;
 	bool pmf_offload;
-	bool is_fils_roaming_supported;
 	uint32_t f_sta_miracast_mcc_rest_time_val;
 #ifdef WLAN_FEATURE_EXTWOW_SUPPORT
 	csr_readyToExtWoWCallback readyToExtWoWCallback;
@@ -777,7 +774,6 @@ struct mac_context {
 	void (*chan_info_cb)(struct scan_chan_info *chan_info);
 	void (*del_peers_ind_cb)(struct wlan_objmgr_psoc *psoc,
 				 uint8_t vdev_id);
-	enum  country_src reg_hint_src;
 	uint32_t rx_packet_drop_counter;
 	enum tx_ack_status auth_ack_status;
 	enum tx_ack_status assoc_ack_status;
@@ -806,7 +802,9 @@ struct mac_context {
 	bool he_om_ctrl_cfg_tx_nsts_set;
 	uint8_t he_om_ctrl_cfg_tx_nsts;
 	bool he_om_ctrl_ul_mu_data_dis;
+	uint8_t usr_cfg_disable_rsp_tx;
 	uint8_t is_usr_cfg_pmf_wep;
+	uint8_t usr_cfg_ru_242_tone_tx;
 #ifdef WLAN_FEATURE_11AX
 	tDot11fIEhe_cap he_cap_2g;
 	tDot11fIEhe_cap he_cap_5g;
@@ -818,6 +816,11 @@ struct mac_context {
 #ifdef FEATURE_ANI_LEVEL_REQUEST
 	struct ani_level_params ani_params;
 #endif
+#ifdef WLAN_FEATURE_11BE
+	tDot11fIEeht_cap eht_cap_2g;
+	tDot11fIEeht_cap eht_cap_5g;
+#endif
+
 };
 
 #ifdef FEATURE_WLAN_TDLS

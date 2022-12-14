@@ -297,6 +297,18 @@ void hif_dummy_dump_target_memory(struct hif_softc *hif_sc, void *ramdump_base,
 {
 }
 
+uint32_t hif_dummy_bus_reg_read32(struct hif_softc *hif_sc,
+				  uint32_t offset)
+{
+	return 0;
+}
+
+void hif_dummy_bus_reg_write32(struct hif_softc *hif_sc,
+			       uint32_t offset,
+			       uint32_t value)
+{
+}
+
 /**
  * hif_dummy_ipa_get_ce_resource - dummy call
  * @scn: HIF context
@@ -388,16 +400,41 @@ void hif_dummy_config_irq_affinity(struct hif_softc *scn)
 }
 
 /**
+ * hif_dummy_config_irq_by_ceid - dummy call
+ * @scn: hif context
+ * @ce_id : copy engine id
+ * Return: 0
+ */
+int hif_dummy_config_irq_by_ceid(struct hif_softc *scn, int ce_id)
+{
+	return 0;
+}
+
+/**
+ * hif_config_irq_clear_affinity() - dummy call
+ * @scn: HIF handle
+ * @intr_ctxt_id: interrupt group index
+ * @cpu: CPU core to clear
+ *
+ * Return: None
+ */
+void hif_dummy_config_irq_clear_cpu_affinity(struct hif_softc *scn,
+					     int intr_ctxt_id, int cpu)
+{
+}
+
+/**
  * hif_dummy_log_bus_info - dummy call
  * @scn: hif context
  * @data: hang event data buffer
  * @offset: offset at which data needs to be written
  *
- * Return: None
+ * Return: bool
  */
-void hif_dummy_log_bus_info(struct hif_softc *scn, uint8_t *data,
+bool hif_dummy_log_bus_info(struct hif_softc *scn, uint8_t *data,
 			    unsigned int *offset)
 {
+	return false;
 }
 
 /**

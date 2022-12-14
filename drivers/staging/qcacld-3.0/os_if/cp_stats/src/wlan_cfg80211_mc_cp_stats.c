@@ -29,10 +29,11 @@
 #include <wlan_cfg80211_mc_cp_stats.h>
 #include "wlan_osif_request_manager.h"
 #include "wlan_objmgr_peer_obj.h"
+#include "wlan_mlme_twt_ucfg_api.h"
 #include "cds_utils.h"
 #include "wlan_hdd_main.h"
 #include "wlan_hdd_stats.h"
-#include "wlan_mlme_twt_ucfg_api.h"
+
 
 /* max time in ms, caller may wait for stats request get serviced */
 #define CP_STATS_WAIT_TIME_STAT 800

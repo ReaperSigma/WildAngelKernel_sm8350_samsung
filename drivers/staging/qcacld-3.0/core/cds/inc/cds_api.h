@@ -46,6 +46,11 @@
 #include <wlan_objmgr_psoc_obj.h>
 #include <cdp_txrx_handle.h>
 
+/* The ini gReorderOffloadSupported is deprecated. So, defining a new macro
+ * DP_REORDER_OFFLOAD_SUPPORT with the ini's default value.
+ */
+#define DP_REORDER_OFFLOAD_SUPPORT (1)
+
 /* Amount of time to wait for WMA to perform an asynchronous activity.
  * This value should be larger than the timeout used by WMI to wait for
  * a response from target
@@ -366,7 +371,21 @@ QDF_STATUS cds_close(struct wlan_objmgr_psoc *psoc);
  */
 QDF_STATUS cds_dp_close(struct wlan_objmgr_psoc *psoc);
 
-void *cds_get_context(QDF_MODULE_ID module_id);
+/**
+ * cds_get_context() - get context data area
+ * @module_id: ID of the module who's context data is being retrieved.
+ *
+ * Each module in the system has a context/data area that is allocated
+ * and managed by CDS.  This API allows any user to get a pointer to its
+ * allocated context data area from the CDS global context.
+ *
+ * Return: pointer to the context data area of the module ID
+ *	   specified, or NULL if the context data is not allocated for
+ *	   the module ID specified.
+ */
+#define cds_get_context(module_id) \
+	__cds_get_context(module_id, __func__)
+void *__cds_get_context(QDF_MODULE_ID module_id, const char *func);
 
 void *cds_get_global_context(void);
 
@@ -437,7 +456,7 @@ void cds_get_and_reset_log_completion(uint32_t *is_fatal,
 bool cds_is_log_report_in_progress(void);
 bool cds_is_fatal_event_enabled(void);
 
-#ifdef WLAN_FEATURE_TSF_PLUS
+#ifdef WLAN_FEATURE_TSF_PLUS_SOCK_TS
 bool cds_is_ptp_rx_opt_enabled(void);
 bool cds_is_ptp_tx_opt_enabled(void);
 #else

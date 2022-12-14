@@ -276,11 +276,11 @@ void convert_country(struct mac_context *mac,
 	pOld->channelTransmitPower[i].maxTransmitPower = pNew->first_triplet[2];
 
 	for (i = 0; i < pNew->num_more_triplets; i++) {
-		pOld->channelTransmitPower[i + 1].channelNumber =
+		pOld->channelTransmitPower[i+1].channelNumber =
 				pNew->more_triplets[i][0];
-		pOld->channelTransmitPower[i + 1].numChannel =
+		pOld->channelTransmitPower[i+1].numChannel =
 				pNew->more_triplets[i][1];
-		pOld->channelTransmitPower[i + 1].maxTransmitPower =
+		pOld->channelTransmitPower[i+1].maxTransmitPower =
 				pNew->more_triplets[i][2];
 	}
 }

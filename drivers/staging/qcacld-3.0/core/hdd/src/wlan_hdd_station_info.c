@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -43,6 +43,11 @@
 #include <cdp_txrx_stats_struct.h>
 #include <cdp_txrx_peer_ops.h>
 #include <cdp_txrx_host_stats.h>
+#include <osif_cm_util.h>
+
+#ifdef WLAN_FEATURE_TSF_UPLINK_DELAY
+#include <cdp_txrx_ctrl.h>
+#endif
 
 /*
  * define short names for the global vendor params
@@ -163,13 +168,13 @@ static int hdd_get_sta_congestion(struct hdd_adapter *adapter,
 	struct cca_stats cca_stats;
 	struct wlan_objmgr_vdev *vdev;
 
-	vdev = hdd_objmgr_get_vdev(adapter);
+	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_STATS_ID);
 	if (!vdev) {
 		hdd_err("vdev is NULL");
 		return -EINVAL;
 	}
 	status = ucfg_mc_cp_stats_cca_stats_get(vdev, &cca_stats);
-	hdd_objmgr_put_vdev(vdev);
+	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_STATS_ID);
 	if (QDF_IS_STATUS_ERROR(status))
 		return -EINVAL;
 
@@ -376,11 +381,12 @@ static int hdd_convert_dot11mode(uint32_t dot11mode)
  * Return: Success(0) or reason code for failure
  */
 static int32_t hdd_add_tx_bitrate(struct sk_buff *skb,
-				  struct hdd_station_ctx *hdd_sta_ctx,
+				  struct hdd_adapter *adapter,
 				  int idx)
 {
 	struct nlattr *nla_attr;
 	uint32_t bitrate, bitrate_compat;
+	struct hdd_station_ctx *sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
 
 	nla_attr = nla_nest_start(skb, idx);
 	if (!nla_attr) {
@@ -389,12 +395,12 @@ static int32_t hdd_add_tx_bitrate(struct sk_buff *skb,
 	}
 
 	/* cfg80211_calculate_bitrate will return 0 for mcs >= 32 */
-	if (hdd_conn_is_connected(hdd_sta_ctx))
+	if (hdd_cm_is_vdev_associated(adapter))
 		bitrate = cfg80211_calculate_bitrate(
-				&hdd_sta_ctx->cache_conn_info.max_tx_bitrate);
+				&sta_ctx->cache_conn_info.max_tx_bitrate);
 	else
 		bitrate = cfg80211_calculate_bitrate(
-					&hdd_sta_ctx->cache_conn_info.txrate);
+					&sta_ctx->cache_conn_info.txrate);
 	/* report 16-bit bitrate only if we can */
 	bitrate_compat = bitrate < (1UL << 16) ? bitrate : 0;
 
@@ -418,7 +424,7 @@ static int32_t hdd_add_tx_bitrate(struct sk_buff *skb,
 	}
 
 	if (nla_put_u8(skb, NL80211_RATE_INFO_VHT_NSS,
-		       hdd_sta_ctx->cache_conn_info.txrate.nss)) {
+		      sta_ctx->cache_conn_info.txrate.nss)) {
 		hdd_err("put fail");
 		goto fail;
 	}
@@ -427,7 +433,7 @@ static int32_t hdd_add_tx_bitrate(struct sk_buff *skb,
 	hdd_nofl_debug(
 		"STA Tx rate info:: bitrate:%d, bitrate_compat:%d, NSS:%d",
 		bitrate, bitrate_compat,
-		hdd_sta_ctx->cache_conn_info.txrate.nss);
+		sta_ctx->cache_conn_info.txrate.nss);
 
 	return 0;
 fail:
@@ -464,7 +470,8 @@ static void hdd_get_max_tx_bitrate(struct hdd_context *hdd_ctx,
 	my_tx_rate = adapter->hdd_stats.class_a_stat.tx_rate;
 
 	if (!(tx_rate_flags & TX_RATE_LEGACY)) {
-		vdev = hdd_objmgr_get_vdev(adapter);
+		vdev = hdd_objmgr_get_vdev_by_user(adapter,
+						   WLAN_OSIF_STATS_ID);
 		if (vdev) {
 			/*
 			 * Take static NSS for reporting max rates.
@@ -472,7 +479,7 @@ static void hdd_get_max_tx_bitrate(struct hdd_context *hdd_ctx,
 			 * as per the environment quality.
 			 */
 			tx_nss = wlan_vdev_mlme_get_nss(vdev);
-			hdd_objmgr_put_vdev(vdev);
+			hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_STATS_ID);
 		} else {
 			tx_nss = adapter->hdd_stats.class_a_stat.tx_nss;
 		}
@@ -525,10 +532,10 @@ static int32_t hdd_add_sta_info(struct sk_buff *skb,
 		hdd_err("put fail");
 		goto fail;
 	}
-	if (hdd_conn_is_connected(hdd_sta_ctx))
+	if (hdd_cm_is_vdev_associated(adapter))
 		hdd_get_max_tx_bitrate(hdd_ctx, adapter);
 
-	if (hdd_add_tx_bitrate(skb, hdd_sta_ctx, NL80211_STA_INFO_TX_BITRATE)) {
+	if (hdd_add_tx_bitrate(skb, adapter, NL80211_STA_INFO_TX_BITRATE)) {
 		hdd_err("hdd_add_tx_bitrate failed");
 		goto fail;
 	}
@@ -736,6 +743,11 @@ static int hdd_get_station_info(struct hdd_context *hdd_ctx,
 	QDF_STATUS status;
 
 	hdd_sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
+
+	if (hdd_cm_is_vdev_connected(adapter)) {
+		hdd_err("Station is connected, command is not supported");
+		return -EINVAL;
+	}
 
 	nl_buf_len = NLMSG_HDRLEN;
 	nl_buf_len += sizeof(hdd_sta_ctx->
@@ -1318,7 +1330,7 @@ static int hdd_get_cached_station_remote(struct hdd_context *hdd_ctx,
 
 	if (stainfo->assoc_req_ies.len) {
 		if (nla_put(skb, ASSOC_REQ_IES, stainfo->assoc_req_ies.len,
-			    stainfo->assoc_req_ies.data)) {
+			    stainfo->assoc_req_ies.ptr)) {
 			hdd_err("Failed to put assoc req IEs");
 			goto fail;
 		}
@@ -1787,54 +1799,6 @@ static int hdd_add_pmf_bcn_protect_stats(struct sk_buff *skb,
 	return 0;
 }
 
-/**
- * hdd_get_umac_to_osif_connect_fail_reason() - Convert to qca internal connect
- * fail reason
- * @internal_reason: Mac reason code of type @wlan_status_code
- *
- * Check if it is internal status code and convert it to the
- * enum qca_sta_connect_fail_reason_codes.
- *
- * Return: Reason code of type enum qca_sta_connect_fail_reason_codes
- */
-static enum qca_sta_connect_fail_reason_codes
-hdd_get_umac_to_osif_connect_fail_reason(enum wlan_status_code internal_reason)
-{
-	enum qca_sta_connect_fail_reason_codes reason = 0;
-
-	if (internal_reason < STATUS_PROP_START)
-		return reason;
-
-	switch (internal_reason) {
-	case STATUS_NO_NETWORK_FOUND:
-		reason = QCA_STA_CONNECT_FAIL_REASON_NO_BSS_FOUND;
-		break;
-	case STATUS_AUTH_TX_FAIL:
-		reason = QCA_STA_CONNECT_FAIL_REASON_AUTH_TX_FAIL;
-		break;
-	case STATUS_AUTH_NO_ACK_RECEIVED:
-		reason = QCA_STA_CONNECT_FAIL_REASON_AUTH_NO_ACK_RECEIVED;
-		break;
-	case STATUS_AUTH_NO_RESP_RECEIVED:
-		reason = QCA_STA_CONNECT_FAIL_REASON_AUTH_NO_RESP_RECEIVED;
-		break;
-	case STATUS_ASSOC_TX_FAIL:
-		reason = QCA_STA_CONNECT_FAIL_REASON_ASSOC_REQ_TX_FAIL;
-		break;
-	case STATUS_ASSOC_NO_ACK_RECEIVED:
-		reason = QCA_STA_CONNECT_FAIL_REASON_ASSOC_NO_ACK_RECEIVED;
-		break;
-	case STATUS_ASSOC_NO_RESP_RECEIVED:
-		reason = QCA_STA_CONNECT_FAIL_REASON_ASSOC_NO_RESP_RECEIVED;
-		break;
-	default:
-		hdd_debug("QCA code not present for internal status code %d",
-			  internal_reason);
-	}
-
-	return reason;
-}
-
 #ifdef WLAN_FEATURE_BIG_DATA_STATS
 /**
  * hdd_get_big_data_stats_len - get data length used in
@@ -2017,7 +1981,7 @@ static int hdd_add_connect_fail_reason_code(struct sk_buff *skb,
 {
 	uint32_t reason;
 
-	reason = hdd_get_umac_to_osif_connect_fail_reason(
+	reason = osif_cm_mac_to_qca_connect_fail_reason(
 					adapter->connect_req_status);
 	if (!reason)
 		return 0;
@@ -2097,6 +2061,52 @@ static int hdd_add_peer_stats(struct sk_buff *skb,
 fail:
 	return -EINVAL;
 }
+
+#ifdef WLAN_FEATURE_TSF_UPLINK_DELAY
+static uint32_t hdd_get_uplink_delay_len(struct hdd_adapter *adapter)
+{
+	if (adapter->device_mode != QDF_STA_MODE)
+		return 0;
+
+	return nla_total_size(sizeof(uint32_t));
+}
+
+static QDF_STATUS hdd_add_uplink_delay(struct hdd_adapter *adapter,
+				       struct sk_buff *skb)
+{
+	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
+	QDF_STATUS status;
+	uint32_t ul_delay;
+
+	if (adapter->device_mode != QDF_STA_MODE)
+		return QDF_STATUS_SUCCESS;
+
+	if (qdf_atomic_read(&adapter->tsf_auto_report)) {
+		status = cdp_get_uplink_delay(soc, adapter->vdev_id, &ul_delay);
+		if (QDF_IS_STATUS_ERROR(status))
+			ul_delay = 0;
+	} else {
+		ul_delay = 0;
+	}
+
+	if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_GET_STA_INFO_UPLINK_DELAY,
+			ul_delay))
+		return QDF_STATUS_E_FAILURE;
+
+	return QDF_STATUS_SUCCESS;
+}
+#else /* !WLAN_FEATURE_TSF_UPLINK_DELAY */
+static inline uint32_t hdd_get_uplink_delay_len(struct hdd_adapter *adapter)
+{
+	return 0;
+}
+
+static inline QDF_STATUS hdd_add_uplink_delay(struct hdd_adapter *adapter,
+					      struct sk_buff *skb)
+{
+	return QDF_STATUS_SUCCESS;
+}
+#endif /* WLAN_FEATURE_TSF_UPLINK_DELAY */
 
 /**
  * hdd_get_connected_station_info_ex() - get connected peer's info
@@ -2267,11 +2277,14 @@ static int hdd_get_station_info_ex(struct hdd_context *hdd_ctx,
 	uint32_t nl_buf_len = 0, connect_fail_rsn_len;
 	struct hdd_station_ctx *hdd_sta_ctx;
 	bool big_data_stats_req = false;
+	bool big_data_fw_support = false;
 	int ret;
 
 	hdd_sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
+	ucfg_mc_cp_get_big_data_fw_support(hdd_ctx->psoc, &big_data_fw_support);
 
-	if (!hdd_conn_is_connected(hdd_sta_ctx))
+	if (hdd_cm_is_disconnected(adapter) &&
+	    big_data_fw_support)
 		big_data_stats_req = true;
 
 	if (wlan_hdd_get_station_stats(adapter))
@@ -2288,6 +2301,8 @@ static int hdd_get_station_info_ex(struct hdd_context *hdd_ctx,
 	nl_buf_len += hdd_get_pmf_bcn_protect_stats_len(adapter);
 	connect_fail_rsn_len = hdd_get_connect_fail_reason_code_len(adapter);
 	nl_buf_len += connect_fail_rsn_len;
+
+	nl_buf_len += hdd_get_uplink_delay_len(adapter);
 
 	if (!nl_buf_len) {
 		hdd_err_rl("Failed to get bcn pmf stats");
@@ -2320,6 +2335,12 @@ static int hdd_get_station_info_ex(struct hdd_context *hdd_ctx,
 			kfree_skb(skb);
 			return -EINVAL;
 		}
+	}
+
+	if (QDF_IS_STATUS_ERROR(hdd_add_uplink_delay(adapter, skb))) {
+		hdd_err_rl("hdd_add_uplink_delay fail");
+		kfree_skb(skb);
+		return -EINVAL;
 	}
 
 	ret = cfg80211_vendor_cmd_reply(skb);

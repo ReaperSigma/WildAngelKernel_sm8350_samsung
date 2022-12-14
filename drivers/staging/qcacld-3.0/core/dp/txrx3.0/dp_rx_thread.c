@@ -31,6 +31,11 @@
 #define DP_RX_THREAD_WAIT_TIMEOUT 2000
 #endif
 
+#ifdef CONFIG_SLUB_DEBUG_ON
+/* number of rx pkts that thread should yield */
+#define DP_RX_THREAD_YIELD_PKT_CNT 20000
+#endif
+
 #define DP_RX_TM_DEBUG 0
 #if DP_RX_TM_DEBUG
 /**
@@ -390,6 +395,26 @@ static qdf_nbuf_t dp_rx_tm_thread_dequeue(struct dp_rx_thread *rx_thread)
 	return head;
 }
 
+#ifdef CONFIG_SLUB_DEBUG_ON
+/**
+ * dp_rx_thread_should_yield() - check whether rx loop should yield
+ * @iter - iteration of packets recevied
+ *
+ * Returns: should yield or not
+ */
+static inline bool dp_rx_thread_should_yield(uint32_t iter)
+{
+	if (iter >= DP_RX_THREAD_YIELD_PKT_CNT)
+		return true;
+	return false;
+}
+#else
+static inline bool dp_rx_thread_should_yield(uint32_t iter)
+{
+	return false;
+}
+#endif
+
 /**
  * dp_rx_thread_process_nbufq() - process nbuf queue of a thread
  * @rx_thread - rx_thread whose nbuf queue needs to be processed
@@ -404,6 +429,7 @@ static int dp_rx_thread_process_nbufq(struct dp_rx_thread *rx_thread)
 	ol_osif_vdev_handle osif_vdev;
 	ol_txrx_soc_handle soc;
 	uint32_t num_list_elements = 0;
+	uint32_t iterates = 0;
 
 	struct dp_txrx_handle_cmn *txrx_handle_cmn;
 
@@ -427,6 +453,7 @@ static int dp_rx_thread_process_nbufq(struct dp_rx_thread *rx_thread)
 		/* count aggregated RX frame into stats */
 		num_list_elements += qdf_nbuf_get_gso_segs(nbuf_list);
 		rx_thread->stats.nbuf_dequeued += num_list_elements;
+		iterates += num_list_elements;
 
 		vdev_id = QDF_NBUF_CB_RX_VDEV_ID(nbuf_list);
 		cdp_get_os_rx_handles_from_vdev(soc, vdev_id, &stack_fn,
@@ -441,6 +468,10 @@ static int dp_rx_thread_process_nbufq(struct dp_rx_thread *rx_thread)
 		} else {
 			rx_thread->stats.nbuf_sent_to_stack +=
 							num_list_elements;
+		}
+		if (unlikely(dp_rx_thread_should_yield(iterates))) {
+			rx_thread->stats.rx_nbufq_loop_yield++;
+			break;
 		}
 		nbuf_list = dp_rx_tm_thread_dequeue(rx_thread);
 	}
@@ -468,6 +499,24 @@ static void dp_rx_thread_gro_flush(struct dp_rx_thread *rx_thread,
 	local_bh_enable();
 
 	rx_thread->stats.gro_flushes++;
+}
+
+/**
+ * dp_rx_should_flush() - Determines whether the RX thread should be flushed.
+ * @rx_thread: rx_thread to be processed
+ *
+ * Return: enum dp_rx_gro_flush_code
+ */
+static inline enum dp_rx_gro_flush_code
+dp_rx_should_flush(struct dp_rx_thread *rx_thread)
+{
+	enum dp_rx_gro_flush_code gro_flush_code;
+
+	gro_flush_code = qdf_atomic_read(&rx_thread->gro_flush_ind);
+	if (qdf_atomic_test_bit(RX_VDEV_DEL_EVENT, &rx_thread->event_flag))
+		gro_flush_code = DP_RX_GRO_NORMAL_FLUSH;
+
+	return gro_flush_code;
 }
 
 /**
@@ -502,11 +551,11 @@ static int dp_rx_thread_sub_loop(struct dp_rx_thread *rx_thread, bool *shutdown)
 
 		dp_rx_thread_process_nbufq(rx_thread);
 
-		gro_flush_code = qdf_atomic_read(&rx_thread->gro_flush_ind);
-
-		if (gro_flush_code ||
-		    qdf_atomic_test_bit(RX_VDEV_DEL_EVENT,
-					&rx_thread->event_flag)) {
+		gro_flush_code = dp_rx_should_flush(rx_thread);
+		/* Only flush when gro_flush_code is either
+		 * DP_RX_GRO_NORMAL_FLUSH or DP_RX_GRO_LOW_TPUT_FLUSH
+		 */
+		if (gro_flush_code != DP_RX_GRO_NOT_FLUSH) {
 			dp_rx_thread_gro_flush(rx_thread, gro_flush_code);
 			qdf_atomic_set(&rx_thread->gro_flush_ind, 0);
 		}
@@ -1256,14 +1305,10 @@ static uint8_t dp_rx_tm_select_thread(struct dp_rx_tm_handle *rx_tm_hdl,
 {
 	uint8_t selected_rx_thread;
 
-	if (reo_ring_num >= rx_tm_hdl->num_dp_rx_threads) {
-		dp_err_rl("unexpected ring number");
-		QDF_BUG(0);
-		return 0;
-	}
+	selected_rx_thread = reo_ring_num % rx_tm_hdl->num_dp_rx_threads;
+	dp_debug("ring_num %d, selected thread %u", reo_ring_num,
+		 selected_rx_thread);
 
-	selected_rx_thread = reo_ring_num;
-	dp_debug("selected thread %u", selected_rx_thread);
 	return selected_rx_thread;
 }
 
@@ -1296,13 +1341,11 @@ dp_rx_tm_gro_flush_ind(struct dp_rx_tm_handle *rx_tm_hdl, int rx_ctx_id,
 struct napi_struct *dp_rx_tm_get_napi_context(struct dp_rx_tm_handle *rx_tm_hdl,
 					      uint8_t rx_ctx_id)
 {
-	if (rx_ctx_id >= rx_tm_hdl->num_dp_rx_threads) {
-		dp_err_rl("unexpected rx_ctx_id %u", rx_ctx_id);
-		QDF_BUG(0);
-		return NULL;
-	}
+	uint8_t selected_thread_id;
 
-	return &rx_tm_hdl->rx_thread[rx_ctx_id]->napi;
+	selected_thread_id = dp_rx_tm_select_thread(rx_tm_hdl, rx_ctx_id);
+
+	return &rx_tm_hdl->rx_thread[selected_thread_id]->napi;
 }
 
 QDF_STATUS dp_rx_tm_set_cpu_mask(struct dp_rx_tm_handle *rx_tm_hdl,

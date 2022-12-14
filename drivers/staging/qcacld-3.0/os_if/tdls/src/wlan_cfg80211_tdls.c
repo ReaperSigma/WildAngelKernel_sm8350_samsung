@@ -103,60 +103,6 @@ void hdd_notify_tdls_reset_adapter(struct wlan_objmgr_vdev *vdev)
 	ucfg_tdls_notify_reset_adapter(vdev);
 }
 
-void
-hdd_notify_sta_connect(uint8_t session_id,
-		       bool tdls_chan_swit_prohibited,
-		       bool tdls_prohibited,
-		       struct wlan_objmgr_vdev *vdev)
-{
-	struct tdls_sta_notify_params notify_info = {0};
-	QDF_STATUS status;
-
-	if (!vdev) {
-		osif_err("vdev is NULL");
-		return;
-	}
-	status = wlan_objmgr_vdev_try_get_ref(vdev, WLAN_TDLS_NB_ID);
-	if (QDF_IS_STATUS_ERROR(status)) {
-		osif_err("can't get vdev");
-		return;
-	}
-
-	notify_info.session_id = session_id;
-	notify_info.vdev = vdev;
-	notify_info.tdls_chan_swit_prohibited = tdls_chan_swit_prohibited;
-	notify_info.tdls_prohibited = tdls_prohibited;
-	ucfg_tdls_notify_sta_connect(&notify_info);
-}
-
-void hdd_notify_sta_disconnect(uint8_t session_id,
-			       bool lfr_roam,
-			       bool user_disconnect,
-			       struct wlan_objmgr_vdev *vdev)
-{
-	struct tdls_sta_notify_params notify_info = {0};
-	QDF_STATUS status;
-
-	if (!vdev) {
-		osif_err("vdev is NULL");
-		return;
-	}
-
-	status = wlan_objmgr_vdev_try_get_ref(vdev, WLAN_TDLS_NB_ID);
-	if (QDF_IS_STATUS_ERROR(status)) {
-		osif_err("can't get vdev");
-		return;
-	}
-
-	notify_info.session_id = session_id;
-	notify_info.lfr_roam = lfr_roam;
-	notify_info.tdls_chan_swit_prohibited = false;
-	notify_info.tdls_prohibited = false;
-	notify_info.vdev = vdev;
-	notify_info.user_disconnect = user_disconnect;
-	ucfg_tdls_notify_sta_disconnect(&notify_info);
-}
-
 int wlan_cfg80211_tdls_add_peer(struct wlan_objmgr_vdev *vdev,
 				const uint8_t *mac)
 {
@@ -303,7 +249,7 @@ wlan_cfg80211_tdls_extract_6ghz_params(struct tdls_update_peer_params *req_info,
 	}
 
 	qdf_mem_copy(&req_info->he_6ghz_cap, params->he_6ghz_capa,
-		     sizeof(params->he_6ghz_capa));
+		     sizeof(req_info->he_6ghz_cap));
 }
 #else
 static void
@@ -432,7 +378,6 @@ wlan_cfg80211_tdls_extract_params(struct tdls_update_peer_params *req_info,
 		osif_debug("TDLS peer pmf capable");
 		req_info->is_pmf = 1;
 	}
-
 	if (tdls_11ax_support)
 		wlan_cfg80211_tdls_extract_he_params(req_info, params);
 	else
@@ -465,7 +410,7 @@ int wlan_cfg80211_tdls_update_peer(struct wlan_objmgr_vdev *vdev,
 
 	psoc = wlan_vdev_get_psoc(vdev);
 	if (!psoc) {
-		osif_err("Invalid psoc");
+		osif_err_rl("Invalid psoc");
 		return -EINVAL;
 	}
 

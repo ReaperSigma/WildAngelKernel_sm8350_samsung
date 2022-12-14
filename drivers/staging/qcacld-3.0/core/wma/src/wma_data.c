@@ -79,6 +79,7 @@
 #include <wlan_cp_stats_mc_ucfg_api.h>
 #include <wlan_crypto_global_api.h>
 #include <wlan_mlme_main.h>
+#include <wlan_cm_api.h>
 #include "wlan_pkt_capture_ucfg_api.h"
 
 struct wma_search_rate {
@@ -757,6 +758,24 @@ static void wma_cp_stats_set_rate_flag(tp_wma_handle wma, uint8_t vdev_id)
 	wlan_objmgr_vdev_release_ref(vdev, WLAN_LEGACY_WMA_ID);
 }
 
+#ifdef WLAN_FEATURE_11BE
+/**
+ * wma_get_bss_eht_capable() - whether bss is eht capable or not
+ * @add_bss: add_bss params
+ *
+ * Return: true if eht capable is present
+ */
+static bool wma_get_bss_eht_capable(struct bss_params *add_bss)
+{
+	return add_bss->eht_capable;
+}
+#else
+static bool wma_get_bss_eht_capable(struct bss_params *add_bss)
+{
+	return false;
+}
+#endif
+
 #ifdef WLAN_FEATURE_11AX
 /**
  * wma_set_bss_rate_flags_he() - set rate flags based on BSS capability
@@ -876,7 +895,8 @@ void wma_set_bss_rate_flags(tp_wma_handle wma, uint8_t vdev_id,
 		*rate_flags |= TX_RATE_SGI;
 
 	if (!add_bss->htCapable && !add_bss->vhtCapable &&
-	    !wma_get_bss_he_capable(add_bss))
+	    !wma_get_bss_he_capable(add_bss) &&
+	    !wma_get_bss_eht_capable(add_bss))
 		*rate_flags = TX_RATE_LEGACY;
 
 	wma_debug("capable: vht %u, ht %u, rate_flags %x, ch_width %d",
@@ -995,10 +1015,8 @@ wma_data_tx_ack_comp_hdlr(void *wma_context, qdf_nbuf_t netbuf, int32_t status)
 {
 	tp_wma_handle wma_handle = (tp_wma_handle) wma_context;
 
-	if (!wma_handle) {
-		wma_err("Invalid WMA Handle");
+	if (wma_validate_handle(wma_handle))
 		return;
-	}
 
 	/*
 	 * if netBuf does not match with pending nbuf then just free the
@@ -1457,10 +1475,8 @@ QDF_STATUS wma_tx_detach(tp_wma_handle wma_handle)
 	/* Get the txRx Pdev ID */
 	uint8_t pdev_id = WMI_PDEV_ID_SOC;
 
-	if (!soc) {
-		wma_err("SOC context is NULL");
+	if (!soc)
 		return QDF_STATUS_E_FAILURE;
-	}
 
 	if (pdev_id != OL_TXRX_INVALID_PDEV_ID) {
 		/* Deregister with TxRx for Tx Mgmt completion call back */
@@ -1557,10 +1573,8 @@ int wma_mcc_vdev_tx_pause_evt_handler(void *handle, uint8_t *event,
 		return 0;
 	}
 
-	if (!soc) {
-		wma_err("SOC context is NULL");
+	if (!soc)
 		return -EINVAL;
-	}
 
 	wmi_event = param_buf->fixed_param;
 	vdev_map = wmi_event->vdev_map;
@@ -2035,10 +2049,8 @@ int wma_thermal_mgmt_evt_handler(void *handle, uint8_t *event, uint32_t len)
 
 	wma = (tp_wma_handle) handle;
 
-	if (!wma) {
-		wma_err("Failed to get wma handle");
+	if (wma_validate_handle(wma))
 		return -EINVAL;
-	}
 
 	param_buf = (WMI_THERMAL_MGMT_EVENTID_param_tlvs *) event;
 
@@ -2262,6 +2274,7 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 			 wma_tx_dwnld_comp_callback tx_frm_download_comp_cb,
 			 void *pData,
 			 wma_tx_ota_comp_callback tx_frm_ota_comp_cb,
+			 struct mgmt_frame_data *ota_comp_data,
 			 uint8_t tx_flag, uint8_t vdev_id, bool tdls_flag,
 			 uint16_t channel_freq, enum rateid rid,
 			 int8_t peer_rssi)
@@ -2276,11 +2289,9 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 	uint8_t use_6mbps = 0;
 	uint8_t downld_comp_required = 0;
 	uint16_t chanfreq;
-#ifdef WLAN_FEATURE_11W
 	uint8_t *pFrame = NULL;
 	void *pPacket = NULL;
 	uint16_t newFrmLen = 0;
-#endif /* WLAN_FEATURE_11W */
 	struct wma_txrx_node *iface;
 	struct mac_context *mac;
 	tpSirMacMgmtHdr mHdr;
@@ -2294,15 +2305,14 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 	bool is_5g = false;
 	uint8_t pdev_id;
 
-	if (!wma_handle) {
-		wma_err("wma_handle is NULL");
+	if (wma_validate_handle(wma_handle)) {
 		cds_packet_free((void *)tx_frame);
 		return QDF_STATUS_E_FAILURE;
 	}
+
 	iface = &wma_handle->interfaces[vdev_id];
 
 	if (!soc) {
-		wma_err("SOC context is NULL");
 		cds_packet_free((void *)tx_frame);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -2331,7 +2341,6 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 		return QDF_STATUS_E_FAILURE;
 	}
 
-#ifdef WLAN_FEATURE_11W
 	if ((iface && (iface->rmfEnabled || tx_flag & HAL_USE_PMF)) &&
 	    (frmType == TXRX_FRM_802_11_MGMT) &&
 	    (pFc->subType == SIR_MAC_MGMT_DISASSOC ||
@@ -2464,7 +2473,6 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 		 */
 		QDF_NBUF_CB_TX_DMA_BI_MAP((qdf_nbuf_t)tx_frame) = 1;
 	}
-#endif /* WLAN_FEATURE_11W */
 	mHdr = (tpSirMacMgmtHdr)qdf_nbuf_data(tx_frame);
 	if ((frmType == TXRX_FRM_802_11_MGMT) &&
 	    (pFc->subType == SIR_MAC_MGMT_PROBE_RSP)) {
@@ -2597,6 +2605,13 @@ QDF_STATUS wma_tx_packet(void *wma_context, void *tx_frame, uint16_t frmLen,
 		} else {
 			tx_frm_index =
 				GENERIC_NODOWNLD_NOACK_COMP_INDEX;
+		}
+
+		if (ota_comp_data) {
+			wma_handle->is_mgmt_data_valid = true;
+			wma_handle->mgmt_data = *ota_comp_data;
+		} else {
+			wma_handle->is_mgmt_data_valid = false;
 		}
 	}
 
@@ -3008,10 +3023,8 @@ void wma_delete_invalid_peer_entries(uint8_t vdev_id, uint8_t *peer_mac_addr)
 	uint8_t i;
 	struct wma_txrx_node *iface;
 
-	if (!wma) {
-		wma_err("wma handle is NULL");
+	if (!wma)
 		return;
-	}
 
 	iface = &wma->interfaces[vdev_id];
 
@@ -3044,10 +3057,8 @@ uint8_t wma_rx_invalid_peer_ind(uint8_t vdev_id, void *wh)
 	bool invalid_peer_found = false;
 	struct wma_txrx_node *iface;
 
-	if (!wma) {
-		wma_err("wma handle is NULL");
+	if (!wma)
 		return -EINVAL;
-	}
 
 	iface = &wma->interfaces[vdev_id];
 	rx_inv_msg = qdf_mem_malloc(sizeof(struct ol_rx_inv_peer_params));
@@ -3163,9 +3174,17 @@ int wma_dp_send_delba_ind(uint8_t vdev_id, uint8_t *peer_macaddr,
 bool wma_is_roam_in_progress(uint32_t vdev_id)
 {
 	tp_wma_handle wma = cds_get_context(QDF_MODULE_ID_WMA);
+	enum QDF_OPMODE opmode;
 
 	if (!wma_is_vdev_valid(vdev_id))
 		return false;
 
-	return wma->interfaces[vdev_id].roaming_in_progress;
+	if (!wma || !wma->interfaces[vdev_id].vdev)
+		return false;
+
+	opmode = wlan_vdev_mlme_get_opmode(wma->interfaces[vdev_id].vdev);
+	if (opmode != QDF_STA_MODE && opmode != QDF_P2P_CLIENT_MODE)
+		return false;
+
+	return wlan_cm_is_vdev_roaming(wma->interfaces[vdev_id].vdev);
 }

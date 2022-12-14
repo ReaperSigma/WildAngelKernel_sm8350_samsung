@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -325,6 +325,23 @@ void lim_update_he_mcs_12_13_map(struct wlan_objmgr_psoc *psoc,
 }
 #endif
 
+#ifdef WLAN_FEATURE_11BE
+static void lim_extract_eht_op(struct pe_session *session,
+			       tSirProbeRespBeacon *beacon_struct)
+{
+}
+
+void lim_update_eht_bw_cap_mcs(struct pe_session *session,
+			       tSirProbeRespBeacon *beacon)
+{
+}
+#else
+static void lim_extract_eht_op(struct pe_session *session,
+			       tSirProbeRespBeacon *beacon_struct)
+{
+}
+#endif
+
 void lim_objmgr_update_vdev_nss(struct wlan_objmgr_psoc *psoc,
 				uint8_t vdev_id, uint8_t nss)
 {
@@ -473,9 +490,7 @@ void lim_extract_ap_capability(struct mac_context *mac_ctx, uint8_t *p_ie,
 
 	*qos_cap = 0;
 	*uapsd = 0;
-	pe_debug("The IE's being received:");
-	QDF_TRACE_HEX_DUMP(QDF_MODULE_ID_PE, QDF_TRACE_LEVEL_DEBUG,
-			   p_ie, ie_len);
+
 	if (sir_parse_beacon_ie(mac_ctx, beacon_struct, p_ie,
 		(uint32_t) ie_len) != QDF_STATUS_SUCCESS) {
 		pe_err("sir_parse_beacon_ie failed to parse beacon");
@@ -681,6 +696,8 @@ void lim_extract_ap_capability(struct mac_context *mac_ctx, uint8_t *p_ie,
 	lim_check_peer_ldpc_and_update(session, beacon_struct);
 	lim_extract_he_op(session, beacon_struct);
 	lim_update_he_bw_cap_mcs(session, beacon_struct);
+	lim_extract_eht_op(session, beacon_struct);
+	lim_update_eht_bw_cap_mcs(session, beacon_struct);
 	/* Extract the UAPSD flag from WMM Parameter element */
 	if (beacon_struct->wmeEdcaPresent)
 		*uapsd = beacon_struct->edcaParams.qosInfo.uapsd;

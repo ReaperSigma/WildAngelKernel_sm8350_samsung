@@ -215,7 +215,7 @@ struct wlan_fwol_neighbor_report_cfg {
  * @tsf_irq_host_gpio_pin: TSF GPIO Pin config
  * @tsf_sync_host_gpio_pin: TSF Sync GPIO Pin config
  * @tsf_ptp_options: TSF Plus feature options config
- * @lprx_enable: LPRx feature enable config
+ * @tsf_sync_enable: TSF sync feature enable/disable
  * @sae_enable: SAE feature enable config
  * @gcmp_enable: GCMP feature enable config
  * @enable_tx_sch_delay: Enable TX SCH delay value config
@@ -224,6 +224,7 @@ struct wlan_fwol_neighbor_report_cfg {
  * @dhcp_max_num_clients: Max number of DHCP client supported
  * @dwelltime_params: adaptive dwell time parameters
  * @enable_ilp: ILP HW block configuration
+ * @sap_sho: SAP SHO HW offload configuration
  * @disable_hw_assist: Flag to configure HW assist feature in FW
  */
 struct wlan_fwol_cfg {
@@ -257,6 +258,7 @@ struct wlan_fwol_cfg {
 	uint32_t tsf_gpio_pin;
 #ifdef WLAN_FEATURE_TSF_PLUS
 	uint32_t tsf_ptp_options;
+	bool tsf_sync_enable;
 #ifdef WLAN_FEATURE_TSF_PLUS_EXT_GPIO_IRQ
 	uint32_t tsf_irq_host_gpio_pin;
 #endif
@@ -265,7 +267,6 @@ struct wlan_fwol_cfg {
 #endif
 #endif
 #endif
-	bool lprx_enable;
 #ifdef WLAN_FEATURE_SAE
 	bool sae_enable;
 #endif
@@ -278,7 +279,18 @@ struct wlan_fwol_cfg {
 #endif
 	struct adaptive_dwelltime_params dwelltime_params;
 	uint32_t enable_ilp;
+	uint32_t sap_sho;
 	bool disable_hw_assist;
+};
+
+/**
+ * struct wlan_fwol_thermal_throttle_info - FW offload thermal throttle info
+ * @level: thermal throttle level
+ * @pdev_id: pdev id
+ */
+struct wlan_fwol_thermal_throttle_info {
+	enum thermal_throttle_level level;
+	uint32_t pdev_id;
 };
 
 /**
@@ -297,6 +309,8 @@ struct wlan_fwol_capability_info {
  * @cbs:     callback functions
  * @tx_ops: tx operations for target interface
  * @rx_ops: rx operations for target interface
+ * @thermal_throttle: cached target thermal stats information
+ * @thermal_cbs: thermal notification callbacks to hdd layer
  * @capability_info: fwol capability info
  */
 struct wlan_fwol_psoc_obj {
@@ -304,6 +318,10 @@ struct wlan_fwol_psoc_obj {
 	struct wlan_fwol_callbacks cbs;
 	struct wlan_fwol_tx_ops tx_ops;
 	struct wlan_fwol_rx_ops rx_ops;
+#ifdef FW_THERMAL_THROTTLE_SUPPORT
+	struct wlan_fwol_thermal_throttle_info thermal_throttle;
+	struct fwol_thermal_callbacks thermal_cbs;
+#endif
 	struct wlan_fwol_capability_info capability_info;
 };
 
@@ -418,6 +436,19 @@ QDF_STATUS fwol_set_ilp_config(struct wlan_objmgr_pdev *pdev,
 			       uint32_t enable_ilp);
 
 /**
+ * fwol_set_sap_sho() - API to set SAP SHO config
+ * @psoc: pointer to the psoc object
+ * @vdev_id: vdev id
+ * @sap_sho: enable/disable config for SAP SHO
+ * SHO- SoftAP hardware offload – When enabled the beacon/probe resp
+ * will be offloaded to HW.
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS fwol_set_sap_sho(struct wlan_objmgr_psoc *psoc, uint8_t vdev_id,
+			    uint32_t sap_sho);
+
+/**
  * fwol_configure_hw_assist() - API to configure HW assist feature in FW
  * @pdev: pointer to the pdev object
  * @disable_he_assist: Flag to enable/disable HW assist feature
@@ -426,4 +457,5 @@ QDF_STATUS fwol_set_ilp_config(struct wlan_objmgr_pdev *pdev,
  */
 QDF_STATUS fwol_configure_hw_assist(struct wlan_objmgr_pdev *pdev,
 				    bool disable_hw_assist);
+
 #endif

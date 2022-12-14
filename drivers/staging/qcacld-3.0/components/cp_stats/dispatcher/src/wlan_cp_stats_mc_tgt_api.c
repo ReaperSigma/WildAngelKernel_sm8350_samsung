@@ -53,12 +53,26 @@ static bool tgt_mc_cp_stats_is_last_event(struct stats_event *ev,
 	return is_last_event;
 }
 
+#ifdef WLAN_SUPPORT_INFRA_CTRL_PATH_STATS
+static void
+tgt_cp_stats_register_infra_cp_stats_rx_ops(struct wlan_lmac_if_rx_ops *rx_ops)
+{
+	rx_ops->cp_stats_rx_ops.process_infra_stats_event =
+				tgt_mc_cp_stats_process_infra_stats_event;
+}
+#else
+static void
+tgt_cp_stats_register_infra_cp_stats_rx_ops(struct wlan_lmac_if_rx_ops *rx_ops)
+{
+}
+#endif
+
 #ifdef WLAN_FEATURE_BIG_DATA_STATS
 static void
 tgt_cp_stats_register_big_data_rx_ops(struct wlan_lmac_if_rx_ops *rx_ops)
 {
 	rx_ops->cp_stats_rx_ops.process_big_data_stats_event =
-		tgt_mc_cp_stats_process_big_data_stats_event;
+			tgt_mc_cp_stats_process_big_data_stats_event;
 }
 
 static QDF_STATUS
@@ -87,20 +101,6 @@ send_big_data_stats_req(struct wlan_lmac_if_cp_stats_tx_ops *tx_ops,
 }
 #endif
 
-#ifdef WLAN_SUPPORT_INFRA_CTRL_PATH_STATS
-static void
-tgt_cp_stats_register_infra_cp_stats_rx_ops(struct wlan_lmac_if_rx_ops *rx_ops)
-{
-	rx_ops->cp_stats_rx_ops.process_infra_stats_event =
-				tgt_mc_cp_stats_process_infra_stats_event;
-}
-#else
-static void
-tgt_cp_stats_register_infra_cp_stats_rx_ops(struct wlan_lmac_if_rx_ops *rx_ops)
-{
-}
-#endif
-
 void tgt_cp_stats_register_rx_ops(struct wlan_lmac_if_rx_ops *rx_ops)
 {
 	rx_ops->cp_stats_rx_ops.process_stats_event =
@@ -110,8 +110,8 @@ void tgt_cp_stats_register_rx_ops(struct wlan_lmac_if_rx_ops *rx_ops)
 }
 
 static void tgt_mc_cp_stats_extract_tx_power(struct wlan_objmgr_psoc *psoc,
-					     struct stats_event *ev,
-					     bool is_station_stats)
+					struct stats_event *ev,
+					bool is_station_stats)
 {
 	int32_t max_pwr;
 	uint8_t pdev_id;
@@ -697,6 +697,54 @@ tgt_mc_infra_cp_stats_extract_twt_stats(struct wlan_objmgr_psoc *psoc,
 #endif
 #endif /* WLAN_SUPPORT_INFRA_CTRL_PATH_STATS */
 
+#ifdef WLAN_FEATURE_MEDIUM_ASSESS
+static void
+tgt_mc_cp_stats_extract_congestion_stats(struct wlan_objmgr_psoc *psoc,
+					 struct stats_event *ev)
+{
+	QDF_STATUS status;
+	uint8_t i, index;
+	struct request_info last_req = {0};
+	struct medium_assess_data data[WLAN_UMAC_MAX_RP_PID] = { {0} };
+
+	if (!ev->num_pdev_stats) {
+		cp_stats_err("no congestion sta for pdev");
+		return;
+	}
+
+	status = ucfg_mc_cp_stats_get_pending_req(psoc,
+						  TYPE_CONGESTION_STATS,
+						  &last_req);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		cp_stats_err("ucfg_mc_cp_stats_get_pending_req failed");
+		return;
+	}
+
+	for (i = 0; (i < ev->num_pdev_stats) && (i < WLAN_UMAC_MAX_RP_PID);
+	     i++){
+		index = ev->pdev_stats[i].pdev_id;
+		if (index >= WLAN_UMAC_MAX_RP_PID) {
+			cp_stats_err("part1 pdev id error");
+			continue;
+		}
+		data[index].part1_valid = 1;
+		data[index].cycle_count = ev->pdev_stats[i].cycle_count;
+		data[index].rx_clear_count = ev->pdev_stats[i].rx_clear_count;
+		data[index].tx_frame_count = ev->pdev_stats[i].tx_frame_count;
+	}
+
+	if (last_req.u.congestion_notif_cb)
+		last_req.u.congestion_notif_cb(last_req.vdev_id, data);
+
+}
+#else
+static void
+tgt_mc_cp_stats_extract_congestion_stats(struct wlan_objmgr_psoc *psoc,
+					 struct stats_event *ev)
+{
+}
+#endif
+
 static void tgt_mc_cp_stats_extract_cca_stats(struct wlan_objmgr_psoc *psoc,
 						  struct stats_event *ev)
 {
@@ -1091,6 +1139,9 @@ QDF_STATUS tgt_mc_cp_stats_process_stats_event(struct wlan_objmgr_psoc *psoc,
 
 	if (ucfg_mc_cp_stats_is_req_pending(psoc, TYPE_PEER_STATS_INFO_EXT))
 		tgt_mc_cp_stats_extract_peer_stats_info_ext(psoc, ev);
+
+	if (ucfg_mc_cp_stats_is_req_pending(psoc, TYPE_CONGESTION_STATS))
+		tgt_mc_cp_stats_extract_congestion_stats(psoc, ev);
 
 	tgt_mc_cp_stats_extract_cca_stats(psoc, ev);
 

@@ -36,6 +36,7 @@
 #include <qca_vendor.h>
 #include "wlan_fwol_ucfg_api.h"
 #include <pld_common.h>
+#include "wlan_hdd_stats.h"
 #include "os_if_fwol.h"
 #include "wlan_osif_request_manager.h"
 #include "wlan_fwol_public_structs.h"
@@ -145,6 +146,107 @@ hdd_send_thermal_mitigation_val(struct hdd_context *hdd_ctx, uint32_t level,
 		hdd_ctx->dutycycle_off_percent = dc_off_percent;
 
 	return QDF_STATUS_SUCCESS;
+}
+
+/**
+ * convert_level_to_vendor_thermal_level() - convert internal thermal level
+ *  to vendor command attribute enum qca_wlan_vendor_thermal_level
+ * @level: driver internal thermal level
+ *
+ * Return: vendor thermal level
+ */
+static enum qca_wlan_vendor_thermal_level
+convert_level_to_vendor_thermal_level(enum thermal_throttle_level level)
+{
+	if (level == THERMAL_FULLPERF)
+		return QCA_WLAN_VENDOR_THERMAL_LEVEL_NONE;
+	else if (level == THERMAL_MITIGATION)
+		return QCA_WLAN_VENDOR_THERMAL_LEVEL_MODERATE;
+	else if (level == THERMAL_SHUTOFF)
+		return QCA_WLAN_VENDOR_THERMAL_LEVEL_CRITICAL;
+	else
+		return QCA_WLAN_VENDOR_THERMAL_LEVEL_EMERGENCY;
+}
+
+/**
+ * hdd_get_curr_thermal_throttle_level_val() - Indicate current target
+ *  thermal throttle level to upper layer upon query level
+ * @hdd_ctx: hdd context
+ *
+ * Return: 0 for success
+ */
+static int
+hdd_get_curr_thermal_throttle_level_val(struct hdd_context *hdd_ctx)
+{
+	struct sk_buff *reply_skb;
+	uint32_t data_len;
+	enum thermal_throttle_level level = THERMAL_FULLPERF;
+	enum qca_wlan_vendor_thermal_level vendor_level;
+	QDF_STATUS status;
+
+	status = ucfg_fwol_thermal_get_target_level(hdd_ctx->psoc, &level);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		hdd_err("get_thermal level: fail get target level");
+		return -EINVAL;
+	}
+	vendor_level = convert_level_to_vendor_thermal_level(level);
+	data_len = NLMSG_HDRLEN + nla_total_size(sizeof(uint32_t));
+	reply_skb = wlan_cfg80211_vendor_cmd_alloc_reply_skb(hdd_ctx->wiphy,
+							     data_len);
+	if (!reply_skb) {
+		hdd_err("get_thermal level: buffer alloc fail");
+		return -ENOMEM;
+	}
+	if (nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_THERMAL_LEVEL,
+			vendor_level)) {
+		hdd_err("get_thermal level: nla put fail");
+		wlan_cfg80211_vendor_free_skb(reply_skb);
+		return -EINVAL;
+	}
+	hdd_debug("get_thermal level: %d vendor level %d", level,
+		  vendor_level);
+
+	return wlan_cfg80211_vendor_cmd_reply(reply_skb);
+}
+
+/**
+ * hdd_get_curr_thermal_temperature_val() - Indicate current target
+ *  thermal temperature to upper layer when handing temperature
+ *  query vendor command
+ * @hdd_ctx: hdd context
+ * @adapter: adapter context
+ *
+ * Return: 0 for success
+ */
+static int
+hdd_get_curr_thermal_temperature_val(struct hdd_context *hdd_ctx,
+				     struct hdd_adapter *adapter)
+{
+	struct sk_buff *reply_skb;
+	int ret;
+	uint32_t data_len;
+	int temperature = 0;
+
+	ret = wlan_hdd_get_temperature(adapter, &temperature);
+	if (ret)
+		return ret;
+	data_len = NLMSG_HDRLEN + nla_total_size(sizeof(uint32_t));
+	reply_skb = wlan_cfg80211_vendor_cmd_alloc_reply_skb(hdd_ctx->wiphy,
+							     data_len);
+	if (!reply_skb) {
+		hdd_err("get_thermal temperature: buffer alloc fail");
+		return -ENOMEM;
+	}
+	if (nla_put_u32(reply_skb,
+			QCA_WLAN_VENDOR_ATTR_THERMAL_GET_TEMPERATURE_DATA,
+			temperature)) {
+		hdd_err("get_thermal temperature: nla put fail");
+		wlan_cfg80211_vendor_free_skb(reply_skb);
+		return -EINVAL;
+	}
+	hdd_debug("get_thermal temperature: %d", temperature);
+
+	return wlan_cfg80211_vendor_cmd_reply(reply_skb);
 }
 
 #ifdef THERMAL_STATS_SUPPORT
@@ -380,6 +482,8 @@ __wlan_hdd_cfg80211_set_thermal_mitigation_policy(struct wiphy *wiphy,
 						  int data_len)
 {
 	struct hdd_context *hdd_ctx = wiphy_priv(wiphy);
+	struct net_device *dev = wdev->netdev;
+	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
 	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_THERMAL_CMD_MAX + 1];
 	uint32_t level, cmd_type;
 	QDF_STATUS status;
@@ -416,12 +520,19 @@ __wlan_hdd_cfg80211_set_thermal_mitigation_policy(struct wiphy *wiphy,
 			hdd_err_rl("attr thermal throttle set failed");
 			return -EINVAL;
 		}
-		level = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_THERMAL_LEVEL]);
+		level =
+		    nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_THERMAL_LEVEL]);
 
 		hdd_debug("thermal mitigation level from userspace %d", level);
 		status = hdd_send_thermal_mitigation_val(hdd_ctx, level,
 							 THERMAL_MONITOR_APPS);
 		ret = qdf_status_to_os_return(status);
+		break;
+	case QCA_WLAN_VENDOR_ATTR_THERMAL_CMD_TYPE_GET_LEVEL:
+		ret = hdd_get_curr_thermal_throttle_level_val(hdd_ctx);
+		break;
+	case QCA_WLAN_VENDOR_ATTR_THERMAL_CMD_TYPE_GET_TEMPERATURE:
+		ret = hdd_get_curr_thermal_temperature_val(hdd_ctx, adapter);
 		break;
 	case QCA_WLAN_VENDOR_ATTR_THERMAL_CMD_TYPE_GET_THERMAL_STATS:
 		ret = hdd_get_curr_thermal_stats_val(wiphy, hdd_ctx);
@@ -484,7 +595,7 @@ QDF_STATUS hdd_restore_thermal_mitigation_config(struct hdd_context *hdd_ctx)
 	uint32_t prio = 0, target_temp = 0;
 	struct wlan_fwol_thermal_temp thermal_temp = {0};
 	QDF_STATUS status;
-	struct thermal_mitigation_params therm_cfg_params;
+	struct thermal_mitigation_params therm_cfg_params = {0};
 
 	status = ucfg_fwol_get_thermal_temp(hdd_ctx->psoc, &thermal_temp);
 	if (QDF_IS_STATUS_ERROR(status)) {
@@ -506,6 +617,7 @@ QDF_STATUS hdd_restore_thermal_mitigation_config(struct hdd_context *hdd_ctx)
 	therm_cfg_params.num_thermal_conf = 1;
 	therm_cfg_params.client_id = THERMAL_MONITOR_APPS;
 	therm_cfg_params.priority = 0;
+
 	hdd_debug("dc %d dc_off_per %d enable %d", dc, dc_off_percent, enable);
 
 	status = sme_set_thermal_throttle_cfg(hdd_ctx->mac_handle,
@@ -598,3 +710,70 @@ void hdd_thermal_mitigation_unregister(struct hdd_context *hdd_ctx,
 	hdd_thermal_mitigation_unregister_wpps(hdd_ctx, dev);
 	pld_thermal_unregister(dev, THERMAL_MONITOR_APPS);
 }
+
+#ifdef FW_THERMAL_THROTTLE_SUPPORT
+/**
+ * hdd_notify_thermal_throttle_handler() - Thermal throttle event handler
+ * @psoc: psoc object
+ * @info: thermal throttle information from target
+ *
+ * Retrun: QDF_STATUS_SUCCESS for success.
+ */
+static QDF_STATUS
+hdd_notify_thermal_throttle_handler(struct wlan_objmgr_psoc *psoc,
+				    struct thermal_throttle_info *info)
+{
+	uint32_t data_len;
+	struct sk_buff *vendor_event;
+	struct hdd_context *hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
+	int ret;
+	enum qca_wlan_vendor_thermal_level level;
+
+	ret = wlan_hdd_validate_context(hdd_ctx);
+	if (ret)
+		return QDF_STATUS_E_FAILURE;
+
+	/* TX will be throttled completely if above MITIGATION level.
+	 * So report additional DIAG event to notify user-space explicitly.
+	 */
+	if (info->level == THERMAL_SHUTOFF ||
+	    info->level == THERMAL_SHUTDOWN_TARGET)
+		host_log_device_status(WLAN_STATUS_DEVICE_TEMPERATURE_HIGH);
+
+	data_len = NLMSG_HDRLEN + nla_total_size(sizeof(uint32_t));
+	vendor_event = wlan_cfg80211_vendor_event_alloc(
+				hdd_ctx->wiphy, NULL, data_len,
+				QCA_NL80211_VENDOR_SUBCMD_THERMAL_INDEX,
+				GFP_KERNEL);
+	if (!vendor_event) {
+		hdd_err("cfg80211_vendor_event_alloc failed");
+		return QDF_STATUS_E_NOMEM;
+	}
+	level = convert_level_to_vendor_thermal_level(info->level);
+	if (nla_put_u32(vendor_event,
+			QCA_WLAN_VENDOR_ATTR_THERMAL_EVENT_LEVEL,
+			level)) {
+		wlan_cfg80211_vendor_free_skb(vendor_event);
+		return QDF_STATUS_E_INVAL;
+	}
+	hdd_debug("thermal_throttle:level %d vendor level %d", info->level,
+		  level);
+	wlan_cfg80211_vendor_event(vendor_event, GFP_KERNEL);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+void hdd_thermal_register_callbacks(struct hdd_context *hdd_ctx)
+{
+	struct fwol_thermal_callbacks cb_obj = {0};
+
+	cb_obj.notify_thermal_throttle_handler =
+		hdd_notify_thermal_throttle_handler;
+	ucfg_fwol_thermal_register_callbacks(hdd_ctx->psoc, &cb_obj);
+}
+
+void hdd_thermal_unregister_callbacks(struct hdd_context *hdd_ctx)
+{
+	ucfg_fwol_thermal_unregister_callbacks(hdd_ctx->psoc);
+}
+#endif

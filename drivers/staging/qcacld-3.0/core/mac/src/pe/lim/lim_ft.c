@@ -162,9 +162,7 @@ void lim_ft_prepare_add_bss_req(struct mac_context *mac,
 		(uint8_t) pBeaconStruct->capabilityInfo.shortSlotTime;
 	pAddBssParams->llbCoexist =
 		(uint8_t) ft_session->beaconParams.llbCoexist;
-#ifdef WLAN_FEATURE_11W
 	pAddBssParams->rmfEnabled = ft_session->limRmfEnabled;
-#endif
 	if (assoc_rsp &&
 	    ft_session->htCapability && pBeaconStruct->HTCaps.present &&
 	    assoc_rsp->HTCaps.present) {
@@ -242,6 +240,12 @@ void lim_ft_prepare_add_bss_req(struct mac_context *mac,
 		lim_add_bss_he_cfg(pAddBssParams, ft_session);
 	}
 
+	if (lim_is_session_eht_capable(ft_session) &&
+	    pBeaconStruct->eht_cap.present) {
+		lim_update_bss_eht_capable(mac, pAddBssParams);
+		lim_add_bss_eht_cfg(pAddBssParams, ft_session);
+	}
+
 	pe_debug("SIR_HAL_ADD_BSS_REQ with frequency: %d, width: %d",
 		 bssDescription->chan_freq, pAddBssParams->ch_width);
 
@@ -261,10 +265,8 @@ void lim_ft_prepare_add_bss_req(struct mac_context *mac,
 		pAddBssParams->staContext.updateSta = false;
 		pAddBssParams->staContext.encryptType =
 			ft_session->encryptType;
-#ifdef WLAN_FEATURE_11W
 		pAddBssParams->staContext.rmfEnabled =
 			ft_session->limRmfEnabled;
-#endif
 
 		if (IS_DOT11_MODE_HT(ft_session->dot11mode) &&
 		    (pBeaconStruct->HTCaps.present)) {
@@ -285,6 +287,12 @@ void lim_ft_prepare_add_bss_req(struct mac_context *mac,
 				pBeaconStruct->he_cap.present)
 				lim_intersect_ap_he_caps(ft_session,
 					pAddBssParams, pBeaconStruct, NULL);
+
+			if (lim_is_session_eht_capable(ft_session) &&
+			    pBeaconStruct->eht_cap.present)
+				lim_intersect_ap_eht_caps(ft_session,
+							  pAddBssParams,
+							  pBeaconStruct, NULL);
 
 			pAddBssParams->staContext.mimoPS =
 				(tSirMacHTMIMOPowerSaveState) pBeaconStruct->HTCaps.
@@ -325,18 +333,17 @@ void lim_ft_prepare_add_bss_req(struct mac_context *mac,
 					   pBeaconStruct->HTCaps.supportedMCSSet,
 					   false, ft_session,
 					   &pBeaconStruct->VHTCaps,
-					   &pBeaconStruct->he_cap, NULL,
+					   &pBeaconStruct->he_cap,
+					   &pBeaconStruct->eht_cap, NULL,
 					   bssDescription);
 	}
 
 	pAddBssParams->maxTxPower = ft_session->maxTxPower;
 
-#ifdef WLAN_FEATURE_11W
 	if (ft_session->limRmfEnabled) {
 		pAddBssParams->rmfEnabled = 1;
 		pAddBssParams->staContext.rmfEnabled = 1;
 	}
-#endif
 	pAddBssParams->staContext.sessionId = ft_session->peSessionId;
 	pAddBssParams->staContext.smesessionId = ft_session->smeSessionId;
 
@@ -477,7 +484,7 @@ static void lim_fill_dot11mode(struct mac_context *mac_ctx,
 			       enum wlan_phymode bss_phymode)
 {
 	if (pe_session->ftPEContext.pFTPreAuthReq &&
-	    !csr_is_roam_offload_enabled(mac_ctx)) {
+	    !wlan_is_roam_offload_enabled(mac_ctx->mlme_cfg->lfr)) {
 		ft_session->dot11mode =
 			pe_session->ftPEContext.pFTPreAuthReq->dot11mode;
 		return;
@@ -616,6 +623,10 @@ void lim_fill_ft_session(struct mac_context *mac,
 	if (IS_DOT11_MODE_HE(ft_session->dot11mode) &&
 	    pBeaconStruct->he_cap.present)
 		lim_update_session_he_capable(mac, ft_session);
+
+	if (IS_DOT11_MODE_EHT(ft_session->dot11mode) &&
+	    pBeaconStruct->eht_cap.present)
+		lim_update_session_eht_capable(mac, ft_session);
 
 	/* Assign default configured nss value in the new session */
 	if (!wlan_reg_is_24ghz_ch_freq(ft_session->curr_op_freq))
@@ -773,9 +784,8 @@ void lim_fill_ft_session(struct mac_context *mac,
 				ft_session->limSmeState));
 	}
 	ft_session->encryptType = pe_session->encryptType;
-#ifdef WLAN_FEATURE_11W
 	ft_session->limRmfEnabled = pe_session->limRmfEnabled;
-#endif
+
 	if ((ft_session->limRFBand == REG_BAND_2G) &&
 		(ft_session->htSupportedChannelWidthSet ==
 		eHT_CHANNEL_WIDTH_40MHZ))

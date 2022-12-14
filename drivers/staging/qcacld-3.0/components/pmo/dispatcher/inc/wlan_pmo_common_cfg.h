@@ -157,15 +157,16 @@
 
 /*
  * <ini>
- * gEnableModulatedDTIM - Enable/Disable modulated DTIM feature
+ * gEnableModulatedDTIM/ConDTIMSkipping_Number - Enable/Disable modulated DTIM
+ * feature
  * @Min: 0
- * @Max: 5
+ * @Max: 10
  * @Default: 0
  *
  * This ini is used to enable/disable modulated DTIM feature.
  *
  * 0 - Disable modulated DTIM.
- * 1 to 5 - The maximum No. of modulated DTIM period used for calculating the
+ * 1 to 10 - The maximum No. of modulated DTIM period used for calculating the
  * target listen interval.
  *
  * The target listen interval will be updated to firmware when host driver is
@@ -179,9 +180,9 @@
  * </ini>
  */
 #define CFG_PMO_ENABLE_MODULATED_DTIM CFG_INI_UINT( \
-	"gEnableModulatedDTIM", \
+	"gEnableModulatedDTIM ConDTIMSkipping_Number", \
 	0, \
-	5, \
+	10, \
 	0, \
 	CFG_VALUE_OR_DEFAULT, \
 	"Enable/disable modulated DTIM feature")
@@ -336,6 +337,31 @@
 
 /*
  * <ini>
+ * gSuspendMode - Suspend mode configuration
+ * @Min: 0
+ * @Max: 2
+ * @Default: 2
+ *
+ * This ini is used to set suspend mode. Configurations are as follows:
+ * 0 - Does not support suspend.
+ * 1 - Legency suspend mode, PDEV suspend.
+ * 2 - WOW suspend mode.
+ *
+ * Related: None
+ *
+ * Supported Feature: Power Save
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_PMO_SUSPEND_MODE CFG_INI_UINT("gSuspendMode", \
+					  0, 2, 2, \
+					  CFG_VALUE_OR_DEFAULT, \
+					  "Suspend mode")
+
+/*
+ * <ini>
  * gActiveModeOffload - Active offload mode configuration
  * @Min: 0
  * @Max: 1
@@ -459,7 +485,8 @@
  * connected
  * 1: PCIe Bus suspend is supported in SAP mode with one or more clients
  * connected
- * Related: None
+ * Related: SAP clients connected bus suspend(D3 WoW) is only supported
+ *          when IPA is disabled
  *
  * Supported Feature: Power Save
  *
@@ -487,7 +514,8 @@
  * connected
  * 1: PCIe Bus suspend is supported in P2PGO mode with one or more clients
  * connected
- * Related: None
+ * Related: P2P GO clients connected bus suspend(D3 WoW) is only supported
+ *          when IPA is disabled
  *
  * Supported Feature: Power Save
  *
@@ -502,10 +530,31 @@
 
 /*
  * <ini>
+ * enable_dynamic_pcie_gen_speed_switch - enable dynamic PCIe gen speed change
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * This ini is used to enable dynamic PCIe gen speed change
+ *
+ * 0: Dynamic PCIe gen speed change is not enabled
+ * 1: Dynamic PCIe gen speed change is enabled
+ *
+ * Usage: Internal
+ *
+ * </ini>
+ */
+#define CFG_ENABLE_DYNAMIC_PCIE_GEN_SPEED_SWITCH CFG_INI_BOOL( \
+		"enable_dynamic_pcie_gen_speed_switch", \
+		0, \
+		"This ini is used to enable dynamic PCIe gen speed change")
+
+/*
+ * <ini>
  * igmp_version_support - Configure igmp version
  * @Min: 0x00000000
  * @Max: 0x7
- * @Default: 0x0000000
+ * @Default: 0x7
  *
  * This ini is used to configure version while offloading igmp
  *
@@ -521,6 +570,50 @@
 		CFG_VALUE_OR_DEFAULT, \
 		"configure igmp offload support version")
 
+/*
+ * <ini>
+ * disconnect_sap_tdls_in_wow - disconnect sap tdls in wow
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * Due to the limitation on third party platform, add ini to take
+ * special care of the below wow case to avoid fw crash.
+ * The sap/p2p_go shall kick out all the connected sta/p2p_gc and
+ * then go to suspend considering d0wow/d3wow is not supported.
+ * Teardown tdls link proactively since auto sleep mechanism not
+ * supported.
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_DISCONNECT_SAP_TDLS_IN_WOW CFG_INI_BOOL( \
+		"disconnect_sap_tdls_in_wow", \
+		0, \
+		"disconnect sap tdls in wow")
+
+/*
+ * <ini>
+ * gEnableIcmpOffload - Enable/disable ICMP offload
+ * @Min: 0
+ * @Max: 1
+ * @Default: 0
+ *
+ * This ini is used to enable/disable firmware's capability of sending ICMP
+ * response to clients.
+ *
+ * Supported Feature: STA
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_ENABLE_ICMP_OFFLOAD CFG_INI_BOOL( \
+	"gEnableIcmpOffload", \
+	0, \
+	"enable/disable ICMP offload")
+
 #define CFG_PMO_COMMON_ALL \
 	CFG(CFG_ENABLE_SAP_SUSPEND) \
 	CFG(CFG_PMO_ENABLE_HOST_ARPOFFLOAD) \
@@ -535,6 +628,7 @@
 	CFG(CFG_PMO_POWERSAVE_MODE) \
 	CFG(CFG_PMO_MAX_PS_POLL) \
 	CFG(CFG_PMO_WOW_ENABLE) \
+	CFG(CFG_PMO_SUSPEND_MODE) \
 	CFG(CFG_PMO_ACTIVE_MODE) \
 	CFG(CFG_PMO_PWR_FAILURE) \
 	CFG(CFG_PMO_WOW_DATA_INACTIVITY_TIMEOUT) \
@@ -542,6 +636,9 @@
 	CFG(CFG_PMO_MOD_DTIM_ON_SYS_SUSPEND) \
 	CFG(CFG_ENABLE_BUS_SUSPEND_IN_SAP_MODE) \
 	CFG(CFG_ENABLE_BUS_SUSPEND_IN_GO_MODE)\
-	CFG(CFG_IGMP_VERSION_SUPPORT)
+	CFG(CFG_DISCONNECT_SAP_TDLS_IN_WOW) \
+	CFG(CFG_ENABLE_DYNAMIC_PCIE_GEN_SPEED_SWITCH) \
+	CFG(CFG_IGMP_VERSION_SUPPORT) \
+	CFG(CFG_ENABLE_ICMP_OFFLOAD)
 
 #endif /* WLAN_PMO_COMMON_CFG_H__ */

@@ -82,6 +82,12 @@ struct hdd_context;
 #define SME_QOS_UAPSD_CFG_VI_CHANGED_MASK     0xF4
 #define SME_QOS_UAPSD_CFG_VO_CHANGED_MASK     0xF8
 
+#ifdef WLAN_FEATURE_11BE_MLO
+#define SEND_EAPOL_OVER_NL true
+#else
+#define SEND_EAPOL_OVER_NL  false
+#endif
+
 netdev_tx_t hdd_hard_start_xmit(struct sk_buff *skb, struct net_device *dev);
 
 /**
@@ -407,7 +413,7 @@ void hdd_send_rps_disable_ind(struct hdd_adapter *adapter);
  *
  * Return: none
  */
-#ifdef IPA_LAN_RX_NAPI_SUPPORT
+#ifdef QCA_CONFIG_RPS
 void hdd_adapter_set_rps(uint8_t vdev_id, bool enable);
 #else
 static inline

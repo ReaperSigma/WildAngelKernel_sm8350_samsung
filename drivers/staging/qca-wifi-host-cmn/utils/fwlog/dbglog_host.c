@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -38,7 +38,11 @@
 #include "wmi_unified_priv.h"
 
 #ifdef CNSS_GENL
+#ifdef CONFIG_CNSS_OUT_OF_TREE
+#include "cnss_nl.h"
+#else
 #include <net/cnss_nl.h>
+#endif
 #include "wlan_cfg80211.h"
 #endif
 
@@ -49,6 +53,7 @@
 #define CLD_DEBUGFS_DIR          "cld"
 #endif
 #define DEBUGFS_BLOCK_NAME       "dbglog_block"
+#define DEBUGFS_BLOCK_PERM       QDF_FILE_USR_READ
 
 #define ATH_MODULE_NAME fwlog
 #include <a_debug.h>
@@ -4068,7 +4073,7 @@ static ssize_t dbglog_block_read(struct file *file,
 	char *buf;
 	int ret;
 
-	buf = vzalloc(count);
+	buf = qdf_mem_valloc(count);
 	if (!buf)
 		return -ENOMEM;
 
@@ -4083,7 +4088,7 @@ static ssize_t dbglog_block_read(struct file *file,
 		ret =
 		   wait_for_completion_interruptible(&fwlog->fwlog_completion);
 		if (ret == -ERESTARTSYS) {
-			vfree(buf);
+			qdf_mem_vfree(buf);
 			return ret;
 		}
 
@@ -4117,7 +4122,7 @@ static ssize_t dbglog_block_read(struct file *file,
 	ret_cnt = len;
 
 out:
-	vfree(buf);
+	qdf_mem_vfree(buf);
 
 	return ret_cnt;
 }
@@ -4135,22 +4140,22 @@ static const struct file_operations fops_dbglog_block = {
 static void dbglog_debugfs_init(wmi_unified_t wmi_handle)
 {
 
-	wmi_handle->debugfs_phy = debugfs_create_dir(CLD_DEBUGFS_DIR, NULL);
+	wmi_handle->debugfs_phy = qdf_debugfs_create_dir(CLD_DEBUGFS_DIR, NULL);
 	if (!wmi_handle->debugfs_phy) {
 		qdf_print("Failed to create WMI debug fs");
 		return;
 	}
 
-	debugfs_create_file(DEBUGFS_BLOCK_NAME, 0400,
-			    wmi_handle->debugfs_phy, &wmi_handle->dbglog,
-			    &fops_dbglog_block);
+	qdf_debugfs_create_entry(DEBUGFS_BLOCK_NAME, DEBUGFS_BLOCK_PERM,
+				 wmi_handle->debugfs_phy, &wmi_handle->dbglog,
+				 &fops_dbglog_block);
 
 	return;
 }
 
 static void dbglog_debugfs_remove(wmi_unified_t wmi_handle)
 {
-	debugfs_remove_recursive(wmi_handle->debugfs_phy);
+	qdf_debugfs_remove_dir_recursive(wmi_handle->debugfs_phy);
 }
 
 #else

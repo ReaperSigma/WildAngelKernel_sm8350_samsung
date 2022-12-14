@@ -89,7 +89,8 @@
 #define QCA6290_EMULATION_DEVICE_ID (0xabcd)
 #define QCA6290_DEVICE_ID (0x1100)
 #define QCN9000_DEVICE_ID (0x1104)
-#define QCN9100_DEVICE_ID (0xFFFB)
+#define QCN9224_DEVICE_ID (0x1109)
+#define QCN6122_DEVICE_ID (0xFFFB)
 #define QCA6390_EMULATION_DEVICE_ID (0x0108)
 #define QCA6390_DEVICE_ID (0x1101)
 /* TODO: change IDs for HastingsPrime */
@@ -99,6 +100,9 @@
 /* TODO: change IDs for Moselle */
 #define QCA6750_EMULATION_DEVICE_ID (0x010c)
 #define QCA6750_DEVICE_ID (0x1105)
+
+/* TODO: change IDs for Hamilton */
+#define WCN7850_DEVICE_ID (0x1107)
 
 #define ADRASTEA_DEVICE_ID_P2_E12 (0x7021)
 #define AR9887_DEVICE_ID    (0x0050)
@@ -115,6 +119,7 @@
 #define QCA8074V2_DEVICE_ID (0xfffe) /* Todo: replace this with actual number */
 #define QCA6018_DEVICE_ID (0xfffd) /* Todo: replace this with actual number */
 #define QCA5018_DEVICE_ID (0xfffc) /* Todo: replace this with actual number */
+#define QCA9574_DEVICE_ID (0xfffa)
 /* Genoa */
 #define QCN7605_DEVICE_ID  (0x1102) /* Genoa PCIe device ID*/
 #define QCN7605_COMPOSITE  (0x9901)
@@ -137,6 +142,20 @@
 #define HIF_GET_USB_DEVICE(scn) ((struct HIF_DEVICE_USB *)scn)
 #define HIF_GET_SOFTC(scn) ((struct hif_softc *)scn)
 #define GET_HIF_OPAQUE_HDL(scn) ((struct hif_opaque_softc *)scn)
+
+#ifdef QCA_WIFI_QCN9224
+#define NUM_CE_AVAILABLE 16
+#else
+#define NUM_CE_AVAILABLE 12
+#endif
+/* Add 1 here to store default configuration in index 0 */
+#define NUM_CE_CONTEXT (NUM_CE_AVAILABLE + 1)
+
+#define CE_INTERRUPT_IDX(x) x
+
+struct ce_int_assignment {
+	uint8_t msi_idx[NUM_CE_AVAILABLE];
+};
 
 struct hif_ce_stats {
 	int hif_pipe_no_resrc_count;
@@ -198,6 +217,7 @@ struct hif_softc {
 	bool hif_init_done;
 	bool request_irq_done;
 	bool ext_grp_irq_configured;
+	bool free_irq_done;
 	uint8_t ce_latency_stats;
 	/* Packet statistics */
 	struct hif_ce_stats pkt_stats;
@@ -215,6 +235,7 @@ struct hif_softc {
 	uint32_t ce_irq_summary;
 	/* No of copy engines supported */
 	unsigned int ce_count;
+	struct ce_int_assignment *int_assignment;
 	atomic_t active_tasklet_cnt;
 	atomic_t active_grp_tasklet_cnt;
 	atomic_t link_suspended;
@@ -280,6 +301,7 @@ struct hif_softc {
 	/* Should the unlzay support for interrupt delivery be disabled */
 	/* Flag to indicate whether bus is suspended */
 	bool bus_suspended;
+	bool pktlog_init;
 #ifdef FEATURE_RUNTIME_PM
 	/* Variable to track the link state change in RTPM */
 	qdf_atomic_t pm_link_state;
@@ -294,6 +316,10 @@ struct hif_softc {
 	qdf_atomic_t dp_ep_vote_access;
 	qdf_atomic_t ep_vote_access;
 #endif
+	/* CMEM address target reserved for host usage */
+	uint64_t cmem_start;
+	/* CMEM size target reserved */
+	uint64_t cmem_size;
 };
 
 static inline
@@ -305,6 +331,25 @@ void *hif_get_hal_handle(struct hif_opaque_softc *hif_hdl)
 		return NULL;
 
 	return sc->hal_soc;
+}
+
+/**
+ * hif_get_cmem_info() - get CMEM address and size from HIF handle
+ * @hif_hdl: HIF handle pointer
+ * @cmem_start: pointer for CMEM address
+ * @cmem_size: pointer for CMEM size
+ *
+ * Return: None.
+ */
+static inline
+void hif_get_cmem_info(struct hif_opaque_softc *hif_hdl,
+		       uint64_t *cmem_start,
+		       uint64_t *cmem_size)
+{
+	struct hif_softc *sc = (struct hif_softc *)hif_hdl;
+
+	*cmem_start = sc->cmem_start;
+	*cmem_size = sc->cmem_size;
 }
 
 /**
@@ -378,6 +423,8 @@ void hif_shutdown_device(struct hif_opaque_softc *hif_ctx);
 int hif_bus_configure(struct hif_softc *scn);
 void hif_cancel_deferred_target_sleep(struct hif_softc *scn);
 int hif_config_ce(struct hif_softc *scn);
+int hif_config_ce_pktlog(struct hif_opaque_softc *hif_ctx);
+int hif_config_ce_by_id(struct hif_softc *scn, int pipe_num);
 void hif_unconfig_ce(struct hif_softc *scn);
 void hif_ce_prepare_config(struct hif_softc *scn);
 QDF_STATUS hif_ce_open(struct hif_softc *scn);

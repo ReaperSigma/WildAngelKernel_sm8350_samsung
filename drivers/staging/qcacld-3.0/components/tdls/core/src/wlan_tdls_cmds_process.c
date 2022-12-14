@@ -242,7 +242,6 @@ error:
 	qdf_mem_free(delstareq);
 	return status;
 }
-
 #ifdef WLAN_FEATURE_11AX
 static void tdls_pe_update_peer_6ghz_capa(struct tdls_add_sta_req *addstareq,
 				struct tdls_update_peer_params *update_peer)
@@ -267,7 +266,6 @@ static void tdls_pe_update_peer_he_capa(struct tdls_add_sta_req *addstareq,
 {
 }
 #endif
-
 /**
  * tdls_pe_update_peer() - send TDLS update peer request to PE
  * @req: TDLS update peer request

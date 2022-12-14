@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -104,11 +104,6 @@
 #define SME_ACTIVE_LIST_CMD_TIMEOUT_VALUE (30*1000)
 #define SME_CMD_TIMEOUT_VALUE (SME_ACTIVE_LIST_CMD_TIMEOUT_VALUE + 1000)
 
-/* Disconnect timeout = vdev stop + bss peer delete + 1 sec */
-#define SME_CMD_VDEV_DISCONNECT_TIMEOUT (STOP_RESPONSE_TIMER + \
-					 SIR_DELETE_STA_TIMEOUT + 1000)
-#define SME_DISCONNECT_TIMEOUT (SME_CMD_VDEV_DISCONNECT_TIMEOUT + 1000)
-
 /* AP start timeout = vdev start + 2 sec */
 #define SME_CMD_VDEV_START_BSS_TIMEOUT (START_RESPONSE_TIMER + 2000)
 #define SME_CMD_START_BSS_TIMEOUT (SME_CMD_VDEV_START_BSS_TIMEOUT + 1000)
@@ -123,10 +118,6 @@
 #define SME_PEER_DISCONNECT_TIMEOUT (SME_CMD_PEER_DISCONNECT_TIMEOUT + 1000)
 
 #define SME_CMD_GET_DISCONNECT_STATS_TIMEOUT 200
-
-/* Roam cmds timeout = vdev start + peer assoc + 1 sec */
-#define SME_CMD_ROAM_CMD_TIMEOUT (START_RESPONSE_TIMER + \
-				  SIR_PEER_ASSOC_TIMEOUT + 1000)
 #define SME_CMD_ADD_DEL_TS_TIMEOUT (4 * 1000)
 
 /*
@@ -446,17 +437,18 @@ void sme_cleanup_session(mac_handle_t mac_handle, uint8_t vdev_id);
  */
 void sme_set_curr_device_mode(mac_handle_t mac_handle,
 			      enum QDF_OPMODE curr_device_mode);
-
 /**
- * sme_update_nud_config() - update nud config
- * @mac_handle: The handle returned by mac_open.
- * @nud_fail_behavior: Vlaue of nud fail behaviour
+ * sme_update_roam_params() - Store/Update the roaming params
+ * @mac_handle: Opaque handle to the global MAC context
+ * @vdev_id:                  vdev ID
+ * @src_rso_config:           The source to copy
+ * @update_param:             Type of parameter to be updated
+ *
+ * Return: Return the status of the updation.
  */
-void sme_update_nud_config(mac_handle_t mac_handle, uint8_t nud_fail_behavior);
-
 QDF_STATUS sme_update_roam_params(mac_handle_t mac_handle,
-				  uint8_t session_id,
-				  struct roam_ext_params *roam_params_src,
+				  uint8_t vdev_id,
+				  struct rso_config_params *src_rso_config,
 				  int update_param);
 QDF_STATUS sme_update_config(mac_handle_t mac_handle,
 			     struct sme_config_params *pSmeConfigParams);
@@ -536,76 +528,47 @@ QDF_STATUS sme_scan_get_result(mac_handle_t mac_handle, uint8_t vdev_id,
 			       struct scan_filter *filter,
 			       tScanResultHandle *phResult);
 
-/**
- * sme_get_ap_channel_from_scan_cache() - a wrapper function to get AP's channel
- * from CSR by filtering the result which matches our roam profile.
- * @profile: SAP profile
- * @ap_ch_freq: pointer to channel id of SAP. Fill the value after finding the
- *              best ap from scan cache.
- * @vdev_id: vdev id
- *
- * This function is written to get AP's channel id from CSR by filtering
- * the result which matches our roam profile. This is a synchronous call.
- *
- * Return: QDF_STATUS.
- */
-QDF_STATUS sme_get_ap_channel_from_scan_cache(struct csr_roam_profile *profile,
-					      tScanResultHandle *scan_cache,
-					      uint32_t *ap_ch_freq,
-					      uint8_t vdev_id);
-/**
- * sme_get_ap_channel_from_scan() - a wrapper function to get AP's channel id
- * from CSR by filtering the result which matches our roam profile.
- * @profile: SAP profile
- * @ap_ch_freq: pointer to channel id of SAP. Fill the value after finding the
- *              best ap from scan cache.
- * @vdev_id: vdev id
- *
- * This function is written to get AP's channel id from CSR by filtering
- * the result which matches our roam profile. This is a synchronous call.
- *
- * Return: QDF_STATUS.
- */
-QDF_STATUS sme_get_ap_channel_from_scan(void *profile,
-					tScanResultHandle *scan_cache,
-					uint32_t *ap_ch_freq,
-					uint8_t vdev_id);
-
 tCsrScanResultInfo *sme_scan_result_get_first(mac_handle_t,
 		tScanResultHandle hScanResult);
 tCsrScanResultInfo *sme_scan_result_get_next(mac_handle_t,
 		tScanResultHandle hScanResult);
 QDF_STATUS sme_scan_result_purge(tScanResultHandle hScanResult);
-QDF_STATUS sme_roam_connect(mac_handle_t mac_handle, uint8_t sessionId,
-		struct csr_roam_profile *pProfile, uint32_t *pRoamId);
-QDF_STATUS sme_roam_reassoc(mac_handle_t mac_handle, uint8_t sessionId,
-		struct csr_roam_profile *pProfile,
-		tCsrRoamModifyProfileFields modProfileFields,
-		uint32_t *pRoamId, bool fForce);
 
 /**
- * sme_roam_disconnect() - API to request CSR to disconnect
+ * sme_bss_start() - A wrapper function to request CSR to inititiate start bss
+ * @mac_handle: mac handle
+ * @vdev_id: the vdev id.
+ * @profile: description of bss to start
+ * @roam_id: to get back the request ID
+ *
+ * Return QDF_STATUS
+ */
+QDF_STATUS sme_bss_start(mac_handle_t mac_handle, uint8_t vdev_id,
+			 struct csr_roam_profile *profile, uint32_t *roam_id);
+
+/**
+ * sme_roam_ndi_stop() - API to request stop ndi
  * @mac_handle: Opaque handle to the global MAC context
- * @session: SME session identifier
- * @reason: Reason to disconnect
- * @mac_reason: Reason to disconnect as per enum wlan_reason_code
+ * @vdev_id: vdev id
  *
  * Return: QDF Status success or failure
  */
-QDF_STATUS sme_roam_disconnect(mac_handle_t mac_handle, uint8_t session,
-			       eCsrRoamDisconnectReason reason,
-			       enum wlan_reason_code mac_reason);
+QDF_STATUS sme_roam_ndi_stop(mac_handle_t mac_handle, uint8_t vdev_id);
 
 void sme_dhcp_done_ind(mac_handle_t mac_handle, uint8_t session_id);
-QDF_STATUS sme_roam_stop_bss(mac_handle_t mac_handle, uint8_t sessionId);
+
+/*
+ * sme_roam_stop_bss() - To stop BSS for Soft AP. This is an asynchronous API.
+ * @mac_handle - Global structure
+ * @vdev_id - vdev id of SoftAP
+ *
+ * Return: QDF Status success or failure
+ */
+QDF_STATUS sme_roam_stop_bss(mac_handle_t mac_handle, uint8_t vdev_id);
 QDF_STATUS sme_roam_disconnect_sta(mac_handle_t mac_handle, uint8_t sessionId,
 		struct csr_del_sta_params *p_del_sta_params);
 QDF_STATUS sme_roam_deauth_sta(mac_handle_t mac_handle, uint8_t sessionId,
 		struct csr_del_sta_params *pDelStaParams);
-QDF_STATUS sme_roam_get_connect_profile(mac_handle_t mac_handle,
-					uint8_t sessionId,
-					tCsrRoamConnectedProfile *pProfile);
-void sme_roam_free_connect_profile(tCsrRoamConnectedProfile *profile);
 
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
 /**
@@ -643,12 +606,12 @@ sme_get_roam_scan_ch(mac_handle_t mac_handle,
  * Return: none
  */
 void sme_get_pmk_info(mac_handle_t mac_handle, uint8_t session_id,
-		      tPmkidCacheInfo *pmk_cache);
+		      struct wlan_crypto_pmksa *pmk_cache);
 
 /**
  * sme_roam_set_psk_pmk  - Set the PMK to vdev cache
  * @mac_handle: Opaque Mac handle
- * @pmksa: Pointer to pmksa cache
+ * @pmksa:   Pointer to pmksa cache
  * @vdev_id: Vdev id
  * @update_to_fw: Send RSO update config command to firmware to update
  *
@@ -663,16 +626,16 @@ QDF_STATUS sme_roam_set_psk_pmk(mac_handle_t mac_handle,
  * This is a synchronous call.
  * @mac_handle:  Global structure
  * @session_id:   SME session id
- * @pmk_cache:    pointer to pmk cache structure tPmkidCacheInfo
+ * @pmk_cache:    pointer to pmk cache structure wlan_crypto_pmksa
  *
  * Return: QDF_STATUS -status whether MDID is set or not
  */
-QDF_STATUS sme_set_pmk_cache_ft(mac_handle_t mac_handle, uint8_t session_id,
-				tPmkidCacheInfo *pmk_cache);
+QDF_STATUS sme_set_pmk_cache_ft(mac_handle_t mac_handle, uint8_t vdev_id,
+				struct wlan_crypto_pmksa *pmk_cache);
 #else
 static inline
 void sme_get_pmk_info(mac_handle_t mac_handle, uint8_t session_id,
-		      tPmkidCacheInfo *pmk_cache)
+		      struct wlan_crypto_pmksa *pmk_cache)
 {}
 
 static inline QDF_STATUS
@@ -698,32 +661,12 @@ QDF_STATUS sme_roam_set_psk_pmk(mac_handle_t mac_handle,
 }
 
 static inline
-QDF_STATUS sme_set_pmk_cache_ft(mac_handle_t mac_handle, uint8_t session_id,
-				tPmkidCacheInfo *pmk_cache)
+QDF_STATUS sme_set_pmk_cache_ft(mac_handle_t mac_handle, uint8_t vdev_id,
+				struct wlan_crypto_pmksa *pmk_cache)
 {
 	return QDF_STATUS_SUCCESS;
 }
 #endif
-
-/**
- * sme_roam_get_wpa_rsn_req_ie() - Retrieve WPA/RSN Request IE
- * @mac_handle: Opaque handle to the global MAC context
- * @session_id: ID of the specific session
- * @len: Caller allocated memory that has the length of @buf as input.
- *	Upon returned, @len has the length of the IE store in @buf
- * @buf: Caller allocated memory that contain the IE field, if any,
- *	upon return
- *
- * A wrapper function to request CSR to return the WPA or RSN IE CSR
- * passes to PE to JOIN request or START_BSS request
- * This is a synchronous call.
- *
- * Return: QDF_STATUS - when fail, it usually means the buffer allocated is not
- *			 big enough
- */
-QDF_STATUS sme_roam_get_wpa_rsn_req_ie(mac_handle_t mac_handle,
-				       uint8_t session_id,
-				       uint32_t *len, uint8_t *buf);
 
 QDF_STATUS sme_get_config_param(mac_handle_t mac_handle,
 				struct sme_config_params *pParam);
@@ -735,9 +678,6 @@ QDF_STATUS sme_get_tsm_stats(mac_handle_t mac_handle,
 		tCsrTsmStatsCallback callback,
 		struct qdf_mac_addr bssId,
 		void *pContext, uint8_t tid);
-QDF_STATUS sme_set_cckm_ie(mac_handle_t mac_handle,
-		uint8_t sessionId,
-		uint8_t *pCckmIe, uint8_t cckmIeLen);
 QDF_STATUS sme_set_ese_beacon_request(mac_handle_t mac_handle,
 				      const uint8_t sessionId,
 				      const tCsrEseBeaconReq *in_req);
@@ -752,11 +692,6 @@ QDF_STATUS sme_set_ese_beacon_request(mac_handle_t mac_handle,
 QDF_STATUS sme_set_plm_request(mac_handle_t mac_handle,
 			       struct plm_req_params *req);
 #endif /*FEATURE_WLAN_ESE */
-
-QDF_STATUS sme_get_modify_profile_fields(mac_handle_t mac_handle,
-					 uint8_t sessionId,
-					 tCsrRoamModifyProfileFields *
-					 pModifyProfileFields);
 
 #ifdef FEATURE_OEM_DATA_SUPPORT
 QDF_STATUS sme_register_oem_data_rsp_callback(mac_handle_t mac_handle,
@@ -1157,15 +1092,6 @@ sme_modify_roam_cand_sel_criteria(mac_handle_t mac_handle,
 QDF_STATUS sme_roam_control_restore_default_config(mac_handle_t mac_handle,
 						   uint8_t vdev_id);
 
-/**
- * sme_roam_reset_configs() - API to reset roam config
- * @mac_handle: Opaque handle to the global MAC context
- * @vdev_id: vdev Identifier
- *
- * Return: void
- */
-void sme_roam_reset_configs(mac_handle_t mac_handle, uint8_t vdev_id);
-
 QDF_STATUS sme_set_neighbor_scan_min_chan_time(mac_handle_t mac_handle,
 		const uint16_t nNeighborScanMinChanTime,
 		uint8_t sessionId);
@@ -1174,8 +1100,6 @@ QDF_STATUS sme_set_neighbor_scan_max_chan_time(mac_handle_t mac_handle,
 				const uint16_t nNeighborScanMaxChanTime);
 uint16_t sme_get_neighbor_scan_min_chan_time(mac_handle_t mac_handle,
 					     uint8_t sessionId);
-uint32_t sme_get_neighbor_roam_state(mac_handle_t mac_handle,
-				     uint8_t sessionId);
 uint32_t sme_get_current_roam_state(mac_handle_t mac_handle, uint8_t sessionId);
 uint32_t sme_get_current_roam_sub_state(mac_handle_t mac_handle,
 					uint8_t sessionId);
@@ -1231,25 +1155,11 @@ QDF_STATUS
 sme_update_roam_scan_freq_list(mac_handle_t mac_handle, uint8_t vdev_id,
 			       uint32_t *freq_list, uint8_t num_chan,
 			       uint32_t freq_list_type);
-QDF_STATUS sme_set_ese_roam_scan_channel_list(mac_handle_t mac_handle,
-					      uint8_t sessionId,
-					      uint32_t *chan_freq_list,
-					      uint8_t numChannels);
 QDF_STATUS sme_get_roam_scan_channel_list(mac_handle_t mac_handle,
 					  uint32_t *freq_list,
 					  uint8_t *pNumChannels,
 					  uint8_t sessionId);
 
-/**
- * sme_dump_freq_list() - Dump the frequencies from given chan info
- * @chan_info: Contains the frequency list and number of frequencies
- *
- * Extract number of frequencies and frequency list from chan_info and print
- * to the logs.
- *
- * Return: None
- */
-void sme_dump_freq_list(tCsrChannelInfo *chan_info);
 bool sme_get_is_ese_feature_enabled(mac_handle_t mac_handle);
 bool sme_get_wes_mode(mac_handle_t mac_handle);
 bool sme_get_roam_scan_control(mac_handle_t mac_handle);
@@ -1259,8 +1169,6 @@ bool sme_is_feature_supported_by_fw(enum cap_bitmap feature);
 
 QDF_STATUS sme_set_phy_mode(mac_handle_t mac_handle, eCsrPhyMode phyMode);
 eCsrPhyMode sme_get_phy_mode(mac_handle_t mac_handle);
-QDF_STATUS sme_handoff_request(mac_handle_t mac_handle, uint8_t sessionId,
-			       tCsrHandoffRequest *pHandoffInfo);
 
 QDF_STATUS sme_add_periodic_tx_ptrn(mac_handle_t mac_handle,
 		tSirAddPeriodicTxPtrn *addPeriodicTxPtrnParams);
@@ -1268,11 +1176,6 @@ QDF_STATUS sme_del_periodic_tx_ptrn(mac_handle_t mac_handle,
 		tSirDelPeriodicTxPtrn *delPeriodicTxPtrnParams);
 QDF_STATUS sme_send_rate_update_ind(mac_handle_t mac_handle,
 		tSirRateUpdateInd *rateUpdateParams);
-QDF_STATUS sme_roam_del_pmkid_from_cache(mac_handle_t mac_handle,
-					 uint8_t vdev_id,
-					 struct wlan_crypto_pmksa *pmksa,
-					 bool set_pmk);
-
 void sme_get_command_q_status(mac_handle_t mac_handle);
 
 /**
@@ -1309,6 +1212,17 @@ QDF_STATUS sme_notify_ht2040_mode(mac_handle_t mac_handle,
 				  uint8_t channel_type);
 QDF_STATUS sme_set_ht2040_mode(mac_handle_t mac_handle, uint8_t sessionId,
 			       uint8_t channel_type, bool obssEnabled);
+
+/**
+ * sme_get_ht2040_mode() - get ht operation mode
+ * @mac_handle: pointer to mac context
+ * @vdev_id: vdev id
+ * @channel_type: channel type to provide
+ *
+ * Return QDF_STATUS
+ */
+QDF_STATUS sme_get_ht2040_mode(mac_handle_t mac_handle, uint8_t vdev_id,
+			       enum eSirMacHTChannelType *channel_type);
 #endif
 
 /**
@@ -1349,8 +1263,22 @@ QDF_STATUS sme_set_auto_shutdown_cb(mac_handle_t mac_handle,
 QDF_STATUS sme_set_auto_shutdown_timer(mac_handle_t mac_handle,
 				       uint32_t timer_value);
 #endif
+
+/**
+ * sme_roam_channel_change_req() - Channel change to new target channel
+ * @mac_handle: handle returned by mac_open
+ * @bssid: mac address of BSS
+ * @vdev_id: vdev_id
+ * @ch_params: target channel information
+ * @profile: CSR profile
+ *
+ * API to Indicate Channel change to new target channel
+ *
+ * Return: QDF_STATUS
+ */
 QDF_STATUS sme_roam_channel_change_req(mac_handle_t mac_handle,
 				       struct qdf_mac_addr bssid,
+				       uint8_t vdev_id,
 				       struct ch_params *ch_params,
 				       struct csr_roam_profile *profile);
 
@@ -1679,6 +1607,13 @@ QDF_STATUS sme_ll_stats_get_req(mac_handle_t mac_handle,
 				void *context);
 
 /**
+ * sme_radio_tx_mem_free() - SME API to free the ll_stats memory
+ *
+ * Return: None
+ */
+void sme_radio_tx_mem_free(void);
+
+/**
  * sme_set_link_layer_stats_ind_cb() -
  * SME API to trigger the stats are available after get request
  * @mac_handle: MAC handle
@@ -1721,12 +1656,6 @@ sme_reset_link_layer_stats_ind_cb(mac_handle_t mac_handle)
 
 QDF_STATUS sme_set_wisa_params(mac_handle_t mac_handle,
 			       struct sir_wisa_params *wisa_params);
-#ifdef WLAN_FEATURE_ROAM_OFFLOAD
-QDF_STATUS
-sme_update_roam_key_mgmt_offload_enabled(mac_handle_t mac_handle,
-					 uint8_t session_id,
-					 struct pmkid_mode_bits *pmkid_modes);
-#endif
 QDF_STATUS sme_get_link_status(mac_handle_t mac_handle,
 			       csr_link_status_callback callback,
 			       void *context, uint8_t session_id);
@@ -1764,8 +1693,8 @@ QDF_STATUS sme_set_led_flashing(mac_handle_t mac_handle, uint8_t type,
 QDF_STATUS sme_enable_dfs_chan_scan(mac_handle_t mac_handle, uint8_t dfs_flag);
 QDF_STATUS sme_set_mas(uint32_t val);
 QDF_STATUS sme_set_miracast(mac_handle_t mac_handle, uint8_t filter_type);
-QDF_STATUS sme_ext_change_channel(mac_handle_t mac_handle, uint32_t channel,
-				  uint8_t session_id);
+QDF_STATUS sme_ext_change_freq(mac_handle_t mac_handle, qdf_freq_t freq,
+			       uint8_t session_id);
 
 QDF_STATUS sme_configure_stats_avg_factor(mac_handle_t mac_handle,
 					  uint8_t session_id,
@@ -1776,9 +1705,6 @@ QDF_STATUS sme_configure_guard_time(mac_handle_t mac_handle, uint8_t session_id,
 
 QDF_STATUS sme_wifi_start_logger(mac_handle_t mac_handle,
 				 struct sir_wifi_start_log start_log);
-
-bool sme_neighbor_middle_of_roaming(mac_handle_t mac_handle,
-				    uint8_t sessionId);
 
 /**
  * sme_is_any_session_in_middle_of_roaming() - check if roaming is in progress
@@ -1875,13 +1801,30 @@ void sme_update_user_configured_nss(mac_handle_t mac_handle, uint8_t nss);
 bool sme_is_any_session_in_connected_state(mac_handle_t mac_handle);
 
 QDF_STATUS sme_pdev_set_hw_mode(struct policy_mgr_hw_mode msg);
+
+/**
+ * sme_nss_update_request() - Send beacon templete update to FW with new
+ * nss value
+ * @mac_handle: Handle returned by macOpen
+ * @vdev_id: the session id
+ * @new_nss: the new nss value
+ * @ch_width: channel width, optional value
+ * @cback: hdd callback
+ * @next_action: next action to happen at policy mgr after beacon update
+ * @original_vdev_id: original request hwmode change vdev id
+ * @request_id: request id
+ *
+ * Sends the command to CSR to send to PE
+ * Return: QDF_STATUS_SUCCESS on successful posting
+ */
 QDF_STATUS sme_nss_update_request(uint32_t vdev_id,
 				  uint8_t  new_nss, uint8_t ch_width,
 				  policy_mgr_nss_update_cback cback,
 				  uint8_t next_action,
 				  struct wlan_objmgr_psoc *psoc,
 				  enum policy_mgr_conn_update_reason reason,
-				  uint32_t original_vdev_id);
+				  uint32_t original_vdev_id,
+				  uint32_t request_id);
 
 typedef void (*sme_peer_authorized_fp) (uint32_t vdev_id);
 QDF_STATUS sme_set_peer_authorized(uint8_t *peer_addr,
@@ -2299,20 +2242,6 @@ QDF_STATUS sme_update_tx_fail_cnt_threshold(mac_handle_t mac_handle,
 		uint8_t session_id, uint32_t tx_fail_count);
 
 /**
- * sme_roam_is_ese_assoc() - Check if association type is ESE
- * @roam_info: Pointer to roam info
- *
- * Return: true if ESE Association, false otherwise.
- */
-#ifdef FEATURE_WLAN_ESE
-bool sme_roam_is_ese_assoc(struct csr_roam_info *roam_info);
-#else
-static inline bool sme_roam_is_ese_assoc(struct csr_roam_info *roam_info)
-{
-	return false;
-}
-#endif
-/**
  * sme_neighbor_roam_is11r_assoc() - Check if association type is 11R
  * @mac_handle: MAC_HANDLE handle
  * @session_id: session id
@@ -2427,9 +2356,6 @@ QDF_STATUS sme_set_sar_power_limits(mac_handle_t mac_handle,
  */
 QDF_STATUS sme_send_coex_config_cmd(struct coex_config_params *coex_cfg_params);
 
-void sme_set_cc_src(mac_handle_t mac_handle, enum country_src);
-
-
 #ifdef WLAN_FEATURE_WOW_PULSE
 QDF_STATUS sme_set_wow_pulse(struct wow_pulse_mode *wow_pulse_set_info);
 #endif
@@ -2474,81 +2400,15 @@ void sme_set_chan_info_callback(mac_handle_t mac_handle,
 /**
  * sme_get_rssi_snr_by_bssid() - gets the rssi and snr by bssid from scan cache
  * @mac_handle: handle returned by mac_open
- * @profile: current connected profile
  * @bssid: bssid to look for in scan cache
  * @rssi: rssi value found
  * @snr: snr value found
- * @vdev_id: vdev id
  *
  * Return: QDF_STATUS
  */
 QDF_STATUS sme_get_rssi_snr_by_bssid(mac_handle_t mac_handle,
-				     struct csr_roam_profile *profile,
 				     const uint8_t *bssid, int8_t *rssi,
-				     int8_t *snr, uint8_t vdev_id);
-
-/**
- * sme_get_beacon_frm() - gets the bss descriptor from scan cache and prepares
- * beacon frame
- * @mac_handle: handle returned by mac_open
- * @profile: current connected profile
- * @bssid: bssid to look for in scan cache
- * @frame_buf: frame buffer to populate
- * @frame_len: length of constructed frame
- * @ch_freq: Pointer to channel freq info to be filled
- * @vdev_id: vdev id
- *
- * Return: QDF_STATUS
- */
-QDF_STATUS sme_get_beacon_frm(mac_handle_t mac_handle,
-			      struct csr_roam_profile *profile,
-			      const tSirMacAddr bssid,
-			      uint8_t **frame_buf, uint32_t *frame_len,
-			      uint32_t *ch_freq, uint8_t vdev_id);
-
-#ifdef WLAN_FEATURE_ROAM_OFFLOAD
-/**
- * sme_fast_reassoc() - invokes FAST REASSOC command
- * @mac_handle: handle returned by mac_open
- * @profile: current connected profile
- * @bssid: bssid to look for in scan cache
- * @ch_freq: channel on which reassoc should be send
- * @vdev_id: vdev id
- * @connected_bssid: bssid of currently connected profile
- *
- * Return: QDF_STATUS
- */
-QDF_STATUS sme_fast_reassoc(mac_handle_t mac_handle,
-			    struct csr_roam_profile *profile,
-			    const tSirMacAddr bssid, uint32_t ch_freq,
-			    uint8_t vdev_id, const tSirMacAddr connected_bssid);
-
-/**
- * sme_roam_invoke_nud_fail() - invokes REASSOC command to best available bssid
- * @mac_handle: handle returned by mac_open
- * @vdev_id: vdev id
- *
- * Return: QDF_STATUS
- */
-QDF_STATUS sme_roam_invoke_nud_fail(mac_handle_t mac_handle, uint8_t vdev_id);
-
-#else
-static inline
-QDF_STATUS sme_fast_reassoc(mac_handle_t mac_handle,
-			    struct csr_roam_profile *profile,
-			    const tSirMacAddr bssid, uint32_t ch_freq,
-			    uint8_t vdev_id, const tSirMacAddr connected_bssid)
-{
-	return QDF_STATUS_SUCCESS;
-}
-
-static inline
-QDF_STATUS sme_roam_invoke_nud_fail(mac_handle_t mac_handle, uint8_t vdev_id)
-{
-	return QDF_STATUS_SUCCESS;
-}
-
-#endif
+				     int8_t *snr);
 
 /**
  * sme_register_tx_queue_cb(): Register tx queue callback
@@ -2878,7 +2738,7 @@ QDF_STATUS sme_set_vc_mode_config(uint32_t vc_bitmap);
  */
 QDF_STATUS sme_set_del_pmkid_cache(struct wlan_objmgr_psoc *psoc,
 				   uint8_t session_id,
-				   tPmkidCacheInfo *pmk_cache_info,
+				   struct wlan_crypto_pmksa *pmk_cache_info,
 				   bool is_add);
 
 /**
@@ -2894,13 +2754,12 @@ QDF_STATUS sme_set_del_pmkid_cache(struct wlan_objmgr_psoc *psoc,
  */
 void sme_clear_sae_single_pmk_info(struct wlan_objmgr_psoc *psoc,
 				   uint8_t session_id,
-				   tPmkidCacheInfo *pmk_cache_info);
+				   struct wlan_crypto_pmksa *pmk_cache_info);
 
 /**
  * sme_send_hlp_ie_info() - API to send HLP IE info to fw
  * @mac_handle: Opaque handle to the global MAC context
  * @vdev_id: vdev id
- * @profile: CSR Roam profile
  * @if_addr: IP address
  *
  * This API is used to send HLP IE info along with IP address
@@ -2909,28 +2768,12 @@ void sme_clear_sae_single_pmk_info(struct wlan_objmgr_psoc *psoc,
  * Return: None
  */
 void sme_send_hlp_ie_info(mac_handle_t mac_handle, uint8_t vdev_id,
-			  struct csr_roam_profile *profile, uint32_t if_addr);
-
-/**
- * sme_update_session_assoc_ie() - Updates the assoc IEs to csr_roam_session
- * @mac_handle: Opaque handle to the global MAC context
- * @vdev_id: vdev id
- * @src_profile: Pointer to Roam profile in HDD
- *
- * This API is used to copy the assoc IE sent from user space to
- * csr_roam_session
- *
- * Return: None
- */
-void sme_update_session_assoc_ie(mac_handle_t mac_handle,
-				 uint8_t vdev_id,
-				 struct csr_roam_profile *src_profile);
+			  uint32_t if_addr);
 
 /**
  * sme_send_rso_connect_params() - Updates the assoc IEs to csr_roam_session
  * @mac_handle: Opaque handle to the global MAC context
  * @vdev_id: vdev id
- * @src_profile: CSR Roam profile
  *
  * When the user space updates the assoc IEs or FILS auth type or FILS ERP info,
  * host driver needs to send these updated parameters to firmware via
@@ -2939,43 +2782,7 @@ void sme_update_session_assoc_ie(mac_handle_t mac_handle,
  * Return: None
  */
 QDF_STATUS sme_send_rso_connect_params(mac_handle_t mac_handle,
-				       uint8_t vdev_id,
-				       struct csr_roam_profile *src_profile);
-
-#if defined(WLAN_FEATURE_FILS_SK)
-/**
- * sme_update_fils_config - Update FILS config to CSR roam session
- * @mac_handle: Opaque handle to the global MAC context
- * @vdev_id: vdev id
- * @src_profile: Source roam profile having latest FILS config
- *
- * API to update FILS config to roam csr session.
- *
- * Return: QDF_STATUS
- */
-QDF_STATUS sme_update_fils_config(mac_handle_t mac_handle, uint8_t vdev_id,
-				  struct csr_roam_profile *src_profile);
-
-/**
- * sme_free_join_rsp_fils_params - free fils params
- * @roam_info: roam info
- *
- * Return: void
- */
-void sme_free_join_rsp_fils_params(struct csr_roam_info *roam_info);
-#else
-static inline
-QDF_STATUS sme_update_fils_config(mac_handle_t mac_handle, uint8_t vdev_id,
-				  struct csr_roam_profile *src_profile)
-{
-	return QDF_STATUS_SUCCESS;
-}
-
-static inline
-void sme_free_join_rsp_fils_params(struct csr_roam_info *roam_info)
-{}
-
-#endif
+				       uint8_t vdev_id);
 
 #ifdef WLAN_FEATURE_11AX_BSS_COLOR
 /**
@@ -3057,6 +2864,32 @@ uint32_t sme_unpack_rsn_ie(mac_handle_t mac_handle, uint8_t *buf,
 			   bool append_ie);
 
 /**
+ * sme_unpack_assoc_rsp() - wrapper to unpack assoc response
+ * @mac_handle: handle returned by mac_open
+ * @frame: assoc response buffer pointer
+ * @frame_len: assoc response buffer length
+ * @assoc_resp: output assoc response structure
+ *
+ * Return: parse status
+ */
+QDF_STATUS sme_unpack_assoc_rsp(mac_handle_t mac_handle,
+				uint8_t *frame, uint32_t frame_len,
+				struct sDot11fAssocResponse *assoc_resp);
+
+/**
+ * sme_get_hs20vendor_ie() - wrapper to unpack beacon/probe response
+ * @mac_handle: handle returned by mac_open
+ * @frame: beacon/probe response response buffer pointer
+ * @frame_len: beacone probe/ response buffer length
+ * @hs20vendor_ie: output hs20vendor_ie structure
+ *
+ * Return: None
+ */
+void sme_get_hs20vendor_ie(mac_handle_t mac_handle, uint8_t *frame,
+			   uint32_t frame_len,
+			   tDot11fIEhs20vendor_ie *hs20vendor_ie);
+
+/**
  * sme_add_qcn_ie: Adds QCN IE data to IE buffer
  * @mac_handle: handle returned by mac_open
  * @ie_data: ie buffer pointer
@@ -3092,19 +2925,6 @@ enum phy_ch_width sme_get_oper_ch_width(struct wlan_objmgr_vdev *vdev);
  */
 int sme_get_sec20chan_freq_mhz(struct wlan_objmgr_vdev *vdev,
 						uint16_t *sec20chan_freq);
-
-/**
- * sme_enable_roaming_on_connected_sta() - Enable roaming on an connected sta
- * @mac_handle: handle returned by mac_open
- * @vdev_id: vdev id
- *
- * The function check if any connected STA is present on which roaming is not
- * enabled and if present enabled roaming on that STA.
- *
- * Return: none
- */
-void sme_enable_roaming_on_connected_sta(mac_handle_t mac_handle,
-					 uint8_t vdev_id);
 
 /**
  * sme_send_mgmt_tx() - Sends mgmt frame from CSR to LIM
@@ -3213,6 +3033,42 @@ int sme_set_auto_rate_ldpc(mac_handle_t mac_handle, uint8_t session_id,
  */
 int sme_set_auto_rate_he_ltf(mac_handle_t mac_handle, uint8_t session_id,
 			     uint8_t cfg_val);
+
+#ifdef WLAN_FEATURE_11BE
+/**
+ * sme_update_tgt_eht_cap() - sets the EHT caps to pmac
+ * @mac_handle: Pointer to MAC handle
+ * @cfg: Pointer to WMA target CFG
+ * @eht_cap_ini: Pointer to EHT CAP configured by INI
+ *
+ * Return: None
+ */
+void sme_update_tgt_eht_cap(mac_handle_t mac_handle,
+			    struct wma_tgt_cfg *cfg,
+			    tDot11fIEeht_cap *eht_cap_ini);
+
+/**
+ * sme_update_eht_cap_nss() - sets the nss based on user request
+ * @mac_handle: Opaque handle to the global MAC context
+ * @session_id: SME session id
+ * @nss: no.of spatial streams value
+ *
+ * Return: None
+ */
+void sme_update_eht_cap_nss(mac_handle_t mac_handle, uint8_t session_id,
+			    uint8_t nss);
+
+#else
+static inline void sme_update_tgt_eht_cap(mac_handle_t mac_handle,
+					  struct wma_tgt_cfg *cfg,
+					  tDot11fIEeht_cap *eht_cap_ini)
+{}
+
+static inline void sme_update_eht_cap_nss(mac_handle_t mac_handle,
+					  uint8_t session_id,
+					  uint8_t nss)
+{}
+#endif
 
 #ifdef WLAN_FEATURE_11AX
 /**
@@ -3449,6 +3305,18 @@ int sme_update_he_ldpc_supp(mac_handle_t mac_handle, uint8_t session_id,
 			    uint16_t he_ldpc);
 
 /**
+ * sme_update_he_capabilities() - Update the session HE capability
+ * @mac_handle: Opaque handle to the global MAC context
+ * @session_id: SME session id
+ * @cfg_val: set value
+ * @cfg_id: HE cap cfg id
+ *
+ * Return: 0 on success else err code
+ */
+int sme_update_he_capabilities(mac_handle_t mac_handle, uint8_t session_id,
+			       uint8_t cfg_val, uint8_t cfg_id);
+
+/**
  * sme_update_he_twt_req_support() - Sets twt request capability
  * @mac_handle: Opaque handle to the global MAC context
  * @session_id: SME session id
@@ -3458,6 +3326,17 @@ int sme_update_he_ldpc_supp(mac_handle_t mac_handle, uint8_t session_id,
  */
 int sme_update_he_twt_req_support(mac_handle_t mac_handle, uint8_t session_id,
 				  uint8_t cfg_val);
+
+/**
+ * sme_update_he_full_ul_mumimo() - Configure full bandwidth of ul mu-mimo
+ * @mac_handle: Opaque handle to the global MAC context
+ * @session_id: SME session id
+ * @value: set value
+ *
+ * Return: 0 on success else err code
+ */
+int sme_update_he_full_ul_mumimo(mac_handle_t mac_handle, uint8_t session_id,
+				 uint8_t cfg_val);
 #else
 static inline void sme_update_tgt_he_cap(mac_handle_t mac_handle,
 					 struct wma_tgt_cfg *cfg,
@@ -3589,6 +3468,21 @@ static inline int sme_update_he_twt_req_support(mac_handle_t mac_handle,
 	return 0;
 }
 
+static inline int sme_update_he_capabilities(mac_handle_t mac_handle,
+					      uint8_t session_id,
+					      uint8_t cfg_val,
+					      uint8_t cfg_id)
+{
+	return 0;
+}
+
+static inline int sme_update_he_full_ul_mumimo(mac_handle_t mac_handle,
+					       uint8_t session_id,
+					       uint8_t cfg_val)
+{
+	return 0;
+}
+
 #endif
 
 /**
@@ -3631,6 +3525,7 @@ bool sme_is_sta_key_exchange_in_progress(mac_handle_t mac_handle,
 bool sme_validate_channel_list(mac_handle_t mac_handle,
 			       uint32_t *chan_freq_list,
 			       uint8_t num_channels);
+
 /**
  * sme_set_amsdu() - set amsdu enable/disable based on user cfg
  * @mac_handle: Opaque handle to the global MAC context
@@ -3649,15 +3544,92 @@ void sme_set_amsdu(mac_handle_t mac_handle, bool enable);
  */
 void sme_set_pmf_wep_cfg(mac_handle_t mac_handle, uint8_t pmf_wep_cfg);
 
+/**
+ * sme_set_cfg_disable_tx() - set user cfg to disable data and mgmt tx
+ * @mac_handle: Opaque handle to the global MAC context
+ * @vdev_id: vdev id
+ * @val: configuration value
+ *
+ * Return: None
+ */
+void sme_set_cfg_disable_tx(mac_handle_t mac_handle, uint8_t vdev_id,
+			    uint8_t val);
+/**
+ * sme_set_bss_max_idle_period() - Configure the bss max idle period
+ * @mac_handle: Opaque handle to the global MAC context
+ * @cfg_val: bss max idle period
+ *
+ * Return: None
+ */
+void sme_set_bss_max_idle_period(mac_handle_t mac_handle, uint16_t cfg_val);
+
 #ifdef WLAN_FEATURE_11AX
 void sme_set_he_testbed_def(mac_handle_t mac_handle, uint8_t vdev_id);
 void sme_reset_he_caps(mac_handle_t mac_handle, uint8_t vdev_id);
+/**
+ * sme_set_ru_242_tone_tx_cfg() - set ru 242 tone tx user cfg
+ * @mac_handle: Opaque handle to the global MAC context
+ * @cfg_val: enable or disable
+ *
+ * Return: None
+ */
+void sme_set_ru_242_tone_tx_cfg(mac_handle_t mac_handle, uint8_t cfg_val);
+
+/**
+ * sme_check_enable_ru_242_tx() - check usr cfg and enable ru 242 tone tx
+ * @mac_handle: Opaque handle to the global MAC context
+ * @vdev_id: VDEV id
+ *
+ * Return: None
+ */
+void sme_check_enable_ru_242_tx(mac_handle_t mac_handle, uint8_t vdev_id);
+
 #else
 static inline void sme_set_he_testbed_def(mac_handle_t mac_handle,
 					  uint8_t vdev_id)
 {
 }
 static inline void sme_reset_he_caps(mac_handle_t mac_handle, uint8_t vdev_id)
+{
+}
+
+static inline void sme_check_enable_ru_242_tx(mac_handle_t mac_handle,
+					      uint8_t vdev_id)
+{
+}
+
+static inline void sme_set_ru_242_tone_tx_cfg(mac_handle_t mac_handle,
+					      uint8_t cfg_val)
+{
+}
+#endif
+
+#ifdef WLAN_FEATURE_11BE
+
+/**
+ * sme_set_eht_testbed_def() - set eht testbed default
+ * @mac_handle: Opaque handle to the global MAC context
+ * @vdev_id: VDEV id
+ *
+ * Return: None
+ */
+void sme_set_eht_testbed_def(mac_handle_t mac_handle, uint8_t vdev_id);
+
+/**
+ * sme_reset_eht_caps() - reset eht capabilities
+ * @mac_handle: Opaque handle to the global MAC context
+ * @vdev_id: VDEV id
+ *
+ * Return: None
+ */
+void sme_reset_eht_caps(mac_handle_t mac_handle, uint8_t vdev_id);
+#else
+static inline void sme_set_eht_testbed_def(mac_handle_t mac_handle,
+					   uint8_t vdev_id)
+{
+}
+
+static inline void sme_reset_eht_caps(mac_handle_t mac_handle, uint8_t vdev_id)
 {
 }
 #endif
@@ -3813,13 +3785,14 @@ sme_resume_dialog_cmd(mac_handle_t mac_handle,
 
 /**
  * sme_twt_update_beacon_template() - API to send beacon update to fw
- * @mac: Global MAC pointer
+ * @mac_handle: MAC handle
  *
  * Return: None
  */
 void sme_twt_update_beacon_template(mac_handle_t mac_handle);
 
 #else
+
 static inline
 QDF_STATUS sme_test_config_twt_setup(struct wmi_twt_add_dialog_param *params)
 {
@@ -3832,13 +3805,14 @@ sme_test_config_twt_terminate(struct wmi_twt_del_dialog_param *params)
 	return QDF_STATUS_E_FAILURE;
 }
 
-static inline void
-sme_twt_update_beacon_template(mac_handle_t mac_handle)
+static inline
+void sme_twt_update_beacon_template(mac_handle_t mac_handle)
 {
 }
 
 #endif
 
+#ifdef WLAN_UNIT_TEST
 /**
  * sme_get_sta_cxn_info() - This function populates all the connection
  *			    information which is formed by DUT-STA to AP
@@ -3863,6 +3837,7 @@ sme_get_sta_cxn_info(mac_handle_t mac_handle, uint32_t session_id,
 		      "\nDiag macro disable, ask vendor to enable");
 	return QDF_STATUS_SUCCESS;
 }
+#endif
 #endif
 
 #if defined(FEATURE_WLAN_ESE) && defined(WLAN_FEATURE_ROAM_OFFLOAD)
@@ -4206,12 +4181,6 @@ QDF_STATUS sme_register_bcn_recv_pause_ind_cb(mac_handle_t mac_handle,
 QDF_STATUS sme_set_disconnect_ies(mac_handle_t mac_handle, uint8_t vdev_id,
 				  uint8_t *ie_data, uint16_t ie_len);
 
-void sme_chan_to_freq_list(
-			struct wlan_objmgr_pdev *pdev,
-			uint32_t *freq_list,
-			const uint8_t *chan_list,
-			uint32_t chan_list_len);
-
 /**
  * sme_set_vdev_sw_retry() - set sw retry threshold per vdev
  * @vdev_id: vdev id
@@ -4411,4 +4380,63 @@ sme_set_beacon_latency_event_cb(mac_handle_t mac_handle,
 }
 #endif
 
+/**
+ * sme_fill_enc_type() - converts crypto cipher set to csr specific cipher type
+ * @cipher_type: output csr cipher type
+ * @ cipherset:input cipher set
+ *
+ * Return: None
+ */
+
+void sme_fill_enc_type(eCsrEncryptionType *cipher_type,
+		       uint32_t cipherset);
+
+/**
+ * sme_fill_auth_type() - converts auth mode set to csr specific auth type
+ * @auth_type: output csr auth type
+ * @ authmodeset: authmode set
+ * @akm: akm
+ * @ucastcipherset: ucastcipherset
+ *
+ * Return: None
+ */
+void sme_fill_auth_type(enum csr_akm_type *auth_type,
+			uint32_t authmodeset, uint32_t akm,
+			uint32_t ucastcipherset);
+
+/**
+ * sme_phy_mode_to_dot11mode() - converts phy mode to dot11 mode
+ * @phy_mode: wlan phy mode
+ *
+ * Return: csr_cfgdot11mode
+ */
+enum csr_cfgdot11mode sme_phy_mode_to_dot11mode(enum wlan_phymode phy_mode);
+
+#ifdef WLAN_FEATURE_11BE
+/**
+ * sme_get_eht_ch_width() - SME API to get max supported EHT chan width by FW
+ *
+ * Return: Max EHT channel width supported by FW (eg. 80, 160, 320)
+ */
+uint32_t sme_get_eht_ch_width(void);
+#else /* !WLAN_FEATURE_11BE */
+static inline uint32_t sme_get_eht_ch_width(void)
+{
+	return 0;
+}
+#endif /* WLAN_FEATURE_11BE */
+
+/**
+ * sme_switch_channel() - Request to switch channel
+ * @mac_handle: Opaque handle to the MAC context
+ * @bssid: current connected bssid
+ * @chan_freq: new channel frequency
+ * @chan_width: new channel width
+ *
+ * Return: QDF_STATUS
+ */
+QDF_STATUS sme_switch_channel(mac_handle_t mac_handle,
+			      struct qdf_mac_addr *bssid,
+			      qdf_freq_t chan_freq,
+			      enum phy_ch_width chan_width);
 #endif /* #if !defined( __SME_API_H ) */

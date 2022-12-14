@@ -24,8 +24,12 @@
 #include <linux/pm.h>
 #include <osapi_linux.h>
 
-#if IS_ENABLED(CONFIG_CNSS_UTILS)
+#ifdef CNSS_UTILS
+#ifdef CONFIG_CNSS_OUT_OF_TREE
+#include "cnss_utils.h"
+#else
 #include <net/cnss_utils.h>
+#endif
 #endif
 
 #define PLD_IMAGE_FILE               "athwlan.bin"
@@ -39,8 +43,12 @@
 
 #define TOTAL_DUMP_SIZE         0x00200000
 
-#if IS_ENABLED(CONFIG_WCNSS_MEM_PRE_ALLOC)
+#ifdef CNSS_MEM_PRE_ALLOC
+#ifdef CONFIG_CNSS_OUT_OF_TREE
+#include "cnss_prealloc.h"
+#else
 #include <net/cnss_prealloc.h>
+#endif
 #endif
 
 /**
@@ -144,19 +152,36 @@ struct pld_platform_cap {
  * @PLD_FW_DOWN: firmware is down
  * @PLD_FW_CRASHED: firmware has crashed
  * @PLD_FW_RECOVERY_START: firmware is starting recovery
+ * @PLD_FW_HANG_EVENT: firmware update hang event
+ * @PLD_BUS_EVENT: update bus/link event
  */
 enum pld_uevent {
 	PLD_FW_DOWN,
 	PLD_FW_CRASHED,
 	PLD_FW_RECOVERY_START,
 	PLD_FW_HANG_EVENT,
+	PLD_BUS_EVENT,
 	PLD_SMMU_FAULT,
+};
+
+/**
+ * enum pld_bus_event - PLD bus event types
+ * @PLD_BUS_EVENT_PCIE_LINK_DOWN: PCIe link is down
+ * @PLD_BUS_EVENT_INVALID: invalid event type
+ */
+
+enum pld_bus_event {
+	PLD_BUS_EVENT_PCIE_LINK_DOWN = 0,
+
+	PLD_BUS_EVENT_INVALID = 0xFFFF,
 };
 
 /**
  * struct pld_uevent_data - uevent status received from platform driver
  * @uevent: uevent type
  * @fw_down: FW down info
+ * @hang_data: FW hang data
+ * @bus_event: bus related data
  */
 struct pld_uevent_data {
 	enum pld_uevent uevent;
@@ -168,6 +193,10 @@ struct pld_uevent_data {
 			void *hang_event_data;
 			u16 hang_event_data_len;
 		} hang_data;
+		struct {
+			enum pld_bus_event etype;
+			void *event_data;
+		} bus_data;
 	};
 };
 
@@ -309,7 +338,20 @@ struct pld_device_version {
 	u32 minor_version;
 };
 
+/**
+ * struct pld_dev_mem_info - WLAN device memory info
+ * @start: start address of the memory block
+ * @size: size of the memory block
+ *
+ * pld_dev_mem_info is used to store WLAN device memory info
+ */
+struct pld_dev_mem_info {
+	u64 start;
+	u64 size;
+};
+
 #define PLD_MAX_TIMESTAMP_LEN 32
+#define PLD_MAX_DEV_MEM_NUM 4
 
 /**
  * struct pld_soc_info - SOC information
@@ -322,6 +364,7 @@ struct pld_device_version {
  * @fw_version: FW version
  * @fw_build_timestamp: FW build timestamp
  * @device_version: WLAN device version info
+ * @dev_mem_info: WLAN device memory info
  *
  * pld_soc_info is used to store WLAN SOC information.
  */
@@ -335,6 +378,7 @@ struct pld_soc_info {
 	u32 fw_version;
 	char fw_build_timestamp[PLD_MAX_TIMESTAMP_LEN + 1];
 	struct pld_device_version device_version;
+	struct pld_dev_mem_info dev_mem_info[PLD_MAX_DEV_MEM_NUM];
 };
 
 /**
@@ -933,7 +977,7 @@ void pld_thermal_unregister(struct device *dev, int mon_id);
 int pld_get_thermal_state(struct device *dev, unsigned long *thermal_state,
 			  int mon_id);
 
-#if IS_ENABLED(CONFIG_WCNSS_MEM_PRE_ALLOC) && defined(FEATURE_SKB_PRE_ALLOC)
+#if defined(CNSS_MEM_PRE_ALLOC) && defined(FEATURE_SKB_PRE_ALLOC)
 
 /**
  * pld_nbuf_pre_alloc() - get allocated nbuf from platform driver.

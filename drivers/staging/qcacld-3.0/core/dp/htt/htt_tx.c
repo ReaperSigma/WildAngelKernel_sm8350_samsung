@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2014-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011, 2014-2021 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1356,7 +1356,8 @@ int htt_tx_ipa_uc_attach(struct htt_pdev_t *pdev,
 	}
 
 	/* Allocate TX COMP Ring */
-	tx_comp_ring_size = uc_tx_buf_cnt * sizeof(target_paddr_t);
+	tx_comp_ring_size = qdf_get_pwr2(uc_tx_buf_cnt)
+			    * sizeof(target_paddr_t);
 	pdev->ipa_uc_tx_rsc.tx_comp_ring =
 		qdf_mem_shared_mem_alloc(pdev->osdev,
 					 tx_comp_ring_size);
@@ -1597,11 +1598,8 @@ void htt_fill_wisa_ext_header(qdf_nbuf_t msdu,
 	void *qdf_ctx = cds_get_context(QDF_MODULE_ID_QDF_DEVICE);
 	QDF_STATUS status;
 
-	if (!qdf_ctx) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-			"%s: qdf_ctx is NULL", __func__);
+	if (!qdf_ctx)
 		return;
-	}
 
 	local_desc_ext->valid_mcs_mask = 1;
 	if (WISA_MODE_EXT_HEADER_6MBPS == type)
@@ -1697,11 +1695,9 @@ htt_tx_desc_init(htt_pdev_handle pdev,
 	qdf_dma_dir_t dir;
 	QDF_STATUS status;
 
-	if (qdf_unlikely(!qdf_ctx)) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-			"%s: qdf_ctx is NULL", __func__);
+	if (qdf_unlikely(!qdf_ctx))
 		return QDF_STATUS_E_FAILURE;
-	}
+
 	if (qdf_unlikely(!msdu_info)) {
 		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 			"%s: bad arg: msdu_info is NULL", __func__);

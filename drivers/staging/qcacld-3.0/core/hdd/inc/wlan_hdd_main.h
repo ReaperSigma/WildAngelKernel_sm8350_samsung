@@ -117,6 +117,9 @@
 #endif
 
 #include "wlan_hdd_sta_info.h"
+#include "wlan_hdd_bus_bandwidth.h"
+#include <wlan_hdd_cm_api.h>
+#include "wlan_hdd_mlo.h"
 
 /*
  * Preprocessor definitions and constants
@@ -155,6 +158,12 @@ struct hdd_apf_context {
 #else
 #define NUM_TX_QUEUES 4
 #endif
+
+/*
+ * Number of DPTRACE records to dump when a cfg80211 disconnect with reason
+ * WLAN_REASON_DEAUTH_LEAVING DEAUTH is received from user-space.
+ */
+#define WLAN_DEAUTH_DPTRACE_DUMP_COUNT 100
 
 /* HDD_IS_RATE_LIMIT_REQ: Macro helper to implement rate limiting
  * @flag: The flag to determine if limiting is required or not
@@ -237,6 +246,7 @@ static inline bool in_compat_syscall(void) { return is_compat_task(); }
  * @DEVICE_IFACE_OPENED: Adapter has been "opened" via the kernel
  * @SOFTAP_INIT_DONE: Software Access Point (SAP) is initialized
  * @VENDOR_ACS_RESPONSE_PENDING: Waiting for event for vendor acs
+ * @WDEV_ONLY_REGISTERED: Only WDEV is registered
  */
 enum hdd_adapter_flags {
 	NET_DEVICE_REGISTERED,
@@ -247,6 +257,7 @@ enum hdd_adapter_flags {
 	DEVICE_IFACE_OPENED,
 	SOFTAP_INIT_DONE,
 	VENDOR_ACS_RESPONSE_PENDING,
+	WDEV_ONLY_REGISTERED,
 };
 
 /**
@@ -259,8 +270,6 @@ enum hdd_nb_cmd_id {
 	INTERFACE_DOWN
 };
 
-#define WLAN_WAIT_DISCONNECT_ALREADY_IN_PROGRESS  1000
-#define WLAN_WAIT_TIME_STOP_ROAM  4000
 #define WLAN_WAIT_TIME_STATS       800
 #define WLAN_WAIT_TIME_LINK_STATUS 800
 
@@ -435,6 +444,8 @@ enum hdd_nb_cmd_id {
 
 #define HDD_NOISE_FLOOR_DBM (-96)
 
+#define INTF_MACADDR_MASK       0x7
+
 /**
  * enum hdd_auth_key_mgmt - auth key mgmt protocols
  * @HDD_AUTH_KEY_MGMT_802_1X: 802.1x
@@ -514,7 +525,7 @@ typedef enum {
 	NET_DEV_HOLD_COUNTRY_CHANGE_UPDATE_SAP = 56,
 	NET_DEV_HOLD_CACHE_STATION_STATS_CB = 57,
 	NET_DEV_HOLD_DISPLAY_TXRX_STATS = 58,
-	NET_DEV_HOLD_GET_MODE_SPECIFIC_IF_COUNT = 59,
+	NET_DEV_HOLD_BUS_BW_MGR = 59,
 	NET_DEV_HOLD_START_PRE_CAC_TRANS = 60,
 	NET_DEV_HOLD_IS_ANY_STA_CONNECTED = 61,
 
@@ -589,7 +600,6 @@ struct hdd_tx_rx_stats {
 	u64 jiffies_last_txtimeout;
 };
 
-#ifdef WLAN_FEATURE_11W
 /**
  * struct hdd_pmf_stats - Protected Management Frame statistics
  * @num_unprot_deauth_rx: Number of unprotected deauth frames received
@@ -599,7 +609,6 @@ struct hdd_pmf_stats {
 	uint8_t num_unprot_deauth_rx;
 	uint8_t num_unprot_disassoc_rx;
 };
-#endif
 
 /**
  * struct hdd_arp_stats_s - arp debug stats count
@@ -778,9 +787,7 @@ struct hdd_stats {
 	struct hdd_tcp_stats_s hdd_tcp_stats;
 	struct hdd_icmpv4_stats_s hdd_icmpv4_stats;
 	struct hdd_peer_stats peer_stats;
-#ifdef WLAN_FEATURE_11W
 	struct hdd_pmf_stats hdd_pmf_stats;
-#endif
 	struct hdd_eapol_stats_s hdd_eapol_stats;
 	struct hdd_dhcp_stats_s hdd_dhcp_stats;
 	struct pmf_bcn_protect_stats bcn_protect_stats;
@@ -867,33 +874,18 @@ struct hdd_mon_set_ch_info {
 /**
  * struct hdd_station_ctx -- STA-specific information
  * @roam_profile: current roaming profile
- * @security_ie: WPA or RSN IE used by the @roam_profile
- * @assoc_additional_ie: association additional IE used by the @roam_profile
- * @wpa_versions: bitmap of supported WPA versions
- * @auth_key_mgmt: bitmap of supported auth key mgmt protocols
- * @requested_bssid: Specific BSSID to which to connect
  * @conn_info: current connection information
- * @roam_info: current roaming information
- * @ft_carrier_on: is carrier on
- * @hdd_reassoc_scenario: is station in the middle of reassociation?
- * @sta_debug_state: STA context debug variable
- * @broadcast_sta_id: STA ID assigned for broadcast frames
+ * @cache_conn_info: prev connection info
+ * @reg_phymode: reg phymode
  * @ch_info: monitor mode channel information
  * @ap_supports_immediate_power_save: Does the current AP allow our STA
  *    to immediately go into power save?
  */
 struct hdd_station_ctx {
+	uint32_t reg_phymode;
 	struct csr_roam_profile roam_profile;
-	uint8_t security_ie[WLAN_MAX_IE_LEN];
-	tSirAddie assoc_additional_ie;
-	enum nl80211_wpa_versions wpa_versions;
-	enum hdd_auth_key_mgmt auth_key_mgmt;
-	struct qdf_mac_addr requested_bssid;
 	struct hdd_connection_info conn_info;
 	struct hdd_connection_info cache_conn_info;
-	bool ft_carrier_on;
-	bool hdd_reassoc_scenario;
-	int sta_debug_state;
 	struct hdd_mon_set_ch_info ch_info;
 	bool ap_supports_immediate_power_save;
 };
@@ -1062,6 +1054,7 @@ struct hdd_fw_txrx_stats {
  * @vendor_acs_timer_initialized: Is @vendor_acs_timer initialized?
  * @bss_stop_reason: Reason why the BSS was stopped
  * @acs_in_progress: In progress acs flag for an adapter
+ * @client_count: client count per dot11_mode
  */
 struct hdd_ap_ctx {
 	struct hdd_hostapd_state hostapd_state;
@@ -1071,8 +1064,6 @@ struct hdd_ap_ctx {
 	uint8_t broadcast_sta_id;
 	uint8_t privacy;
 	eCsrEncryptionType encryption_type;
-	tCsrRoamSetKey group_key;
-	tCsrRoamSetKey wep_key[CSR_MAX_NUM_KEY];
 	uint8_t wep_def_key_idx;
 	struct sap_context *sap_context;
 	struct sap_config sap_config;
@@ -1082,6 +1073,7 @@ struct hdd_ap_ctx {
 	bool vendor_acs_timer_initialized;
 	enum bss_stop_reason bss_stop_reason;
 	qdf_atomic_t acs_in_progress;
+	uint16_t client_count[QCA_WLAN_802_11_MODE_INVALID];
 };
 
 /**
@@ -1151,6 +1143,7 @@ struct hdd_chan_change_params {
  * @user: user context to prevent/allow runtime pm
  * @is_user_wakelock_acquired: boolean to check if user wakelock status
  * @monitor_mode: monitor mode context to prevent/allow runtime pm
+ * @wow_unit_test: wow unit test mode context to prevent/allow runtime pm
  *
  * Runtime PM control for underlying activities
  */
@@ -1160,6 +1153,7 @@ struct hdd_runtime_pm_context {
 	qdf_runtime_lock_t user;
 	bool is_user_wakelock_acquired;
 	qdf_runtime_lock_t monitor_mode;
+	qdf_runtime_lock_t wow_unit_test;
 };
 
 /*
@@ -1267,14 +1261,14 @@ struct hdd_adapter {
 
 	/** Current MAC Address for the adapter  */
 	struct qdf_mac_addr mac_addr;
+	/* MLD address for adapter */
+	struct qdf_mac_addr mld_addr;
 
 #ifdef WLAN_NUD_TRACKING
 	struct hdd_nud_tracking_info nud_tracking;
 #endif
 
 	struct hdd_mic_work mic_work;
-	bool disconnection_in_progress;
-	qdf_mutex_t disconnection_status_lock;
 	unsigned long event_flags;
 
 	/**Device TX/RX statistics*/
@@ -1308,9 +1302,6 @@ struct hdd_adapter {
 	/* TODO: move these to sta ctx. These may not be used in AP */
 	/** completion variable for disconnect callback */
 	struct completion disconnect_comp_var;
-
-	struct completion roaming_comp_var;
-
 	/* completion variable for Linkup Event */
 	struct completion linkup_event_var;
 
@@ -1386,6 +1377,10 @@ struct hdd_adapter {
 	qdf_work_t gpio_tsf_sync_work;
 #endif
 #endif /* WLAN_FEATURE_TSF_PLUS */
+#ifdef WLAN_FEATURE_TSF_UPLINK_DELAY
+	/* to indicate if TSF auto report is enabled or not */
+	qdf_atomic_t tsf_auto_report;
+#endif /* WLAN_FEATURE_TSF_UPLINK_DELAY */
 #endif
 
 	struct hdd_multicast_addr_list mc_addr_list;
@@ -1533,15 +1528,18 @@ struct hdd_adapter {
 
 	qdf_work_t netdev_features_update_work;
 	enum hdd_work_status netdev_features_update_work_status;
+	qdf_atomic_t net_dev_hold_ref_count[NET_DEV_HOLD_ID_MAX];
 	/* Flag to indicate whether it is a pre cac adapter or not */
 	bool is_pre_cac_adapter;
+	bool delete_in_progress;
 #ifdef WLAN_FEATURE_BIG_DATA_STATS
 	struct big_data_stats_event big_data_stats;
 #endif
-	bool delete_in_progress;
-	qdf_atomic_t net_dev_hold_ref_count[NET_DEV_HOLD_ID_MAX];
 #ifdef WLAN_FEATURE_PKT_CAPTURE
 	struct hdd_adapter *mon_adapter;
+#endif
+#ifdef WLAN_FEATURE_11BE_MLO
+	struct hdd_mlo_adapter_info mlo_adapter_info;
 #endif
 };
 
@@ -1740,7 +1738,7 @@ enum RX_OFFLOAD {
 /**
  * struct hdd_cache_channel_info - Structure of the channel info
  * which needs to be cached
- * @channel_num: channel number
+ * @freq: frequency
  * @reg_status: Current regulatory status of the channel
  * Enable
  * Disable
@@ -1749,7 +1747,7 @@ enum RX_OFFLOAD {
  * @wiphy_status: Current wiphy status
  */
 struct hdd_cache_channel_info {
-	uint32_t channel_num;
+	qdf_freq_t freq;
 	enum channel_state reg_status;
 	uint32_t wiphy_status;
 };
@@ -1842,6 +1840,18 @@ struct hdd_adapter_ops_history {
 };
 
 /**
+ * struct hdd_dual_sta_policy - Concurrent STA policy configuration
+ * @dual_sta_policy: Possible values are defined in enum
+ * qca_wlan_concurrent_sta_policy_config
+ * @primary_vdev_id: specified iface is the primary STA iface, say 0 means
+ * vdev 0 is acting as primary interface
+ */
+struct hdd_dual_sta_policy {
+	uint8_t dual_sta_policy;
+	uint8_t primary_vdev_id;
+};
+
+/**
  * struct hdd_context - hdd shared driver and psoc/device context
  * @psoc: object manager psoc context
  * @pdev: object manager pdev context
@@ -1861,10 +1871,13 @@ struct hdd_adapter_ops_history {
  * @qos_cpu_mask: voted cpu core mask
  * @adapter_ops_wq: High priority workqueue for handling adapter operations
  * @multi_client_thermal_mitigation: Multi client thermal mitigation by fw
+ * @is_therm_cmd_supp: get temperature command enable or disable
  * @disconnect_for_sta_mon_conc: disconnect if sta monitor intf concurrency
+ * @bbm_ctx: bus bandwidth manager context
  * @is_dual_mac_cfg_updated: indicate whether dual mac cfg has been updated
  * @twt_en_dis_work: work to send twt enable/disable cmd on MCC/SCC concurrency
  * @dump_in_progress: Stores value of dump in progress
+ * @hdd_dual_sta_policy: Concurrent STA policy configuration
  */
 struct hdd_context {
 	struct wlan_objmgr_psoc *psoc;
@@ -1873,7 +1886,7 @@ struct hdd_context {
 	struct wiphy *wiphy;
 	qdf_spinlock_t hdd_adapter_lock;
 	qdf_list_t hdd_adapters; /* List of adapters */
-
+	bool is_therm_cmd_supp;
 	/** Pointer for firmware image data */
 	const struct firmware *fw;
 
@@ -1980,7 +1993,6 @@ struct hdd_context {
 #endif /* FEATURE_WLAN_CH_AVOID */
 
 	uint8_t max_intf_count;
-	uint8_t current_intf_count;
 #ifdef WLAN_FEATURE_LPSS
 	uint8_t lpss_support;
 #endif
@@ -2208,6 +2220,9 @@ struct hdd_context {
 	bool multi_client_thermal_mitigation;
 #endif
 	bool disconnect_for_sta_mon_conc;
+#ifdef FEATURE_BUS_BANDWIDTH_MGR
+	struct bbm_context *bbm_ctx;
+#endif
 	bool is_dual_mac_cfg_updated;
 	bool is_regulatory_update_in_progress;
 	qdf_event_t regulatory_update_event;
@@ -2216,7 +2231,13 @@ struct hdd_context {
 #ifdef WLAN_SUPPORT_TWT
 	qdf_work_t twt_en_dis_work;
 #endif
+	bool is_wifi3_0_target;
 	bool dump_in_progress;
+	uint64_t bw_vote_time;
+	struct hdd_dual_sta_policy dual_sta_policy;
+#ifdef WLAN_FEATURE_11BE_MLO
+	struct hdd_mld_mac_info mld_mac_info;
+#endif
 #ifdef THERMAL_STATS_SUPPORT
 	bool is_therm_stats_in_progress;
 #endif
@@ -2288,6 +2309,25 @@ struct hdd_channel_info {
 	u_int8_t max_antenna_gain;
 	u_int8_t vht_center_freq_seg0;
 	u_int8_t vht_center_freq_seg1;
+};
+
+/**
+ * struct hdd_chwidth_info - channel width related info
+ * @sir_chwidth_valid: If nl_chan_width is valid in Sir
+ * @sir_chwidth: enum eSirMacHTChannelWidth
+ * @ch_bw: enum hw_mode_bandwidth
+ * @ch_bw_str: ch_bw in string format
+ * @phy_chwidth: enum phy_ch_width
+ * @bonding mode: WNI_CFG_CHANNEL_BONDING_MODE_DISABLE or
+ *		  WNI_CFG_CHANNEL_BONDING_MODE_ENABLE
+ */
+struct hdd_chwidth_info {
+	bool sir_chwidth_valid;
+	enum eSirMacHTChannelWidth sir_chwidth;
+	enum hw_mode_bandwidth ch_bw;
+	char *ch_bw_str;
+	enum phy_ch_width phy_chwidth;
+	int bonding_mode;
 };
 
 /*
@@ -2578,25 +2618,26 @@ void hdd_adapter_dev_put_debug(struct hdd_adapter *adapter,
 							next_adapter, dbgid))
 
 /**
- * wlan_hdd_get_adapter_by_vdev_id_from_objmgr() - Fetch adapter from objmgr
- * using vdev_id.
- * @hdd_ctx: the global HDD context
- * @adapter: an hdd_adapter double pointer to store the address of the adapter
+ * wlan_hdd_get_adapter_from_objmgr() - Fetch adapter from objmgr
  * @vdev: the vdev whose corresponding adapter has to be fetched
  *
- * Return: QDF_STATUS
+ * Return: the address of the adapter
  */
-QDF_STATUS
-wlan_hdd_get_adapter_by_vdev_id_from_objmgr(struct hdd_context *hdd_ctx,
-					    struct hdd_adapter **adapter,
-					    struct wlan_objmgr_vdev *vdev);
+struct hdd_adapter *
+wlan_hdd_get_adapter_from_objmgr(struct wlan_objmgr_vdev *vdev);
 
 struct hdd_adapter *hdd_open_adapter(struct hdd_context *hdd_ctx,
 				     uint8_t session_type,
 				     const char *name, tSirMacAddr mac_addr,
 				     unsigned char name_assign_type,
-				     bool rtnl_held);
+				     bool rtnl_held,
+				     struct hdd_adapter_create_param *params);
 
+QDF_STATUS hdd_open_adapter_no_trans(struct hdd_context *hdd_ctx,
+				     enum QDF_OPMODE op_mode,
+				     const char *iface_name,
+				     uint8_t *mac_addr_bytes,
+				     struct hdd_adapter_create_param *params);
 /**
  * hdd_close_adapter() - remove and free @adapter from the adapter list
  * @hdd_ctx: The Hdd context containing the adapter list
@@ -2673,6 +2714,17 @@ struct hdd_adapter *hdd_get_adapter_by_macaddr(struct hdd_context *hdd_ctx,
  * Return: home channel if connected/started or invalid channel 0
  */
 uint32_t hdd_get_adapter_home_channel(struct hdd_adapter *adapter);
+
+/**
+ * hdd_get_adapter_width() - return current bandwidth of adapter
+ * @adapter: hdd adapter of vdev
+ *
+ * This function returns current bandwidth of station/p2p-cli if
+ * connected, returns current bandwidth of sap/p2p-go if started.
+ *
+ * Return: bandwidth if connected/started or invalid bandwidth 0
+ */
+enum phy_ch_width hdd_get_adapter_width(struct hdd_adapter *adapter);
 
 /*
  * hdd_get_adapter_by_rand_macaddr() - find Random mac adapter
@@ -3202,6 +3254,11 @@ int hdd_wlan_notify_modem_power_state(int state);
 void wlan_hdd_send_svc_nlink_msg(int radio, int type, void *data, int len);
 #ifdef FEATURE_WLAN_AUTO_SHUTDOWN
 void wlan_hdd_auto_shutdown_enable(struct hdd_context *hdd_ctx, bool enable);
+#else
+static inline void
+wlan_hdd_auto_shutdown_enable(struct hdd_context *hdd_ctx, bool enable)
+{
+}
 #endif
 
 struct hdd_adapter *
@@ -3353,6 +3410,20 @@ int hdd_update_acs_timer_reason(struct hdd_adapter *adapter, uint8_t reason);
  */
 void hdd_switch_sap_channel(struct hdd_adapter *adapter, uint8_t channel,
 			    bool forced);
+
+/**
+ * hdd_switch_sap_chan_freq() - Move SAP to the given channel
+ * @adapter: AP adapter
+ * @chan_freq: Channel frequency
+ * @forced: Force to switch channel, ignore SCC/MCC check
+ *
+ * Moves the SAP interface by invoking the function which
+ * executes the callback to perform channel switch using (E)CSA.
+ *
+ * Return: None
+ */
+void hdd_switch_sap_chan_freq(struct hdd_adapter *adapter, qdf_freq_t chan_freq,
+			      bool forced);
 
 #if defined(FEATURE_WLAN_CH_AVOID)
 void hdd_unsafe_channel_restart_sap(struct hdd_context *hdd_ctx);
@@ -3781,20 +3852,6 @@ QDF_STATUS hdd_sme_open_session_callback(uint8_t vdev_id,
 					 QDF_STATUS qdf_status);
 QDF_STATUS hdd_sme_close_session_callback(uint8_t vdev_id);
 
-/**
- * hdd_reassoc() - perform a userspace-directed reassoc
- * @adapter:    Adapter upon which the command was received
- * @bssid:      BSSID with which to reassociate
- * @ch_freq:    channel upon which to reassociate
- * @src:        The source for the trigger of this action
- *
- * This function performs a userspace-directed reassoc operation
- *
- * Return: 0 for success non-zero for failure
- */
-int hdd_reassoc(struct hdd_adapter *adapter, const uint8_t *bssid,
-		uint32_t ch_freq, const handoff_src src);
-
 int hdd_register_cb(struct hdd_context *hdd_ctx);
 void hdd_deregister_cb(struct hdd_context *hdd_ctx);
 int hdd_start_station_adapter(struct hdd_adapter *adapter);
@@ -3867,13 +3924,6 @@ void hdd_populate_random_mac_addr(struct hdd_context *hdd_ctx, uint32_t num);
  * Return: 0 if interface was opened else false
  */
 bool hdd_is_interface_up(struct hdd_adapter *adapter);
-
-void hdd_connect_result(struct net_device *dev, const u8 *bssid,
-			struct csr_roam_info *roam_info, const u8 *req_ie,
-			size_t req_ie_len, const u8 *resp_ie,
-			size_t resp_ie_len, u16 status, gfp_t gfp,
-			bool connect_timeout,
-			tSirResultCodes timeout_reason);
 
 #ifdef WLAN_FEATURE_FASTPATH
 void hdd_enable_fastpath(struct hdd_context *hdd_ctx,
@@ -3954,54 +4004,6 @@ struct csr_roam_profile *hdd_roam_profile(struct hdd_adapter *adapter)
 	sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
 
 	return &sta_ctx->roam_profile;
-}
-
-/**
- * hdd_security_ie() - Get adapter's security IE
- * @adapter: The adapter being queried
- *
- * Given an adapter this function returns a pointer to its security IE
- * buffer. Note that this buffer is maintained outside the roam
- * profile but, when in use, is referenced by a pointer within the
- * roam profile.
- *
- * NOTE WELL: Caller is responsible for ensuring this interface is only
- * invoked for STA-type interfaces
- *
- * Return: pointer to the adapter's roam profile security IE buffer
- */
-static inline
-uint8_t *hdd_security_ie(struct hdd_adapter *adapter)
-{
-	struct hdd_station_ctx *sta_ctx;
-
-	sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
-
-	return sta_ctx->security_ie;
-}
-
-/**
- * hdd_assoc_additional_ie() - Get adapter's assoc additional IE
- * @adapter: The adapter being queried
- *
- * Given an adapter this function returns a pointer to its assoc
- * additional IE buffer. Note that this buffer is maintained outside
- * the roam profile but, when in use, is referenced by a pointer
- * within the roam profile.
- *
- * NOTE WELL: Caller is responsible for ensuring this interface is only
- * invoked for STA-type interfaces
- *
- * Return: pointer to the adapter's assoc additional IE buffer
- */
-static inline
-tSirAddie *hdd_assoc_additional_ie(struct hdd_adapter *adapter)
-{
-	struct hdd_station_ctx *sta_ctx;
-
-	sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
-
-	return &sta_ctx->assoc_additional_ie;
 }
 
 /**
@@ -4122,15 +4124,15 @@ static inline void hdd_send_peer_status_ind_to_app(
 #endif /* WIFI_POS_CONVERGENCE */
 
 /**
- * wlan_hdd_send_p2p_quota()- Send P2P Quota value to FW
+ * wlan_hdd_send_mcc_vdev_quota()- Send mcc vdev quota value to FW
  * @adapter: Adapter data
- * @sval:    P2P quota value
+ * @sval:    mcc vdev quota value
  *
- * Send P2P quota value to FW
+ * Send mcc vdev quota value value to FW
  *
  * Return: 0 success else failure
  */
-int wlan_hdd_send_p2p_quota(struct hdd_adapter *adapter, int sval);
+int wlan_hdd_send_mcc_vdev_quota(struct hdd_adapter *adapter, int sval);
 
 /**
  * wlan_hdd_send_p2p_quota()- Send MCC latency to FW
@@ -4242,38 +4244,6 @@ int hdd_get_rssi_snr_by_bssid(struct hdd_adapter *adapter, const uint8_t *bssid,
  * Return: 0 on success and non zero value on failure
  */
 int hdd_reset_limit_off_chan(struct hdd_adapter *adapter);
-
-#if defined(WLAN_FEATURE_FILS_SK) && \
-	(defined(CFG80211_FILS_SK_OFFLOAD_SUPPORT) || \
-		 (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)))
-/**
- * hdd_clear_fils_connection_info: API to clear fils info from roam profile and
- * free allocated memory
- * @adapter: pointer to hdd adapter
- *
- * Return: None
- */
-void hdd_clear_fils_connection_info(struct hdd_adapter *adapter);
-
-/**
- * hdd_update_hlp_info() - Update HLP packet received in FILS (re)assoc rsp
- * @dev: net device
- * @roam_fils_params: Fils join rsp params
- *
- * This API is used to send the received HLP packet in Assoc rsp(FILS AKM)
- * to the network layer.
- *
- * Return: None
- */
-void hdd_update_hlp_info(struct net_device *dev,
-			 struct csr_roam_info *roam_info);
-#else
-static inline void hdd_clear_fils_connection_info(struct hdd_adapter *adapter)
-{ }
-static inline void hdd_update_hlp_info(struct net_device *dev,
-				       struct csr_roam_info *roam_info)
-{}
-#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0)
 static inline void hdd_dev_setup_destructor(struct net_device *dev)
@@ -4409,14 +4379,6 @@ static inline void hdd_driver_mem_cleanup(void)
 {
 }
 #endif /* WLAN_FEATURE_MEMDUMP_ENABLE */
-/**
- * hdd_set_disconnect_status() - set adapter disconnection status
- * @hdd_adapter: Pointer to hdd adapter
- * @disconnecting: Disconnect status to set
- *
- * Return: None
- */
-void hdd_set_disconnect_status(struct hdd_adapter *adapter, bool disconnecting);
 
 #ifdef FEATURE_MONITOR_MODE_SUPPORT
 /**
@@ -4671,6 +4633,13 @@ int hdd_psoc_idle_shutdown(struct device *dev);
  * Return: 0 for success non-zero error code for failure
  */
 int hdd_psoc_idle_restart(struct device *dev);
+
+/**
+ * hdd_adapter_is_ap() - whether adapter is ap or not
+ * @adapter: adapter to check
+ * Return: true if it is AP
+ */
+bool hdd_adapter_is_ap(struct hdd_adapter *adapter);
 
 /**
  * hdd_common_roam_callback() - common sme roam callback
@@ -4988,4 +4957,66 @@ void wlan_hdd_set_pm_qos_request(struct hdd_context *hdd_ctx,
 {
 }
 #endif
+
+/**
+ * hdd_nl80211_chwidth_to_chwidth - Get sir chan width from nl chan width
+ * @nl80211_chwidth: enum nl80211_chan_width
+ *
+ * Return: enum eSirMacHTChannelWidth or -INVAL for unsupported nl chan width
+ */
+enum eSirMacHTChannelWidth
+hdd_nl80211_chwidth_to_chwidth(uint8_t nl80211_chwidth);
+
+/**
+ * hdd_chwidth_to_nl80211_chwidth - Get nl chan width from sir chan width
+ * @chwidth: enum eSirMacHTChannelWidth
+ *
+ * Return: enum nl80211_chan_width or 0xFF for unsupported sir chan width
+ */
+uint8_t hdd_chwidth_to_nl80211_chwidth(enum eSirMacHTChannelWidth chwidth);
+
+/**
+ * wlan_hdd_get_channel_bw() - get channel bandwidth
+ * @width: input channel width in nl80211_chan_width value
+ *
+ * Return: channel width value defined by driver
+ */
+enum hw_mode_bandwidth wlan_hdd_get_channel_bw(enum nl80211_chan_width width);
+
+/**
+ * hdd_ch_width_str() - Get string for channel width
+ * @ch_width: channel width from connect info
+ *
+ * Return: User readable string for channel width
+ */
+uint8_t *hdd_ch_width_str(enum phy_ch_width ch_width);
+
+/**
+ * hdd_we_set_ch_width - Function to update channel width
+ * @adapter: hdd_adapter pointer
+ * @ch_width: enum eSirMacHTChannelWidth
+ *
+ * Return: 0 for success otherwise failure
+ */
+int hdd_we_set_ch_width(struct hdd_adapter *adapter, int ch_width);
+
+/**
+ * hdd_stop_adapter_ext: close/delete the vdev session in host/fw.
+ * @hdd_context: HDD context
+ * @adapter: Pointer to hdd_adapter
+ *
+ * Close/delete the vdev session in host/firmware.
+ */
+QDF_STATUS hdd_stop_adapter_ext(struct hdd_context *hdd_ctx,
+				struct hdd_adapter *adapter);
+
+/**
+ * hdd_check_for_net_dev_ref_leak: check for vdev reference leak in driver
+ * @adapter: Pointer to hdd_adapter
+ *
+ * various function take netdev reference to get protected against netdev
+ * getting deleted in parallel, check if all those references are cleanly
+ * released.
+ */
+void hdd_check_for_net_dev_ref_leak(struct hdd_adapter *adapter);
 #endif /* end #if !defined(WLAN_HDD_MAIN_H) */

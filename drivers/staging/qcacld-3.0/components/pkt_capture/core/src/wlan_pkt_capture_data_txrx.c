@@ -28,6 +28,7 @@
 #include <cds_ieee80211_common.h>
 #include <ol_txrx_htt_api.h>
 #include "wlan_policy_mgr_ucfg.h"
+#include "hal_rx.h"
 #ifdef WLAN_FEATURE_PKT_CAPTURE_V2
 #include "dp_internal.h"
 #include "cds_utils.h"
@@ -477,7 +478,7 @@ pkt_capture_rx_convert8023to80211(hal_soc_handle_t hal_soc_hdl,
 	 * single mpdu from first msdu.
 	 */
 	if (qdf_nbuf_is_rx_chfrag_start(msdu)) {
-		pwh = HAL_RX_DESC_GET_80211_HDR(desc);
+		pwh = hal_rx_desc_get_80211_hdr(hal_soc_hdl, desc);
 		qdf_mem_copy(first_msdu_hdr, pwh,
 			     sizeof(struct ieee80211_frame));
 	}
@@ -653,10 +654,11 @@ void pkt_capture_msdu_process_pkts(
  *
  * Return: None
  */
-static void pkt_capture_dp_rx_skip_tlvs(qdf_nbuf_t nbuf, uint32_t l3_padding)
+static void pkt_capture_dp_rx_skip_tlvs(struct dp_soc *soc, qdf_nbuf_t nbuf,
+					uint32_t l3_padding)
 {
 	QDF_NBUF_CB_RX_PACKET_L3_HDR_PAD(nbuf) = l3_padding;
-	qdf_nbuf_pull_head(nbuf, l3_padding + RX_PKT_TLVS_LEN);
+	qdf_nbuf_pull_head(nbuf, l3_padding + soc->rx_pkt_tlv_size);
 }
 
 /**
@@ -682,11 +684,11 @@ static void pkt_capture_rx_get_phy_info(void *context, void *psoc,
 	struct wlan_objmgr_vdev *vdev = context;
 
 	hal_soc = soc->hal_soc;
-	preamble_type = hal_rx_msdu_start_get_pkt_type(rx_tlv_hdr);
+	preamble_type = hal_rx_tlv_get_pkt_type(hal_soc, rx_tlv_hdr);
 	nss = hal_rx_msdu_start_nss_get(hal_soc, rx_tlv_hdr); /* NSS */
-	bw = hal_rx_msdu_start_bw_get(rx_tlv_hdr);
-	mcs = hal_rx_msdu_start_rate_mcs_get(rx_tlv_hdr);
-	sgi = hal_rx_msdu_start_sgi_get(rx_tlv_hdr);
+	bw = hal_rx_tlv_bw_get(hal_soc, rx_tlv_hdr);
+	mcs = hal_rx_tlv_rate_mcs_get(hal_soc, rx_tlv_hdr);
+	sgi = hal_rx_tlv_sgi_get(hal_soc, rx_tlv_hdr);
 
 	switch (preamble_type) {
 	case HAL_RX_PKT_TYPE_11A:
@@ -743,40 +745,35 @@ static void pkt_capture_rx_get_phy_info(void *context, void *psoc,
 
 /**
  * pkt_capture_get_rx_rtap_flags() - Get radiotap flags
- * @ptr_rx_tlv_hdr: Pointer to struct rx_pkt_tlvs
+ * @flags: Pointer to struct hal_rx_pkt_capture_flags
  *
  * Return: Bitmapped radiotap flags.
  */
-static uint8_t pkt_capture_get_rx_rtap_flags(void *ptr_rx_tlv_hdr)
+static
+uint8_t pkt_capture_get_rx_rtap_flags(struct hal_rx_pkt_capture_flags *flags)
 {
-	struct rx_pkt_tlvs *rx_tlv_hdr = (struct rx_pkt_tlvs *)ptr_rx_tlv_hdr;
-	struct rx_attention *rx_attn = &rx_tlv_hdr->attn_tlv.rx_attn;
-	struct rx_mpdu_start *mpdu_start =
-				&rx_tlv_hdr->mpdu_start_tlv.rx_mpdu_start;
-	struct rx_mpdu_end *mpdu_end = &rx_tlv_hdr->mpdu_end_tlv.rx_mpdu_end;
 	uint8_t rtap_flags = 0;
 
 	/* WEP40 || WEP104 || WEP128 */
-	if (mpdu_start->rx_mpdu_info_details.encrypt_type == 0 ||
-	    mpdu_start->rx_mpdu_info_details.encrypt_type == 1 ||
-	    mpdu_start->rx_mpdu_info_details.encrypt_type == 3)
+	if (flags->encrypt_type == 0 ||
+	    flags->encrypt_type == 1 ||
+	    flags->encrypt_type == 3)
 		rtap_flags |= BIT(2);
 
 	/* IEEE80211_RADIOTAP_F_FRAG */
-	if (rx_attn->fragment_flag)
+	if (flags->fragment_flag)
 		rtap_flags |= BIT(3);
 
 	/* IEEE80211_RADIOTAP_F_FCS */
 	rtap_flags |= BIT(4);
 
 	/* IEEE80211_RADIOTAP_F_BADFCS */
-	if (mpdu_end->fcs_err)
+	if (flags->fcs_err)
 		rtap_flags |= BIT(6);
 
 	return rtap_flags;
 }
 
-#define CHANNEL_FREQ_5150 5150
 /**
  * pkt_capture_rx_mon_get_rx_status() - Get rx status
  * @context: objmgr vdev
@@ -791,11 +788,9 @@ static void pkt_capture_rx_mon_get_rx_status(void *context, void *dp_soc,
 					     struct mon_rx_status *rx_status)
 {
 	uint8_t *rx_tlv_hdr = desc;
-	struct rx_pkt_tlvs *pkt_tlvs = (struct rx_pkt_tlvs *)desc;
-	struct rx_msdu_start *msdu_start =
-					&pkt_tlvs->msdu_start_tlv.rx_msdu_start;
+	struct dp_soc *soc = dp_soc;
+	struct hal_rx_pkt_capture_flags flags = {0};
 	struct wlan_objmgr_vdev *vdev = context;
-	struct pkt_capture_vdev_priv *vdev_priv;
 	uint8_t primary_chan_num;
 	uint32_t center_chan_freq;
 	struct wlan_objmgr_psoc *psoc;
@@ -808,12 +803,15 @@ static void pkt_capture_rx_mon_get_rx_status(void *context, void *dp_soc,
 		return;
 	}
 
-	rx_status->rtap_flags |= pkt_capture_get_rx_rtap_flags(rx_tlv_hdr);
-	rx_status->ant_signal_db = hal_rx_msdu_start_get_rssi(rx_tlv_hdr);
-	rx_status->rssi_comb = hal_rx_msdu_start_get_rssi(rx_tlv_hdr);
-	rx_status->tsft = msdu_start->ppdu_start_timestamp;
-	primary_chan_num = hal_rx_msdu_start_get_freq(rx_tlv_hdr);
-	center_chan_freq = hal_rx_msdu_start_get_freq(rx_tlv_hdr) >> 16;
+	hal_rx_tlv_get_pkt_capture_flags(soc->hal_soc, (uint8_t *)rx_tlv_hdr,
+					 &flags);
+
+	rx_status->rtap_flags |= pkt_capture_get_rx_rtap_flags(&flags);
+	rx_status->ant_signal_db = flags.rssi_comb;
+	rx_status->rssi_comb = flags.rssi_comb;
+	rx_status->tsft = flags.tsft;
+	primary_chan_num = flags.chan_freq;
+	center_chan_freq = flags.chan_freq >> 16;
 	rx_status->chan_num = primary_chan_num;
 	band = wlan_reg_freq_to_band(center_chan_freq);
 
@@ -826,17 +824,6 @@ static void pkt_capture_rx_mon_get_rx_status(void *context, void *dp_soc,
 	rx_status->chan_freq =
 		wlan_reg_chan_band_to_freq(pdev, primary_chan_num, BIT(band));
 	wlan_objmgr_pdev_release_ref(pdev, WLAN_PKT_CAPTURE_ID);
-
-	vdev_priv = pkt_capture_vdev_get_priv(vdev);
-	if (qdf_unlikely(!vdev))
-		return;
-
-	rx_status->rssi_comb = vdev_priv->rx_avg_rssi;
-
-	if (rx_status->chan_freq > CHANNEL_FREQ_5150)
-		rx_status->ofdm_flag = 1;
-	else
-		rx_status->cck_flag = 1;
 
 	pkt_capture_rx_get_phy_info(context, dp_soc, desc, rx_status);
 }
@@ -875,7 +862,7 @@ pkt_capture_rx_data_cb(
 	struct htt_host_rx_desc_base *rx_desc;
 	struct mon_rx_status rx_status = {0};
 	uint32_t headroom;
-	static uint8_t preamble_type;
+	static uint8_t preamble_type, rssi_comb;
 	static uint32_t vht_sig_a_1;
 	static uint32_t vht_sig_a_2;
 
@@ -901,6 +888,7 @@ pkt_capture_rx_data_cb(
 		 * till the last mpdu is reached
 		 */
 		if (rx_desc->attention.first_mpdu) {
+			rssi_comb = rx_desc->ppdu_start.rssi_comb;
 			preamble_type = rx_desc->ppdu_start.preamble_type;
 			if (preamble_type == 8 || preamble_type == 9 ||
 			    preamble_type == 0x0c || preamble_type == 0x0d) {
@@ -908,6 +896,7 @@ pkt_capture_rx_data_cb(
 				vht_sig_a_2 = VHT_SIG_A_2(rx_desc);
 			}
 		} else {
+			rx_desc->ppdu_start.rssi_comb = rssi_comb;
 			rx_desc->ppdu_start.preamble_type = preamble_type;
 			if (preamble_type == 8 || preamble_type == 9 ||
 			    preamble_type == 0x0c || preamble_type == 0x0d) {
@@ -917,6 +906,7 @@ pkt_capture_rx_data_cb(
 		}
 
 		if (rx_desc->attention.last_mpdu) {
+			rssi_comb = 0;
 			preamble_type = 0;
 			vht_sig_a_1 = 0;
 			vht_sig_a_2 = 0;
@@ -1015,13 +1005,14 @@ pkt_capture_rx_data_cb(
 		struct ethernet_hdr_t *eth_hdr;
 
 		/* push the tlvs to get rx_tlv_hdr pointer */
-		qdf_nbuf_push_head(msdu, RX_PKT_TLVS_LEN +
+		qdf_nbuf_push_head(msdu, soc->rx_pkt_tlv_size +
 				QDF_NBUF_CB_RX_PACKET_L3_HDR_PAD(msdu));
 
 		rx_tlv_hdr = qdf_nbuf_data(msdu);
 		hal_rx_msdu_metadata_get(hal_soc, rx_tlv_hdr, &msdu_metadata);
 		/* Pull rx_tlv_hdr */
-		pkt_capture_dp_rx_skip_tlvs(msdu, msdu_metadata.l3_hdr_pad);
+		pkt_capture_dp_rx_skip_tlvs(soc, msdu,
+					    msdu_metadata.l3_hdr_pad);
 
 		next_buf = qdf_nbuf_queue_next(msdu);
 		qdf_nbuf_set_next(msdu, NULL);   /* Add NULL terminator */

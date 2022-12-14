@@ -42,14 +42,15 @@ void ucfg_fwol_psoc_close(struct wlan_objmgr_psoc *psoc)
 	/* Clear the FWOL CFG Structure */
 }
 
-void ucfg_fwol_psoc_enable(struct wlan_objmgr_psoc *psoc)
+QDF_STATUS ucfg_fwol_psoc_enable(struct wlan_objmgr_psoc *psoc)
 {
 	tgt_fwol_register_ev_handler(psoc);
+
+	return QDF_STATUS_SUCCESS;
 }
 
 void ucfg_fwol_psoc_disable(struct wlan_objmgr_psoc *psoc)
 {
-
 	tgt_fwol_unregister_ev_handler(psoc);
 }
 
@@ -167,6 +168,55 @@ void ucfg_fwol_deinit(void)
 		fwol_err("unable to unregister psoc create handle");
 }
 
+#ifdef FW_THERMAL_THROTTLE_SUPPORT
+QDF_STATUS ucfg_fwol_thermal_register_callbacks(
+				struct wlan_objmgr_psoc *psoc,
+				struct fwol_thermal_callbacks *cb)
+{
+	struct wlan_fwol_psoc_obj *fwol_obj;
+
+	fwol_obj = fwol_get_psoc_obj(psoc);
+	if (!fwol_obj) {
+		fwol_err("Failed to get fwol obj");
+		return QDF_STATUS_E_FAILURE;
+	}
+	fwol_obj->thermal_cbs = *cb;
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS ucfg_fwol_thermal_unregister_callbacks(
+				struct wlan_objmgr_psoc *psoc)
+{
+	struct wlan_fwol_psoc_obj *fwol_obj;
+
+	fwol_obj = fwol_get_psoc_obj(psoc);
+	if (!fwol_obj) {
+		fwol_err("Failed to get fwol obj");
+		return QDF_STATUS_E_FAILURE;
+	}
+	qdf_mem_zero(&fwol_obj->thermal_cbs, sizeof(fwol_obj->thermal_cbs));
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS
+ucfg_fwol_thermal_get_target_level(struct wlan_objmgr_psoc *psoc,
+				   enum thermal_throttle_level *level)
+{
+	struct wlan_fwol_psoc_obj *fwol_obj;
+
+	fwol_obj = fwol_get_psoc_obj(psoc);
+	if (!fwol_obj) {
+		fwol_err("Failed to get fwol obj");
+		return QDF_STATUS_E_FAILURE;
+	}
+	*level = fwol_obj->thermal_throttle.level;
+
+	return QDF_STATUS_SUCCESS;
+}
+#endif
+
 QDF_STATUS
 ucfg_fwol_get_coex_config_params(struct wlan_objmgr_psoc *psoc,
 				 struct wlan_fwol_coex_config *coex_config)
@@ -199,29 +249,6 @@ ucfg_fwol_get_thermal_temp(struct wlan_objmgr_psoc *psoc,
 	*thermal_info = fwol_obj->cfg.thermal_temp_cfg;
 
 	return QDF_STATUS_SUCCESS;
-}
-
-QDF_STATUS
-ucfg_fwol_get_neighbor_report_cfg(struct wlan_objmgr_psoc *psoc,
-				  struct wlan_fwol_neighbor_report_cfg
-				  *fwol_neighbor_report_cfg)
-{
-	struct wlan_fwol_psoc_obj *fwol_obj;
-	QDF_STATUS status = QDF_STATUS_SUCCESS;
-
-	if (!fwol_neighbor_report_cfg)
-		return QDF_STATUS_E_FAILURE;
-
-	fwol_obj = fwol_get_psoc_obj(psoc);
-	if (!fwol_obj) {
-		fwol_err("Failed to get fwol obj");
-		fwol_init_neighbor_report_cfg(psoc, fwol_neighbor_report_cfg);
-		status =  QDF_STATUS_E_FAILURE;
-	} else {
-		*fwol_neighbor_report_cfg = fwol_obj->cfg.neighbor_report_cfg;
-	}
-
-	return status;
 }
 
 QDF_STATUS
@@ -306,6 +333,21 @@ static QDF_STATUS ucfg_fwol_get_ilp_config(struct wlan_objmgr_psoc *psoc,
 	}
 
 	*enable_ilp = fwol_obj->cfg.enable_ilp;
+	return QDF_STATUS_SUCCESS;
+}
+
+static QDF_STATUS ucfg_fwol_get_sap_sho(struct wlan_objmgr_psoc *psoc,
+					uint32_t *sap_sho)
+{
+	struct wlan_fwol_psoc_obj *fwol_obj;
+
+	fwol_obj = fwol_get_psoc_obj(psoc);
+	if (!fwol_obj) {
+		fwol_err("Failed to get FWOL obj");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	*sap_sho = fwol_obj->cfg.sap_sho;
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -643,6 +685,22 @@ QDF_STATUS ucfg_fwol_get_tsf_ptp_options(struct wlan_objmgr_psoc *psoc,
 	return QDF_STATUS_SUCCESS;
 }
 
+QDF_STATUS ucfg_fwol_get_tsf_sync_enable(struct wlan_objmgr_psoc *psoc,
+					 bool *tsf_sync_enable)
+{
+	struct wlan_fwol_psoc_obj *fwol_obj;
+
+	fwol_obj = fwol_get_psoc_obj(psoc);
+	if (!fwol_obj) {
+		fwol_err("Failed to get FWOL obj");
+		*tsf_sync_enable = cfg_default(CFG_TSF_SYNC_ENABLE);
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	*tsf_sync_enable = fwol_obj->cfg.tsf_sync_enable;
+	return QDF_STATUS_SUCCESS;
+}
+
 #ifdef WLAN_FEATURE_TSF_PLUS_EXT_GPIO_IRQ
 QDF_STATUS
 ucfg_fwol_get_tsf_irq_host_gpio_pin(struct wlan_objmgr_psoc *psoc,
@@ -699,22 +757,6 @@ QDF_STATUS ucfg_fwol_get_tsf_ptp_options(struct wlan_objmgr_psoc *psoc,
 }
 
 #endif
-
-QDF_STATUS ucfg_fwol_get_lprx_enable(struct wlan_objmgr_psoc *psoc,
-				     bool *lprx_enable)
-{
-	struct wlan_fwol_psoc_obj *fwol_obj;
-
-	fwol_obj = fwol_get_psoc_obj(psoc);
-	if (!fwol_obj) {
-		fwol_err("Failed to get FWOL obj");
-		*lprx_enable = cfg_default(CFG_LPRX);
-		return QDF_STATUS_E_FAILURE;
-	}
-
-	*lprx_enable = fwol_obj->cfg.lprx_enable;
-	return QDF_STATUS_SUCCESS;
-}
 
 #ifdef WLAN_FEATURE_SAE
 bool ucfg_fwol_get_sae_enable(struct wlan_objmgr_psoc *psoc)
@@ -1001,6 +1043,35 @@ QDF_STATUS ucfg_fwol_send_dscp_up_map_to_fw(struct wlan_objmgr_vdev *vdev,
 }
 #endif /* WLAN_SEND_DSCP_UP_MAP_TO_FW */
 
+#ifdef WLAN_FEATURE_MDNS_OFFLOAD
+QDF_STATUS ucfg_fwol_set_mdns_config(struct wlan_objmgr_psoc *psoc,
+				     struct mdns_config_info *mdns_info)
+{
+	QDF_STATUS status;
+	struct wlan_fwol_psoc_obj *fwol_obj;
+	struct wlan_fwol_tx_ops *tx_ops;
+
+	if (!psoc) {
+		fwol_err("NULL pointer for psoc");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	fwol_obj = fwol_get_psoc_obj(psoc);
+	if (!fwol_obj) {
+		fwol_err("Failed to get FWOL Obj");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	tx_ops = &fwol_obj->tx_ops;
+	if (tx_ops->set_mdns_config)
+		status = tx_ops->set_mdns_config(psoc, mdns_info);
+	else
+		status = QDF_STATUS_E_IO;
+
+	return status;
+}
+#endif /* WLAN_FEATURE_MDNS_OFFLOAD */
+
 void ucfg_fwol_update_fw_cap_info(struct wlan_objmgr_psoc *psoc,
 				  struct wlan_fwol_capability_info *caps)
 {
@@ -1122,5 +1193,18 @@ QDF_STATUS ucfg_fwol_configure_vdev_params(struct wlan_objmgr_psoc *psoc,
 					   enum QDF_OPMODE device_mode,
 					   uint8_t vdev_id)
 {
-	return QDF_STATUS_SUCCESS;
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	uint32_t value;
+
+	if (device_mode == QDF_SAP_MODE) {
+		status = ucfg_fwol_get_sap_sho(psoc, &value);
+		if (QDF_IS_STATUS_ERROR(status))
+			return status;
+
+		status = fwol_set_sap_sho(psoc, vdev_id, value);
+		if (QDF_IS_STATUS_ERROR(status))
+			return status;
+	}
+
+	return status;
 }

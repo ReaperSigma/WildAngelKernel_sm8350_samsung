@@ -1,10 +1,10 @@
 /*
- * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
- * 
+ * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
  * copyright notice and this permission notice appear in all copies.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
  * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
@@ -22,11 +22,23 @@
 
 #define DP_IPA_MAX_IFACE	3
 #define IPA_REO_DEST_RING_IDX	3
+#define IPA_REO_DEST_RING_IDX_2	7
+
 #define IPA_RX_REFILL_BUF_RING_IDX	2
 
 /* Adding delay before disabling ipa pipes if any Tx Completions are pending */
 #define TX_COMP_DRAIN_WAIT_MS	50
 #define TX_COMP_DRAIN_WAIT_TIMEOUT_MS	100
+
+#ifdef IPA_WDI3_TX_TWO_PIPES
+#define IPA_TX_ALT_RING_IDX 1
+/*
+ * must be same as IPA_TX_ALT_RING_IDX as tcl and wbm ring
+ * are initialized with same index as a pair.
+ */
+#define IPA_TX_ALT_COMP_RING_IDX 1
+#define IPA_SESSION_ID_SHIFT 1
+#endif
 
 /**
  * struct dp_ipa_uc_tx_hdr - full tx header registered to IPA hardware
@@ -149,7 +161,8 @@ QDF_STATUS dp_ipa_enable_autonomy(struct cdp_soc_t *soc_hdl, uint8_t pdev_id);
  */
 QDF_STATUS dp_ipa_disable_autonomy(struct cdp_soc_t *soc_hdl, uint8_t pdev_id);
 
-#ifdef CONFIG_IPA_WDI_UNIFIED_API
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)) || \
+	defined(CONFIG_IPA_WDI_UNIFIED_API)
 /**
  * dp_ipa_setup() - Setup and connect IPA pipes
  * @soc_hdl - data path soc handle

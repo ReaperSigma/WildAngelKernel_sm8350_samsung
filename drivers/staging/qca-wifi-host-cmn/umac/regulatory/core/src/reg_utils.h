@@ -35,17 +35,6 @@
 #define REG_ETSI13_SRD_START_FREQ 5745
 #define REG_ETSI13_SRD_END_FREQ   5865
 
-#ifdef CONFIG_CHAN_NUM_API
-#define REG_IS_CHANNEL_VALID_5G_SBS(curchan, newchan)	\
-	((curchan) > (newchan) ?				\
-	 REG_CH_TO_FREQ(reg_get_chan_enum(curchan))	\
-	 - REG_CH_TO_FREQ(reg_get_chan_enum(newchan))	\
-	 > REG_SBS_SEPARATION_THRESHOLD :		\
-	 REG_CH_TO_FREQ(reg_get_chan_enum(newchan))	\
-	 - REG_CH_TO_FREQ(reg_get_chan_enum(curchan))	\
-	 > REG_SBS_SEPARATION_THRESHOLD)
-#endif /* CONFIG_LEGACY_REG_API */
-
 /**
  * reg_is_world_ctry_code() - Check if the given country code is WORLD regdomain
  * @ctry_code: Country code value.
@@ -53,40 +42,6 @@
  * Return: If country code is WORLD regdomain return true else false
  */
 bool reg_is_world_ctry_code(uint16_t ctry_code);
-
-#if defined(CONFIG_REG_CLIENT) && defined(CONFIG_CHAN_NUM_API)
-/**
- * reg_chan_has_dfs_attribute() - check channel has dfs attribue or not
- * @ch: channel number.
- *
- * This API get chan initial dfs attribue flag from regdomain
- *
- * Return: true if chan is dfs, otherwise false
- */
-bool reg_chan_has_dfs_attribute(struct wlan_objmgr_pdev *pdev, uint8_t ch);
-
-/**
- * reg_is_passive_or_disable_ch() - Check if the given channel is passive or
- * disabled.
- * @pdev: Pointer to physical dev
- * @chan: Channel number
- *
- * Return: true if channel is passive or disabled, else false.
- */
-bool reg_is_passive_or_disable_ch(struct wlan_objmgr_pdev *pdev, uint8_t chan);
-#else
-static inline bool
-reg_chan_has_dfs_attribute(struct wlan_objmgr_pdev *pdev, uint8_t ch)
-{
-	return false;
-}
-
-static inline bool
-reg_is_passive_or_disable_ch(struct wlan_objmgr_pdev *pdev, uint8_t chan)
-{
-	return false;
-}
-#endif /* defined(CONFIG_REG_CLIENT) && defined(CONFIG_CHAN_NUM_API) */
 
 #if defined(CONFIG_REG_CLIENT) && defined(CONFIG_CHAN_FREQ_API)
 /**
@@ -173,27 +128,6 @@ QDF_STATUS reg_cache_channel_freq_state(struct wlan_objmgr_pdev *pdev,
 	return QDF_STATUS_SUCCESS;
 }
 #endif /* defined(DISABLE_CHANNEL_LIST) && defined(CONFIG_CHAN_FREQ_API) */
-
-#if defined(DISABLE_CHANNEL_LIST) && defined(CONFIG_CHAN_NUM_API)
-/**
- * reg_cache_channel_state() - Cache the current state of the channels
- * @pdev: The physical dev to cache the channels for
- * @channel_list: List of the channels for which states needs to be cached
- * @num_channels: Number of channels in the list
- *
- */
-QDF_STATUS reg_cache_channel_state(struct wlan_objmgr_pdev *pdev,
-				   uint32_t *channel_list,
-				   uint32_t num_channels);
-#else
-static inline
-QDF_STATUS reg_cache_channel_state(struct wlan_objmgr_pdev *pdev,
-				   uint32_t *channel_list,
-				   uint32_t num_channels)
-{
-	return QDF_STATUS_SUCCESS;
-}
-#endif /* defined (DISABLE_CHANNEL_LIST) && defined(CONFIG_CHAN_NUM_API) */
 
 #ifdef CONFIG_REG_CLIENT
 /**
@@ -336,14 +270,6 @@ QDF_STATUS reg_set_config_vars(struct wlan_objmgr_psoc *psoc,
 			       struct reg_config_vars config_vars);
 
 /**
- * reg_is_regdb_offloaded() - is regdb offloaded
- * @psoc: Pointer to psoc object
- *
- * Return: true if regdb is offloaded, else false
- */
-bool reg_is_regdb_offloaded(struct wlan_objmgr_psoc *psoc);
-
-/**
  * reg_program_mas_chan_list() - Program the master channel list
  * @psoc: Pointer to psoc structure
  * @reg_channels: Pointer to reg channels
@@ -423,30 +349,11 @@ bool reg_ignore_default_country(struct wlan_regulatory_psoc_priv_obj *soc_reg,
  * Return: AP power type
  */
 enum reg_6g_ap_type reg_decide_6g_ap_pwr_type(struct wlan_objmgr_pdev *pdev);
-
-/**
- * reg_set_ap_pwr_and_update_chan_list() - Set the AP power mode and recompute
- * the current channel list
- *
- * @pdev: pdev ptr
- * @ap_pwr_type: the AP power type to update to
- *
- * Return: QDF_STATUS
- */
-QDF_STATUS reg_set_ap_pwr_and_update_chan_list(struct wlan_objmgr_pdev *pdev,
-					       enum reg_6g_ap_type ap_pwr_type);
 #else
 static inline enum reg_6g_ap_type
 reg_decide_6g_ap_pwr_type(struct wlan_objmgr_pdev *pdev)
 {
 	return REG_CURRENT_MAX_AP_TYPE;
-}
-
-static inline
-QDF_STATUS reg_set_ap_pwr_and_update_chan_list(struct wlan_objmgr_pdev *pdev,
-					       enum reg_6g_ap_type ap_pwr_type)
-{
-	return QDF_STATUS_E_NOSUPPORT;
 }
 #endif /* CONFIG_BAND_6GHZ */
 #else
@@ -493,11 +400,6 @@ static inline QDF_STATUS reg_set_config_vars(struct wlan_objmgr_psoc *psoc,
 					     struct reg_config_vars config_vars)
 {
 	return QDF_STATUS_SUCCESS;
-}
-
-static inline bool reg_is_regdb_offloaded(struct wlan_objmgr_psoc *psoc)
-{
-	return false;
 }
 
 static inline void reg_program_mas_chan_list(
@@ -557,13 +459,6 @@ reg_decide_6g_ap_pwr_type(struct wlan_objmgr_pdev *pdev)
 {
 	return REG_CURRENT_MAX_AP_TYPE;
 }
-
-static inline
-QDF_STATUS reg_set_ap_pwr_and_update_chan_list(struct wlan_objmgr_pdev *pdev,
-					       enum reg_6g_ap_type ap_pwr_type)
-{
-	return QDF_STATUS_E_NOSUPPORT;
-}
 #endif /* CONFIG_REG_CLIENT */
 
 #if defined(WLAN_FEATURE_DSRC) && defined(CONFIG_REG_CLIENT)
@@ -577,23 +472,6 @@ QDF_STATUS reg_set_ap_pwr_and_update_chan_list(struct wlan_objmgr_pdev *pdev,
 #ifdef CONFIG_CHAN_FREQ_API
 bool reg_is_dsrc_freq(qdf_freq_t freq);
 #endif /* CONFIG_CHAN_FREQ_API*/
-
-#ifdef CONFIG_CHAN_NUM_API
-/**
- * reg_is_dsrc_chan () - Checks the channel for DSRC or not
- * @chan: channel
- * @pdev: pdev ptr
- *
- * Return: true or false
- */
-bool reg_is_dsrc_chan(struct wlan_objmgr_pdev *pdev, uint8_t chan);
-#endif /* CONFIG_CHAN_NUM_API */
-
-static inline bool reg_is_etsi13_srd_chan(struct wlan_objmgr_pdev *pdev,
-					  uint8_t chan)
-{
-	return false;
-}
 
 static inline bool reg_is_etsi13_regdmn(struct wlan_objmgr_pdev *pdev)
 {
@@ -620,12 +498,6 @@ reg_is_etsi13_srd_chan_allowed_master_mode(struct wlan_objmgr_pdev *pdev)
 	return true;
 }
 #elif defined(CONFIG_REG_CLIENT)
-static inline bool reg_is_dsrc_chan(struct wlan_objmgr_pdev *pdev,
-				    uint8_t chan)
-{
-	return false;
-}
-
 static inline bool reg_is_dsrc_freq(qdf_freq_t freq)
 {
 	return false;
@@ -644,17 +516,6 @@ bool reg_is_etsi13_srd_chan_for_freq(struct wlan_objmgr_pdev
  */
 bool reg_is_etsi13_regdmn(struct wlan_objmgr_pdev *pdev);
 
-#ifdef CONFIG_CHAN_NUM_API
-/**
- * reg_is_etsi13_srd_chan () - Checks the channel for ETSI13 srd ch or not
- * @chan: channel
- * @pdev: pdev ptr
- *
- * Return: true or false
- */
-bool reg_is_etsi13_srd_chan(struct wlan_objmgr_pdev *pdev, uint8_t chan);
-#endif /* CONFIG_CHAN_NUM_API */
-
 /**
  * reg_is_etsi13_srd_chan_allowed_master_mode() - Checks if regdmn is ETSI13
  * and SRD channels are allowed in master mode or not.
@@ -665,12 +526,6 @@ bool reg_is_etsi13_srd_chan(struct wlan_objmgr_pdev *pdev, uint8_t chan);
  */
 bool reg_is_etsi13_srd_chan_allowed_master_mode(struct wlan_objmgr_pdev *pdev);
 #else
-static inline bool reg_is_dsrc_chan(struct wlan_objmgr_pdev *pdev,
-				    uint8_t chan)
-{
-	return false;
-}
-
 static inline bool reg_is_dsrc_freq(qdf_freq_t freq)
 {
 	return false;
@@ -694,11 +549,6 @@ reg_is_etsi13_srd_chan_allowed_master_mode(struct wlan_objmgr_pdev *pdev)
 	return false;
 }
 
-static inline bool reg_is_etsi13_srd_chan(struct wlan_objmgr_pdev *pdev,
-					  uint8_t chan)
-{
-	return false;
-}
 #endif
 
 #endif

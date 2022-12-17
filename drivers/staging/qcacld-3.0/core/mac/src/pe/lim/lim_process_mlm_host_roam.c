@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -43,7 +43,6 @@
 #include "wma_if.h"
 #include "rrm_api.h"
 #include "wma.h"
-#include <lim_mlo.h>
 
 static void lim_handle_sme_reaasoc_result(struct mac_context *, tSirResultCodes,
 		uint16_t, struct pe_session *);
@@ -188,7 +187,6 @@ static void lim_handle_sme_reaasoc_result(struct mac_context *mac,
 				eLIM_JOIN_FAILURE;
 			sta->mlmStaContext.resultCode = resultCode;
 			sta->mlmStaContext.protStatusCode = protStatusCode;
-			lim_mlo_notify_peer_disconn(pe_session, sta);
 			lim_cleanup_rx_path(mac, sta, pe_session, true);
 			/* Cleanup if add bss failed */
 			if (pe_session->add_bss_failed) {
@@ -335,8 +333,10 @@ QDF_STATUS lim_sta_reassoc_error_handler(struct reassoc_params *param)
 	}
 
 	mac_ctx = cds_get_context(QDF_MODULE_ID_PE);
-	if (!mac_ctx)
+	if (!mac_ctx) {
+		pe_err("mac_ctx is NULL");
 		return QDF_STATUS_E_INVAL;
+	}
 
 	session = param->session;
 	if (param->result_code
@@ -475,7 +475,7 @@ void lim_process_sta_mlm_add_bss_rsp_ft(struct mac_context *mac,
 		bss_desc = &pe_session->lim_join_req->bssDescription;
 
 	lim_populate_peer_rate_set(mac, &pAddStaParams->supportedRates, NULL,
-				   false, pe_session, NULL, NULL, NULL, NULL,
+				   false, pe_session, NULL, NULL, NULL,
 				   bss_desc);
 
 	if (pe_session->htCapability) {
@@ -599,6 +599,12 @@ void lim_process_mlm_ft_reassoc_req(struct mac_context *mac,
 		val = mac->mlme_cfg->sap_cfg.tele_bcn_max_li;
 	else
 		val = mac->mlme_cfg->sap_cfg.listen_interval;
+
+	status = wma_add_bss_peer_sta(session->vdev_id, session->bssId, false);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		qdf_mem_free(reassoc_req);
+		return;
+	}
 
 	reassoc_req->listenInterval = (uint16_t) val;
 

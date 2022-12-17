@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -40,7 +41,6 @@
 #include "cfg_mlme_sap.h"
 #include "cfg_ucfg_api.h"
 #include "cdp_txrx_bus.h"
-#include "wlan_pmo_ucfg_api.h"
 
 /**
  * pmo_core_get_vdev_dtim_period() - Get vdev dtim period
@@ -112,7 +112,7 @@ static QDF_STATUS pmo_core_calculate_listen_interval(
 			struct pmo_vdev_priv_obj *vdev_ctx,
 			uint32_t *listen_interval)
 {
-	uint32_t max_mod_dtim, max_dtim = 0;
+	uint32_t max_mod_dtim, max_dtim;
 	uint32_t beacon_interval_mod;
 	struct pmo_psoc_cfg *psoc_cfg = &vdev_ctx->pmo_psoc_ctx->psoc_cfg;
 	struct wlan_objmgr_psoc *psoc = wlan_vdev_get_psoc(vdev);
@@ -167,11 +167,6 @@ static QDF_STATUS pmo_core_calculate_listen_interval(
 			*listen_interval = cfg_default(CFG_LISTEN_INTERVAL);
 		}
 	}
-
-	pmo_info("sta dynamic dtim %d sta mod dtim %d sta_max_li_mod_dtim %d max_dtim %d",
-		 psoc_cfg->sta_dynamic_dtim, psoc_cfg->sta_mod_dtim,
-		 psoc_cfg->sta_max_li_mod_dtim, max_dtim);
-
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -200,7 +195,7 @@ static void pmo_configure_vdev_suspend_params(
 			  vdev_id);
 	}
 
-	non_wow_inactivity_time = PS_DATA_INACTIVITY_TIMEOUT;
+	non_wow_inactivity_time = psoc_cfg->ps_data_inactivity_timeout;
 	wow_inactivity_time = psoc_cfg->wow_data_inactivity_timeout;
 	/*
 	 * To keep ito repeat count same in wow mode as in non wow mode,
@@ -229,6 +224,7 @@ static void pmo_configure_vdev_resume_params(
 	QDF_STATUS ret;
 	uint8_t vdev_id;
 	enum QDF_OPMODE opmode = pmo_core_get_vdev_op_mode(vdev);
+	struct pmo_psoc_cfg *psoc_cfg = &vdev_ctx->pmo_psoc_ctx->psoc_cfg;
 
 	pmo_enter();
 
@@ -237,7 +233,7 @@ static void pmo_configure_vdev_resume_params(
 		return;
 	ret = pmo_tgt_send_vdev_sta_ps_param(vdev,
 					 pmo_sta_ps_param_inactivity_time,
-					 PS_DATA_INACTIVITY_TIMEOUT);
+					 psoc_cfg->ps_data_inactivity_timeout);
 	if (QDF_IS_STATUS_ERROR(ret)) {
 		pmo_debug("Failed to Set inactivity timeout vdevId %d",
 			  vdev_id);
@@ -488,9 +484,7 @@ static QDF_STATUS pmo_core_psoc_configure_suspend(struct wlan_objmgr_psoc *psoc,
 	if (is_runtime_pm)
 		pmo_core_enable_runtime_pm_offloads(psoc);
 
-	if ((is_runtime_pm) ||
-	    (psoc_ctx->psoc_cfg.suspend_mode == PMO_SUSPEND_WOW &&
-	    pmo_core_is_wow_applicable(psoc))) {
+	if (pmo_core_is_wow_applicable(psoc)) {
 		pmo_debug("WOW Suspend");
 		pmo_core_apply_lphb(psoc);
 		/*
@@ -807,32 +801,28 @@ pmo_core_enable_wow_in_fw(struct wlan_objmgr_psoc *psoc,
 			pmo_info("drv wow is enabled");
 			param.flags |= WMI_WOW_FLAG_ENABLE_DRV_PCIE_L1SS_SLEEP;
 		} else {
-			pmo_info("non-drv wow is enabled");
+			pmo_debug("non-drv wow is enabled");
 		}
 	} else {
 		pmo_info("Prevent link down, non-drv wow is enabled");
-		if (hif_ctx) {
+		if (hif_ctx)
 			hif_print_runtime_pm_prevent_list(hif_ctx);
-			htc_log_link_user_votes();
-		}
 	}
 
 	if (type == QDF_SYSTEM_SUSPEND) {
 		pmo_info("system suspend wow");
 		param.flags |= WMI_WOW_FLAG_SYSTEM_SUSPEND_WOW;
-	} else if (type == QDF_UNIT_TEST_WOW_SUSPEND) {
-		pmo_info("unit test wow suspend");
 	} else {
-		pmo_info("RTPM wow");
+		pmo_debug("RTPM wow");
 	}
 
 	if (psoc_cfg->is_mod_dtim_on_sys_suspend_enabled) {
-		pmo_info("mod DTIM enabled");
+		pmo_debug("mod DTIM enabled");
 		param.flags |= WMI_WOW_FLAG_MOD_DTIM_ON_SYS_SUSPEND;
 	}
 
 	if (psoc_cfg->sta_forced_dtim) {
-		pmo_info("forced DTIM enabled");
+		pmo_debug("forced DTIM enabled");
 		param.flags |= WMI_WOW_FLAG_FORCED_DTIM_ON_SYS_SUSPEND;
 	}
 	status = pmo_tgt_psoc_send_wow_enable_req(psoc, &param);
@@ -1800,9 +1790,8 @@ QDF_STATUS pmo_core_config_forced_dtim(struct wlan_objmgr_vdev *vdev,
 	return status;
 }
 
-static QDF_STATUS
-pmo_core_config_non_li_offload_modulated_dtim(struct wlan_objmgr_vdev *vdev,
-					      uint32_t mod_dtim)
+QDF_STATUS pmo_core_config_modulated_dtim(struct wlan_objmgr_vdev *vdev,
+					  uint32_t mod_dtim)
 {
 	struct pmo_vdev_priv_obj *vdev_ctx;
 	struct pmo_psoc_cfg *psoc_cfg;
@@ -1890,74 +1879,6 @@ pmo_core_config_non_li_offload_modulated_dtim(struct wlan_objmgr_vdev *vdev,
 	wlan_objmgr_vdev_release_ref(vdev, WLAN_PMO_ID);
 out:
 	pmo_exit();
-	return status;
-}
-
-static QDF_STATUS
-pmo_core_config_li_offload_modulated_dtim(struct wlan_objmgr_vdev *vdev,
-					  uint32_t mod_dtim)
-{
-	struct pmo_vdev_priv_obj *vdev_ctx;
-	struct pmo_psoc_cfg *psoc_cfg;
-	QDF_STATUS status;
-	uint8_t vdev_id;
-
-	pmo_enter();
-
-	status = pmo_vdev_get_ref(vdev);
-	if (status != QDF_STATUS_SUCCESS)
-		goto out;
-
-	vdev_id = pmo_vdev_get_id(vdev);
-	vdev_ctx = pmo_vdev_get_priv(vdev);
-	psoc_cfg = &vdev_ctx->pmo_psoc_ctx->psoc_cfg;
-
-	if (mod_dtim > psoc_cfg->sta_max_li_mod_dtim)
-		mod_dtim = psoc_cfg->sta_max_li_mod_dtim;
-	pmo_core_vdev_set_moddtim_user(vdev, mod_dtim);
-	pmo_core_vdev_set_moddtim_user_enabled(vdev, true);
-
-	if (!ucfg_pmo_is_vdev_connected(vdev)) {
-		pmo_core_vdev_set_moddtim_user_active(vdev, false);
-		wlan_objmgr_vdev_release_ref(vdev, WLAN_PMO_ID);
-		goto out;
-	}
-
-	status = pmo_tgt_vdev_update_param_req(vdev,
-					       pmo_vdev_param_moddtim,
-					       mod_dtim);
-	if (QDF_IS_STATUS_SUCCESS(status)) {
-		pmo_debug("Set modulated dtim for vdev id %d",
-			  vdev_id);
-		pmo_core_vdev_set_moddtim_user_active(vdev, true);
-	} else {
-		pmo_err("Failed to Set modulated dtim for vdev id %d",
-			vdev_id);
-	}
-
-	wlan_objmgr_vdev_release_ref(vdev, WLAN_PMO_ID);
-out:
-	pmo_exit();
-	return status;
-}
-
-QDF_STATUS pmo_core_config_modulated_dtim(struct wlan_objmgr_vdev *vdev,
-					  uint32_t mod_dtim)
-{
-	struct pmo_vdev_priv_obj *vdev_ctx;
-	struct pmo_psoc_priv_obj *psoc_ctx;
-	QDF_STATUS status;
-
-	vdev_ctx = pmo_vdev_get_priv(vdev);
-	psoc_ctx = vdev_ctx->pmo_psoc_ctx;
-
-	if (psoc_ctx->caps.li_offload)
-		status = pmo_core_config_li_offload_modulated_dtim(vdev,
-								mod_dtim);
-	else
-		status = pmo_core_config_non_li_offload_modulated_dtim(vdev,
-								mod_dtim);
-
 	return status;
 }
 

@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -100,10 +101,6 @@ enum hdd_dot11_mode {
 	eHDD_DOT11_MODE_11a,
 	eHDD_DOT11_MODE_11ax_ONLY,
 	eHDD_DOT11_MODE_11ax,
-#ifdef WLAN_FEATURE_11BE
-	eHDD_DOT11_MODE_11be,
-	eHDD_DOT11_MODE_11be_ONLY,
-#endif
 };
 
 /*
@@ -132,18 +129,12 @@ enum hdd_dot11_mode {
 			CFG_VALUE_OR_DEFAULT, \
 			"dot11 mode")
 
-#ifdef QCA_WIFI_EMULATION
-#define CFG_INTERFACE_CHANGE_WAIT_DEFAULT	300000
-#else
-#define CFG_INTERFACE_CHANGE_WAIT_DEFAULT	10000
-#endif
-
 /*
  * <ini>
  * gInterfaceChangeWait - Interface change wait
  * @Min: 0,
  * @Max: 500000
- * @Default: 10000 (300000 for emulation)
+ * @Default: 10000
  *
  * Timer waiting for interface up from the upper layer. If
  * this timer expires all the cds modules shall be closed.
@@ -161,11 +152,11 @@ enum hdd_dot11_mode {
 			"gInterfaceChangeWait", \
 			0, \
 			500000, \
-			CFG_INTERFACE_CHANGE_WAIT_DEFAULT, \
+			10000, \
 			CFG_VALUE_OR_DEFAULT, \
 			"Interface change wait")
 
-#ifdef QCA_WIFI_EMULATION
+#ifdef QCA_WIFI_NAPIER_EMULATION
 #define CFG_TIMER_MULTIPLIER_DEFAULT	100
 #else
 #define CFG_TIMER_MULTIPLIER_DEFAULT	1
@@ -786,7 +777,7 @@ struct dhcp_server {
  * read_mac_addr_from_mac_file - Use/ignore MAC address from mac cfg file
  * @Min: 0
  * @Max: 1
- * @Default: 1
+ * @Default: 0
  *
  * This ini is used whether to configure MAC address from the cfg file or not
  *
@@ -798,7 +789,7 @@ struct dhcp_server {
  */
 #define CFG_READ_MAC_ADDR_FROM_MAC_FILE CFG_INI_BOOL( \
 	"read_mac_addr_from_mac_file", \
-	1, \
+	0, \
 	"Use/ignore MAC address from cfg file")
 
 /*
@@ -1359,6 +1350,14 @@ struct dhcp_server {
  *   OUI data Len: 00
  *   Info Mask : 01 - only OUI present in Info mask
  *
+ * OUI 3: 000ce7
+ *   OUI data Len: 00
+ *   Info Mask : 01 - only OUI present in Info mask
+ *
+ * OUI 4: 00e0fc
+ *   OUI data Len: 00
+ *   Info Mask : 01 - only OUI present in Info mask
+ *
  * Refer to gEnableActionOUI for more detail about the format.
  *
  * Related: gEnableActionOUI
@@ -1373,7 +1372,7 @@ struct dhcp_server {
 	"gActionOUIDisableTWT", \
 	0, \
 	ACTION_OUI_MAX_STR_LEN, \
-	"001018 00 01 000986 00 01", \
+	"001018 00 01 000986 00 01 000ce7 00 01 00e0fc 00 01", \
 	"Used to specify action OUIs to control TWT configuration")
 
 /* End of action oui inis */
@@ -1489,6 +1488,30 @@ struct dhcp_server {
 			"gEnableSARV1toSARV2", \
 			0, \
 			"Enable/Disable conversion from SARV1 to SARV2")
+
+/*
+ * <ini>
+ * gDisableWow - Used to disable wow feature
+ *
+ * @Min: 0
+ * @Max: 1
+ * Default: 0
+ *
+ * This ini is used to disable wow feature for all modes
+ * that means hlos platform suspend(cfg80211 suspend) will
+ * be rejected by wifi kernel driver.
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define CFG_WOW_DISABLE  CFG_INI_UINT( \
+			"gDisableWow", \
+			0, \
+			1, \
+			0, \
+			CFG_VALUE_OR_DEFAULT, \
+			"Disable wow feature")
 
 /*
  * <ini>
@@ -1792,6 +1815,7 @@ enum host_log_level {
 	CFG(CFG_ENABLE_DISABLE_CHANNEL) \
 	CFG(CFG_READ_MAC_ADDR_FROM_MAC_FILE) \
 	CFG(CFG_SAR_CONVERSION) \
+	CFG(CFG_WOW_DISABLE) \
 	CFG(CFG_ENABLE_HOST_MODULE_LOG_LEVEL) \
 	SAR_SAFETY_FEATURE_ALL
 #endif

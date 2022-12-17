@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -40,9 +41,6 @@
 #include "ce_tasklet.h"
 #include "targaddrs.h"
 #include "hif_exec.h"
-
-#define CNSS_RUNTIME_FILE "cnss_runtime_pm"
-#define CNSS_RUNTIME_FILE_PERM QDF_FILE_USR_READ
 
 #ifdef FEATURE_RUNTIME_PM
 #define PREVENT_LIST_STRING_LEN 200
@@ -193,10 +191,8 @@ static int hif_pci_pm_runtime_debugfs_show(struct seq_file *s, void *data)
 	int i;
 
 	seq_printf(s, "%30s: %s\n", "Runtime PM state", autopm_state[pm_state]);
-	seq_printf(s, "%30s: %d(%s)\n", "last_resume_rtpm_dbgid",
-		   rpm_ctx->pm_stats.last_resume_rtpm_dbgid,
-		   rtpm_string_from_dbgid(
-			   rpm_ctx->pm_stats.last_resume_rtpm_dbgid));
+	seq_printf(s, "%30s: %ps\n", "Last Resume Caller",
+		   rpm_ctx->pm_stats.last_resume_caller);
 	seq_printf(s, "%30s: %ps\n", "Last Busy Marker",
 		   rpm_ctx->pm_stats.last_busy_marker);
 
@@ -313,11 +309,9 @@ static void hif_runtime_pm_debugfs_create(struct hif_softc *scn)
 {
 	struct hif_runtime_pm_ctx *rpm_ctx = hif_bus_get_rpm_ctx(scn);
 
-	rpm_ctx->pm_dentry = qdf_debugfs_create_entry(CNSS_RUNTIME_FILE,
-						      CNSS_RUNTIME_FILE_PERM,
-						      NULL,
-						      scn,
-						      &hif_pci_runtime_pm_fops);
+	rpm_ctx->pm_dentry = debugfs_create_file("cnss_runtime_pm",
+						 0400, NULL, scn,
+						 &hif_pci_runtime_pm_fops);
 }
 
 /**
@@ -330,7 +324,7 @@ static void hif_runtime_pm_debugfs_remove(struct hif_softc *scn)
 {
 	struct hif_runtime_pm_ctx *rpm_ctx = hif_bus_get_rpm_ctx(scn);
 
-	qdf_debugfs_remove_file(rpm_ctx->pm_dentry);
+	debugfs_remove(rpm_ctx->pm_dentry);
 }
 
 /**
@@ -427,7 +421,7 @@ void hif_pm_runtime_stop(struct hif_softc *scn)
 
 	hif_runtime_exit(dev);
 
-	hif_pm_runtime_sync_resume(GET_HIF_OPAQUE_HDL(scn), RTPM_ID_PM_STOP);
+	hif_pm_runtime_sync_resume(GET_HIF_OPAQUE_HDL(scn));
 
 	qdf_atomic_set(&rpm_ctx->pm_state, HIF_PM_RUNTIME_STATE_NONE);
 
@@ -571,14 +565,12 @@ void hif_pm_runtime_close(struct hif_softc *scn)
 /**
  * hif_pm_runtime_sync_resume() - Invoke synchronous runtime resume.
  * @hif_ctx: hif context
- * @rtpm_dbgid: dbgid to trace who use it
  *
  * This function will invoke synchronous runtime resume.
  *
  * Return: status
  */
-int hif_pm_runtime_sync_resume(struct hif_opaque_softc *hif_ctx,
-			       wlan_rtpm_dbgid rtpm_dbgid)
+int hif_pm_runtime_sync_resume(struct hif_opaque_softc *hif_ctx)
 {
 	struct hif_softc *scn = HIF_GET_SOFTC(hif_ctx);
 	struct hif_runtime_pm_ctx *rpm_ctx;
@@ -594,12 +586,11 @@ int hif_pm_runtime_sync_resume(struct hif_opaque_softc *hif_ctx,
 	pm_state = qdf_atomic_read(&rpm_ctx->pm_state);
 	if (pm_state == HIF_PM_RUNTIME_STATE_SUSPENDED ||
 	    pm_state == HIF_PM_RUNTIME_STATE_SUSPENDING)
-		hif_info("request runtime PM resume, rtpm_dbgid(%d,%s)",
-			 rtpm_dbgid,
-			 rtpm_string_from_dbgid(rtpm_dbgid));
+		hif_info("Runtime PM resume is requested by %ps",
+			 (void *)_RET_IP_);
 
 	rpm_ctx->pm_stats.request_resume++;
-	rpm_ctx->pm_stats.last_resume_rtpm_dbgid = rtpm_dbgid;
+	rpm_ctx->pm_stats.last_resume_caller = (void *)_RET_IP_;
 
 	return pm_runtime_resume(hif_bus_get_dev(scn));
 }
@@ -1096,14 +1087,12 @@ int hif_pm_runtime_put_sync_suspend(struct hif_opaque_softc *hif_ctx,
 /**
  * hif_pm_runtime_request_resume() - Invoke async runtime resume
  * @hif_ctx: hif context
- * @rtpm_dbgid: dbgid to trace who use it
  *
  * This function will invoke asynchronous runtime resume.
  *
  * Return: status
  */
-int hif_pm_runtime_request_resume(struct hif_opaque_softc *hif_ctx,
-				  wlan_rtpm_dbgid rtpm_dbgid)
+int hif_pm_runtime_request_resume(struct hif_opaque_softc *hif_ctx)
 {
 	struct hif_softc *scn = HIF_GET_SOFTC(hif_ctx);
 	struct hif_runtime_pm_ctx *rpm_ctx;
@@ -1119,12 +1108,11 @@ int hif_pm_runtime_request_resume(struct hif_opaque_softc *hif_ctx,
 	pm_state = qdf_atomic_read(&rpm_ctx->pm_state);
 	if (pm_state == HIF_PM_RUNTIME_STATE_SUSPENDED ||
 	    pm_state == HIF_PM_RUNTIME_STATE_SUSPENDING)
-		hif_info("request runtime PM resume, rtpm_dbgid(%d,%s)",
-			 rtpm_dbgid,
-			 rtpm_string_from_dbgid(rtpm_dbgid));
+		hif_info("Runtime PM resume is requested by %ps",
+			 (void *)_RET_IP_);
 
 	rpm_ctx->pm_stats.request_resume++;
-	rpm_ctx->pm_stats.last_resume_rtpm_dbgid = rtpm_dbgid;
+	rpm_ctx->pm_stats.last_resume_caller = (void *)_RET_IP_;
 
 	return hif_pm_request_resume(hif_bus_get_dev(scn));
 }
@@ -1246,9 +1234,8 @@ int hif_pm_runtime_get(struct hif_opaque_softc *hif_ctx,
 	    pm_state == HIF_PM_RUNTIME_STATE_SUSPENDING) {
 		/* Do not log in performance path */
 		if (!is_critical_ctx) {
-			hif_info_high("request runtime PM resume, rtpm_dbgid(%d-%s)",
-				      rtpm_dbgid,
-				      rtpm_string_from_dbgid(rtpm_dbgid));
+			hif_info_high("Runtime PM resume is requested by %ps",
+				      (void *)_RET_IP_);
 		}
 		ret = -EAGAIN;
 	} else {
@@ -1256,7 +1243,7 @@ int hif_pm_runtime_get(struct hif_opaque_softc *hif_ctx,
 	}
 
 	rpm_ctx->pm_stats.request_resume++;
-	rpm_ctx->pm_stats.last_resume_rtpm_dbgid = rtpm_dbgid;
+	rpm_ctx->pm_stats.last_resume_caller = (void *)_RET_IP_;
 	hif_pm_request_resume(dev);
 
 	return ret;
@@ -1380,6 +1367,7 @@ static int __hif_pm_runtime_prevent_suspend(struct hif_softc *scn,
 		return 0;
 
 	ret = __hif_pm_runtime_get(dev);
+	hif_debug("request runtime PM resume, rtpm_dbgid %s", lock->name);
 
 	/**
 	 * The ret can be -EINPROGRESS, if Runtime status is RPM_RESUMING or
@@ -1608,7 +1596,7 @@ int hif_runtime_lock_init(qdf_runtime_lock_t *lock, const char *name)
 {
 	struct hif_pm_runtime_lock *context;
 
-	hif_debug("Initializing Runtime PM wakelock %s", name);
+	hif_info("Initializing Runtime PM wakelock %s", name);
 
 	context = qdf_mem_malloc(sizeof(*context));
 	if (!context)
@@ -1638,7 +1626,7 @@ void hif_runtime_lock_deinit(struct hif_opaque_softc *hif_ctx,
 		return;
 	}
 
-	hif_debug("Deinitializing Runtime PM wakelock %s", context->name);
+	hif_info("Deinitializing Runtime PM wakelock %s", context->name);
 
 	/*
 	 * Ensure to delete the context list entry and reduce the usage count
@@ -1748,7 +1736,7 @@ void hif_pm_runtime_check_and_request_resume(struct hif_opaque_softc *hif_ctx)
 	hif_pm_runtime_suspend_lock(hif_ctx);
 	if (hif_pm_runtime_is_suspended(hif_ctx)) {
 		hif_pm_runtime_suspend_unlock(hif_ctx);
-		hif_pm_runtime_request_resume(hif_ctx, RTPM_ID_CE_INTR_HANDLER);
+		hif_pm_runtime_request_resume(hif_ctx);
 	} else {
 		hif_pm_runtime_suspend_unlock(hif_ctx);
 	}

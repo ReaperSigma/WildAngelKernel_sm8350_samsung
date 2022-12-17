@@ -658,6 +658,29 @@ uint16_t wlan_crypto_get_keyid(uint8_t *data, int hdrlen);
 void wlan_crypto_restore_keys(struct wlan_objmgr_vdev *vdev);
 
 /**
+ * wlan_crypto_check_open_none - called by ucfg to check for open security
+ * @psoc: psoc pointer
+ * @vdev_id: vdev id
+ *
+ * This function gets called from ucfg to check open security.
+ *
+ * Return: true or false
+ */
+bool wlan_crypto_check_open_none(struct wlan_objmgr_psoc *psoc,
+				 uint8_t vedv_id);
+
+/**
+ * wlan_crypto_check_wep - called by ucfg to check for WEP security
+ * @psoc: psoc pointer
+ * @vdev_id: vdev id
+ *
+ * This function gets called from ucfg to check WEP security.
+ *
+ * Return: true or false
+ */
+bool wlan_crypto_check_wep(struct wlan_objmgr_psoc *psoc, uint8_t vedv_id);
+
+/**
  * wlan_crypto_check_rsn_match - called by ucfg to check for RSN match
  * @psoc: psoc pointer
  * @vdev_id: vdev id

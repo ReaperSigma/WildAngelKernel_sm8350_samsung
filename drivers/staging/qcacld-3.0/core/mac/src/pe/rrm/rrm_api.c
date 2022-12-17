@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -517,26 +517,42 @@ rrm_process_neighbor_report_req(struct mac_context *mac,
 	return status;
 }
 
-void rrm_get_country_code_from_connected_profile(struct mac_context *mac,
-						 uint8_t vdev_id,
-						 uint8_t *country_code)
+/**
+ * rrm_get_country_code_from_connected_profile() - Get country code
+ * from connected profile
+ * @mac: Mac context
+ * @pe_session: pe session
+ * @country_code: country code
+ *
+ * Return: void
+ */
+static inline void
+rrm_get_country_code_from_connected_profile(
+				struct mac_context *mac,
+				struct pe_session *pe_session,
+				uint8_t country_code[WNI_CFG_COUNTRY_CODE_LEN])
 {
-	QDF_STATUS status;
+	uint8_t id;
+	uint8_t *country;
 
-	status = wlan_cm_get_country_code(mac->pdev, vdev_id, country_code);
-
-	pe_debug("Country info from bcn:%c%c 0x%x", country_code[0],
-		 country_code[1], country_code[2]);
-
-	if (QDF_IS_STATUS_ERROR(status))
-		qdf_mem_zero(country_code, REG_ALPHA2_LEN + 1);
-
-	if (!country_code[0]) {
-		wlan_reg_read_current_country(mac->psoc, country_code);
-		country_code[2] = OP_CLASS_GLOBAL;
-		pe_debug("Current country info %c%c 0x%x", country_code[0],
-			 country_code[1], country_code[2]);
+	qdf_mem_zero(country_code, sizeof(country_code[0]) *
+					WNI_CFG_COUNTRY_CODE_LEN);
+	if (!pe_session) {
+		pe_err("pe_session is NULL");
+		return;
 	}
+	id = pe_session->smeSessionId;
+	if (!CSR_IS_SESSION_VALID(mac, id)) {
+		pe_err("smeSessionId %d is invalid", id);
+		return;
+	}
+	country =
+		mac->roam.roamSession[id].connectedProfile.country_code;
+	if (country[0])
+		qdf_mem_copy(country_code, country, sizeof(country_code[0]) *
+						WNI_CFG_COUNTRY_CODE_LEN);
+	else
+		country_code[2] = OP_CLASS_GLOBAL;
 }
 
 #define ABS(x)      ((x < 0) ? -x : x)
@@ -711,7 +727,7 @@ rrm_process_beacon_report_req(struct mac_context *mac,
 		return eRRM_FAILURE;
 	}
 
-	rrm_get_country_code_from_connected_profile(mac, pe_session->vdev_id,
+	rrm_get_country_code_from_connected_profile(mac, pe_session,
 						    country);
 	psbrr->channel_info.chan_num =
 		pBeaconReq->measurement_request.Beacon.channel;
@@ -1593,11 +1609,13 @@ void rrm_cleanup(struct mac_context *mac, uint8_t idx)
  *
  * Return: None
  */
-void lim_update_rrm_capability(struct mac_context *mac_ctx)
+void lim_update_rrm_capability(struct mac_context *mac_ctx,
+			       struct join_req *join_req)
 {
-	mac_ctx->rrm.rrmPEContext.rrmEnable =
-				mac_ctx->rrm.rrmConfig.rrm_enabled;
+	mac_ctx->rrm.rrmPEContext.rrmEnable = join_req->rrm_config.rrm_enabled;
 	qdf_mem_copy(&mac_ctx->rrm.rrmPEContext.rrmEnabledCaps,
-		     &mac_ctx->rrm.rrmConfig.rm_capability,
+		     &join_req->rrm_config.rm_capability,
 		     RMENABLEDCAP_MAX_LEN);
+
+	return;
 }

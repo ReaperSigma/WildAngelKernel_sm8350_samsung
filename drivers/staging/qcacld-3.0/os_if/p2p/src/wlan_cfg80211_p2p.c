@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -252,7 +252,6 @@ static void wlan_p2p_event_callback(void *user_data,
 	struct ieee80211_channel *chan;
 	struct vdev_osif_priv *osif_priv;
 	struct wireless_dev *wdev;
-	struct wlan_objmgr_pdev *pdev;
 
 	osif_debug("user data:%pK, vdev id:%d, event type:%d",
 		   user_data, p2p_event->vdev_id, p2p_event->roc_event);
@@ -282,8 +281,8 @@ static void wlan_p2p_event_callback(void *user_data,
 		goto fail;
 	}
 
-	pdev = wlan_vdev_get_pdev(vdev);
-	chan = ieee80211_get_channel(wdev->wiphy, p2p_event->chan_freq);
+	chan = ieee80211_get_channel(wdev->wiphy,
+				     wlan_chan_to_freq(p2p_event->chan));
 	if (!chan) {
 		osif_err("channel conversion failed");
 		goto fail;
@@ -343,7 +342,6 @@ int wlan_cfg80211_roc(struct wlan_objmgr_vdev *vdev,
 	uint8_t vdev_id;
 	bool ok;
 	int ret;
-	struct wlan_objmgr_pdev *pdev = NULL;
 
 	if (!vdev) {
 		osif_err("invalid vdev object");
@@ -357,14 +355,12 @@ int wlan_cfg80211_roc(struct wlan_objmgr_vdev *vdev,
 
 	psoc = wlan_vdev_get_psoc(vdev);
 	vdev_id = wlan_vdev_get_id(vdev);
-	pdev = wlan_vdev_get_pdev(vdev);
-
 	if (!psoc) {
 		osif_err("psoc handle is NULL");
 		return -EINVAL;
 	}
 
-	roc_req.chan_freq = chan->center_freq;
+	roc_req.chan = (uint32_t)wlan_freq_to_chan(chan->center_freq);
 	roc_req.duration = duration;
 	roc_req.vdev_id = (uint32_t)vdev_id;
 
@@ -376,7 +372,7 @@ int wlan_cfg80211_roc(struct wlan_objmgr_vdev *vdev,
 	}
 
 	if (!ok) {
-		osif_err("channel%d not OK for DNBS", roc_req.chan_freq);
+		osif_err("channel%d not OK for DNBS", roc_req.chan);
 		return -EINVAL;
 	}
 
@@ -413,16 +409,15 @@ int wlan_cfg80211_mgmt_tx(struct wlan_objmgr_vdev *vdev,
 	struct p2p_mgmt_tx mgmt_tx = {0};
 	struct wlan_objmgr_psoc *psoc;
 	uint8_t vdev_id;
-	qdf_freq_t chan_freq = 0;
-	struct wlan_objmgr_pdev *pdev = NULL;
+	uint32_t channel = 0;
+
 	if (!vdev) {
 		osif_err("invalid vdev object");
 		return -EINVAL;
 	}
 
-	pdev = wlan_vdev_get_pdev(vdev);
 	if (chan)
-		chan_freq = chan->center_freq;
+		channel = (uint32_t)wlan_freq_to_chan(chan->center_freq);
 	else
 		osif_debug("NULL chan, set channel to 0");
 
@@ -441,7 +436,8 @@ int wlan_cfg80211_mgmt_tx(struct wlan_objmgr_vdev *vdev,
 		int ret;
 		bool ok;
 
-		ret = policy_mgr_is_chan_ok_for_dnbs(psoc, chan_freq, &ok);
+		ret = policy_mgr_is_chan_ok_for_dnbs(
+				psoc, wlan_chan_to_freq(channel), &ok);
 		if (QDF_IS_STATUS_ERROR(ret)) {
 			osif_err("policy_mgr_is_chan_ok_for_dnbs():ret:%d",
 				 ret);
@@ -449,13 +445,13 @@ int wlan_cfg80211_mgmt_tx(struct wlan_objmgr_vdev *vdev,
 		}
 		if (!ok) {
 			osif_err("Rejecting mgmt_tx for channel:%d as DNSC is set",
-				 chan_freq);
+				 channel);
 			return -EINVAL;
 		}
 	}
 
 	mgmt_tx.vdev_id = (uint32_t)vdev_id;
-	mgmt_tx.chan_freq = chan_freq;
+	mgmt_tx.chan = channel;
 	mgmt_tx.wait = wait;
 	mgmt_tx.len = len;
 	mgmt_tx.no_cck = (uint32_t)no_cck;
@@ -464,7 +460,7 @@ int wlan_cfg80211_mgmt_tx(struct wlan_objmgr_vdev *vdev,
 	mgmt_tx.buf = buf;
 
 	return qdf_status_to_os_return(
-		ucfg_p2p_mgmt_tx(psoc, &mgmt_tx, cookie, pdev));
+		ucfg_p2p_mgmt_tx(psoc, &mgmt_tx, cookie));
 }
 
 int wlan_cfg80211_mgmt_tx_cancel(struct wlan_objmgr_vdev *vdev,

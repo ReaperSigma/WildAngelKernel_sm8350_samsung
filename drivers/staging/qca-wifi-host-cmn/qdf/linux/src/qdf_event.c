@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -77,19 +77,6 @@ QDF_STATUS qdf_event_create(qdf_event_t *event)
 }
 qdf_export_symbol(qdf_event_create);
 
-/**
- * qdf_event_set() - sets a QDF event
- * @event: The event to set to the signalled state
- *
- * The state of the specified event is set to signalled by calling
- * qdf_event_set().
- *
- * Any threads waiting on the event as a result of a qdf_event_wait() will
- * be unblocked and available to be scheduled for execution when the event
- * is signaled by a call to qdf_event_set().
- *
- * Return: QDF status
- */
 QDF_STATUS qdf_event_set(qdf_event_t *event)
 {
 	QDF_BUG(event);
@@ -106,7 +93,27 @@ QDF_STATUS qdf_event_set(qdf_event_t *event)
 
 	return QDF_STATUS_SUCCESS;
 }
+
 qdf_export_symbol(qdf_event_set);
+
+QDF_STATUS qdf_event_set_all(qdf_event_t *event)
+{
+	QDF_BUG(event);
+	if (!event)
+		return QDF_STATUS_E_FAULT;
+
+	/* ensure event is initialized */
+	QDF_BUG(event->cookie == LINUX_EVENT_COOKIE);
+	if (event->cookie != LINUX_EVENT_COOKIE)
+		return QDF_STATUS_E_INVAL;
+
+	event->done = true;
+	complete_all(&event->complete);
+
+	return QDF_STATUS_SUCCESS;
+}
+
+qdf_export_symbol(qdf_event_set_all);
 
 /**
  * qdf_event_reset() - resets a QDF event
@@ -320,8 +327,9 @@ QDF_STATUS qdf_wait_for_event_completion(qdf_event_t *event, uint32_t timeout)
 		long ret;
 
 		/* update the timeout if it's on an emulation platform */
+		timeout *= qdf_timer_get_multiplier();
 		ret = wait_for_completion_timeout(&event->complete,
-						  __qdf_scaled_msecs_to_jiffies(timeout));
+						  msecs_to_jiffies(timeout));
 
 		if (ret <= 0) {
 			status = QDF_STATUS_E_TIMEOUT;

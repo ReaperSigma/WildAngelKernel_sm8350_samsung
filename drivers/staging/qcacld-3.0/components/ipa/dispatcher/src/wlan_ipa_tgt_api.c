@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2020-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -35,11 +35,6 @@ QDF_STATUS tgt_ipa_uc_offload_enable_disable(struct wlan_objmgr_pdev *pdev,
 	IPA_ENTER();
 
 	ipa_obj = ipa_pdev_get_priv_obj(pdev);
-	if (!ipa_obj) {
-		ipa_err("IPA object is NULL");
-		return QDF_STATUS_E_INVAL;
-	}
-
 	psoc = wlan_pdev_get_psoc(pdev);
 
 	if (ipa_obj->ipa_tx_op)
@@ -48,29 +43,3 @@ QDF_STATUS tgt_ipa_uc_offload_enable_disable(struct wlan_objmgr_pdev *pdev,
 	IPA_EXIT();
 	return status;
 }
-
-QDF_STATUS
-tgt_ipa_intrabss_enable_disable(struct wlan_objmgr_pdev *pdev,
-				struct ipa_intrabss_control_params *req)
-{
-	struct wlan_ipa_priv *ipa_obj;
-	struct wlan_objmgr_psoc *psoc;
-	QDF_STATUS status = QDF_STATUS_E_FAILURE;
-
-	IPA_ENTER();
-
-	ipa_obj = ipa_pdev_get_priv_obj(pdev);
-	if (!ipa_obj) {
-		ipa_err("IPA object is NULL");
-		return QDF_STATUS_E_INVAL;
-	}
-
-	psoc = wlan_pdev_get_psoc(pdev);
-
-	if (ipa_obj->ipa_intrabss_op)
-		status = ipa_obj->ipa_intrabss_op(psoc, req);
-
-	IPA_EXIT();
-	return status;
-}
-

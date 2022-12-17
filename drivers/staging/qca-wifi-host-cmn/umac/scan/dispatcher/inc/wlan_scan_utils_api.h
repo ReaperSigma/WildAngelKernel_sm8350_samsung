@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -31,9 +32,6 @@
 #include <wlan_scan_public_structs.h>
 #include<wlan_mgmt_txrx_utils_api.h>
 #include <wlan_reg_services_api.h>
-#ifdef WLAN_FEATURE_11BE_MLO
-#include "wlan_mlo_mgr_public_structs.h"
-#endif
 
 #define ASCII_SPACE_CHARACTER 32
 
@@ -244,7 +242,7 @@ util_scan_entry_reset_timestamp(struct scan_cache_entry *scan_entry)
 	} while (0)
 
 #define WLAN_SNR_EP_MULTIPLIER BIT(7) /* pow2 to optimize out * and / */
-#define WLAN_SNR_DUMMY_MARKER  127
+#define WLAN_SNR_DUMMY_MARKER  0x127
 #define SNR_LPF_THRESHOLD      0
 #define WLAN_SNR_LPF_LEN       10
 
@@ -636,7 +634,6 @@ util_scan_free_cache_entry(struct scan_cache_entry *scan_entry)
 		qdf_mem_free(scan_entry->alt_wcn_ie.ptr);
 	if (scan_entry->raw_frame.ptr)
 		qdf_mem_free(scan_entry->raw_frame.ptr);
-
 	qdf_mem_free(scan_entry);
 }
 
@@ -660,7 +657,6 @@ util_scan_copy_beacon_data(struct scan_cache_entry *new_entry,
 {
 	u_int8_t *new_ptr, *old_ptr;
 	struct ie_list *ie_lst;
-	uint8_t i;
 
 	new_entry->raw_frame.ptr =
 		qdf_mem_malloc_atomic(scan_entry->raw_frame.len);
@@ -713,8 +709,6 @@ util_scan_copy_beacon_data(struct scan_cache_entry *new_entry,
 	ie_lst->vhtop = conv_ptr(ie_lst->vhtop, old_ptr, new_ptr);
 	ie_lst->opmode = conv_ptr(ie_lst->opmode, old_ptr, new_ptr);
 	ie_lst->cswrp = conv_ptr(ie_lst->cswrp, old_ptr, new_ptr);
-	for (i = 0; i < WLAN_MAX_NUM_TPE_IE; i++)
-		ie_lst->tpe[i] = conv_ptr(ie_lst->tpe[i], old_ptr, new_ptr);
 	ie_lst->widebw = conv_ptr(ie_lst->widebw, old_ptr, new_ptr);
 	ie_lst->txpwrenvlp = conv_ptr(ie_lst->txpwrenvlp, old_ptr, new_ptr);
 	ie_lst->bwnss_map = conv_ptr(ie_lst->bwnss_map, old_ptr, new_ptr);
@@ -733,52 +727,9 @@ util_scan_copy_beacon_data(struct scan_cache_entry *new_entry,
 	ie_lst->adaptive_11r = conv_ptr(ie_lst->adaptive_11r, old_ptr, new_ptr);
 	ie_lst->single_pmk = conv_ptr(ie_lst->single_pmk, old_ptr, new_ptr);
 	ie_lst->rsnxe = conv_ptr(ie_lst->rsnxe, old_ptr, new_ptr);
-#ifdef WLAN_FEATURE_11BE
-	/* This macro will be removed once 11be is enabled */
-	ie_lst->ehtcap = conv_ptr(ie_lst->ehtcap, old_ptr, new_ptr);
-	ie_lst->ehtop = conv_ptr(ie_lst->ehtop, old_ptr, new_ptr);
-#endif
-#ifdef WLAN_FEATURE_11BE_MLO
-	ie_lst->multi_link = conv_ptr(ie_lst->multi_link, old_ptr, new_ptr);
-#endif
 
 	return QDF_STATUS_SUCCESS;
 }
-
-#ifdef WLAN_FEATURE_11BE_MLO
-/**
- * util_scan_get_ml_partner_info() - Get partner links info of an ML connection
- * @scan_entry: scan entry
- *
- * API, function to get partner link information from an ML scan cache entry
- *
- * Return: QDF_STATUS
- */
-static inline QDF_STATUS
-util_scan_get_ml_partner_info(struct scan_cache_entry *scan_entry,
-			      struct mlo_partner_info *partner_info)
-{
-	uint8_t i;
-
-	if (!scan_entry->ml_info.num_links)
-		return QDF_STATUS_E_FAILURE;
-
-	partner_info->num_partner_links =
-			qdf_min((uint8_t)WLAN_UMAC_MLO_MAX_VDEVS - 1,
-				scan_entry->ml_info.num_links - 1);
-	/* TODO: Make sure that scan_entry->ml_info->link_info is a sorted
-	 * list */
-	for (i = 0; i < partner_info->num_partner_links; i++) {
-		partner_info->partner_link_info[i].link_addr =
-				scan_entry->ml_info.link_info[i].link_addr;
-		partner_info->partner_link_info[i].link_id =
-				scan_entry->ml_info.link_info[i].link_id;
-	}
-
-	return QDF_STATUS_SUCCESS;
-}
-#endif
-
 /**
  * util_scan_copy_cache_entry() - function to create a copy
  * of scan cache entry
@@ -926,27 +877,22 @@ util_scan_entry_adaptive_11r(struct scan_cache_entry *scan_entry)
 	return scan_entry->ie_list.adaptive_11r;
 }
 
-#if defined(WLAN_SAE_SINGLE_PMK) && defined(WLAN_FEATURE_ROAM_OFFLOAD)
 /**
  * util_scan_entry_single_pmk()- function to read single pmk Vendor IE
- * @psoc: Pointer to global psoc object
  * @scan_entry: scan entry
  *
  * API, function to read sae single pmk IE
  *
  * Return: true if single_pmk ie is present or false if ie is not present
  */
-bool
-util_scan_entry_single_pmk(struct wlan_objmgr_psoc *psoc,
-			   struct scan_cache_entry *scan_entry);
-#else
 static inline bool
-util_scan_entry_single_pmk(struct wlan_objmgr_psoc *psoc,
-			   struct scan_cache_entry *scan_entry)
+util_scan_entry_single_pmk(struct scan_cache_entry *scan_entry)
 {
+	if (scan_entry->ie_list.single_pmk)
+		return true;
+
 	return false;
 }
-#endif
 
 /**
  * util_scan_get_rsn_len()- function to read rsn IE length if present
@@ -1552,51 +1498,6 @@ util_scan_entry_heop(struct scan_cache_entry *scan_entry)
 	return scan_entry->ie_list.heop;
 }
 
-#ifdef WLAN_FEATURE_11BE
-/**
- * util_scan_entry_ehtcap() - function to read eht caps vendor ie
- * @scan_entry: scan entry
- *
- * API, function to read eht caps vendor ie
- *
- * Return: eht caps vendorie or NULL if ie is not present
- */
-static inline uint8_t*
-util_scan_entry_ehtcap(struct scan_cache_entry *scan_entry)
-{
-	return scan_entry->ie_list.ehtcap;
-}
-
-/**
- * util_scan_entry_ehtop() - function to read ehtop vendor ie
- * @scan_entry: scan entry
- *
- * API, function to read ehtop vendor ie
- *
- * Return, ehtop vendorie or NULL if ie is not present
- */
-static inline uint8_t*
-util_scan_entry_ehtop(struct scan_cache_entry *scan_entry)
-{
-	return scan_entry->ie_list.ehtop;
-}
-
-#endif
-
-/**
- * util_scan_entry_tpe() - function to read tpe ie
- * @scan_entry: scan entry
- *
- * API, function to read tpe ie
- *
- * Return, tpe ie or NULL if ie is not present
- */
-static inline uint8_t**
-util_scan_entry_tpe(struct scan_cache_entry *scan_entry)
-{
-	return scan_entry->ie_list.tpe;
-}
-
 /**
  * util_scan_entry_muedca() - function to read MU-EDCA IE
  * @scan_entry: scan entry
@@ -1732,6 +1633,14 @@ util_scan_entry_rsnxe(struct scan_cache_entry *scan_entry)
 }
 
 /**
+ * util_scan_scm_chan_to_band() - function to tell band for channel number
+ * @chan: Channel number
+ *
+ * Return: Band information as per channel
+ */
+enum wlan_band util_scan_scm_chan_to_band(uint32_t chan);
+
+/**
  * util_scan_scm_freq_to_band() - API to get band from frequency
  * @freq: Channel frequency
  *
@@ -1813,4 +1722,20 @@ static inline bool util_scan_is_null_ssid(struct wlan_ssid *ssid)
 	return false;
 }
 
+/**
+ * util_scan_get_6g_oper_channel() - function to get primary channel
+ * from he op IE
+ * he_op_ie : ie pointer
+ *
+ * Return : primary channel or 0 if 6g params is not present.
+ */
+#ifdef CONFIG_BAND_6GHZ
+uint8_t util_scan_get_6g_oper_channel(uint8_t *he_op_ie);
+#else
+static inline uint8_t
+util_scan_get_6g_oper_channel(uint8_t *he_op_ie)
+{
+	return 0;
+}
+#endif
 #endif

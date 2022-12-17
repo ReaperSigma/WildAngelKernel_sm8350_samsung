@@ -81,8 +81,10 @@ wdi_event_handler(enum WDI_EVENT event,
 		ol_txrx_err("Invalid WDI event");
 		return;
 	}
-	if (!soc)
+	if (!soc) {
+		ol_txrx_err("Invalid soc");
 		return;
+	}
 
 	txrx_pdev = ol_txrx_get_pdev_from_pdev_id(soc, pdev_id);
 	if (!txrx_pdev) {

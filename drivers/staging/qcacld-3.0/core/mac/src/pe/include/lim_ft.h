@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -38,8 +38,8 @@ void lim_ft_cleanup(struct mac_context *mac, struct pe_session *pe_session);
 #ifdef WLAN_FEATURE_HOST_ROAM
 void lim_ft_cleanup_pre_auth_info(struct mac_context *mac,
 		struct pe_session *pe_session);
-bool lim_process_ft_pre_auth_req(struct mac_context *mac,
-				 tpSirFTPreAuthReq ft_pre_auth_req);
+int lim_process_ft_pre_auth_req(struct mac_context *mac,
+				struct scheduler_msg *pMsg);
 void lim_process_ft_preauth_rsp_timeout(struct mac_context *mac);
 
 /**
@@ -128,10 +128,10 @@ static inline void lim_preauth_scan_event_handler(struct mac_context *mac_ctx,
 		enum sir_scan_event_type event,
 		uint8_t vdev_id, uint32_t scan_id)
 {}
-static inline bool lim_process_ft_pre_auth_req(
-		struct mac_context *mac, tpSirFTPreAuthReq ft_pre_auth_req)
+static inline int lim_process_ft_pre_auth_req(struct mac_context *mac,
+		struct scheduler_msg *pMsg)
 {
-	return false;
+	return 0;
 }
 #endif
 
@@ -140,15 +140,13 @@ void lim_fill_ft_session(struct mac_context *mac,
 		struct bss_description *pbssDescription,
 		struct pe_session *ft_session,
 		struct pe_session *pe_session,
-		enum wlan_phymode bss_phymode,
-		tpSirAssocRsp assoc_rsp);
+		enum wlan_phymode bss_phymode);
 
 /**
  * lim_ft_prepare_add_bss_req() - Create Add Bss Req to the new AP
  * @mac: Global MAC context
  * @add_bss_params: Bss params including rsp data
  * @pe_session: PE Session
- * @assoc_rsp: assoc response from ap
  *
  * This will be used when we are ready to FT to the new AP.
  * The newly created ft Session entry is passed to this function
@@ -157,8 +155,7 @@ void lim_fill_ft_session(struct mac_context *mac,
  */
 void lim_ft_prepare_add_bss_req(struct mac_context *mac,
 				struct pe_session *ft_session,
-				struct bss_description *bssDescription,
-				tpSirAssocRsp assoc_rsp);
+				struct bss_description *bssDescription);
 
 QDF_STATUS lim_send_preauth_scan_offload(struct mac_context *mac_ctx,
 		struct pe_session *session_entry, tSirFTPreAuthReq *ft_preauth_req);
@@ -167,13 +164,11 @@ static inline void lim_fill_ft_session(struct mac_context *mac,
 		struct bss_description *pbssDescription,
 		struct pe_session *ft_session,
 		struct pe_session *pe_session,
-		enum wlan_phymode bss_phymode,
-		tpSirAssocRsp assoc_rsp)
+		enum wlan_phymode bss_phymode)
 {}
 static inline void lim_ft_prepare_add_bss_req(struct mac_context *mac,
 		struct pe_session *ft_session,
-		struct bss_description *bssDescription,
-		tpSirAssocRsp assoc_rsp)
+		struct bss_description *bssDescription)
 {}
 #endif
 

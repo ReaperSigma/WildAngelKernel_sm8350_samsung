@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -32,6 +33,7 @@
 #include "wlan_vdev_mgr_utils_api.h"
 #include "wni_api.h"
 #include "wlan_mlme_vdev_mgr_interface.h"
+#include "wlan_scan_api.h"
 
 static void if_mgr_enable_roaming_on_vdev(struct wlan_objmgr_pdev *pdev,
 					  void *object, void *arg)
@@ -380,6 +382,7 @@ static bool if_mgr_validate_sta_bcn_intrvl(struct wlan_objmgr_vdev *vdev,
 	uint32_t beacon_interval;
 	struct wlan_channel *chan;
 	enum QDF_OPMODE curr_persona;
+	enum wlan_peer_type bss_persona;
 	uint8_t allow_mcc_go_diff_bi;
 	uint8_t conc_rule1 = 0, conc_rule2 = 0;
 	uint8_t vdev_id = wlan_vdev_get_id(vdev);
@@ -393,11 +396,11 @@ static bool if_mgr_validate_sta_bcn_intrvl(struct wlan_objmgr_vdev *vdev,
 		return false;
 
 	curr_persona = wlan_vdev_mlme_get_opmode(vdev);
+	bss_persona = wlan_peer_get_peer_type(peer);
 
 	wlan_objmgr_peer_release_ref(peer, WLAN_IF_MGR_ID);
 
-	if (curr_persona == QDF_STA_MODE ||
-	    curr_persona == QDF_P2P_CLIENT_MODE) {
+	if (curr_persona == QDF_P2P_CLIENT_MODE) {
 		ifmgr_debug("Bcn Intrvl validation not require for STA/CLIENT");
 		return false;
 	}
@@ -419,7 +422,7 @@ static bool if_mgr_validate_sta_bcn_intrvl(struct wlan_objmgr_vdev *vdev,
 	wlan_util_vdev_mlme_get_param(vdev_mlme, WLAN_MLME_CFG_BEACON_INTERVAL,
 				      &beacon_interval);
 
-	if (curr_persona == QDF_SAP_MODE &&
+	if (bss_persona == WLAN_PEER_AP &&
 	    (chan->ch_cfreq1 != bss_arg->ch_freq ||
 	     chan->ch_cfreq2 != bss_arg->ch_freq)) {
 		ifmgr_debug("*** MCC with SAP+STA sessions ****");
@@ -427,7 +430,7 @@ static bool if_mgr_validate_sta_bcn_intrvl(struct wlan_objmgr_vdev *vdev,
 		return true;
 	}
 
-	if (curr_persona == QDF_P2P_GO_MODE &&
+	if (bss_persona == WLAN_PEER_P2P_GO &&
 	    (chan->ch_cfreq1 != bss_arg->ch_freq ||
 	     chan->ch_cfreq2 != bss_arg->ch_freq) &&
 	    beacon_interval != bss_arg->bss_beacon_interval) {
@@ -683,8 +686,11 @@ bool if_mgr_is_beacon_interval_valid(struct wlan_objmgr_pdev *pdev,
 	if (!bss_arg.is_done)
 		return true;
 
-	if (bss_arg.is_done && QDF_IS_STATUS_SUCCESS(bss_arg.status))
-		return true;
+	if (bss_arg.bss_beacon_interval != candidate->beacon_interval) {
+		candidate->beacon_interval = bss_arg.bss_beacon_interval;
+		if (bss_arg.status == QDF_STATUS_SUCCESS)
+			return true;
+	}
 
 	return false;
 }
@@ -741,6 +747,20 @@ QDF_STATUS if_mgr_validate_candidate(struct wlan_objmgr_vdev *vdev,
 		return QDF_STATUS_E_FAILURE;
 
 	/*
+	 * Do not allow STA to connect on 6Ghz or indoor channel for non dbs
+	 * hardware if SAP and skip_6g_and_indoor_freq_scan ini are present
+	 */
+	if (op_mode == QDF_STA_MODE &&
+	    !policy_mgr_is_sta_chan_valid_for_connect_and_roam(pdev,
+							       chan_freq)) {
+		ifmgr_debug("STA connection not allowed on bssid: "QDF_MAC_ADDR_FMT" with freq: %d (6Ghz or indoor(%d)), as not valid for connection",
+			    QDF_MAC_ADDR_REF(candidate_info->peer_addr.bytes),
+			    chan_freq,
+			    wlan_reg_is_freq_indoor(pdev, chan_freq));
+		return QDF_STATUS_E_INVAL;
+	}
+
+	/*
 	 * Ignore the BSS if any other vdev is already connected to it.
 	 */
 	qdf_copy_macaddr(&bssid_arg.peer_addr,
@@ -794,9 +814,6 @@ QDF_STATUS if_mgr_validate_candidate(struct wlan_objmgr_vdev *vdev,
 
 		if (conc_freq) {
 			if ((conc_freq == chan_freq) ||
-			    (policy_mgr_is_hw_sbs_capable(psoc) &&
-			     policy_mgr_are_sbs_chan(psoc, conc_freq,
-			     chan_freq)) ||
 			    (policy_mgr_is_hw_dbs_capable(psoc) &&
 			    !wlan_reg_is_same_band_freqs(conc_freq,
 							 chan_freq))) {

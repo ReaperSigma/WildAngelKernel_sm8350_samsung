@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -67,9 +67,6 @@ QDF_STATUS target_if_pmo_send_vdev_update_param_req(
 		break;
 	case pmo_vdev_param_forced_dtim_count:
 		param_id = WMI_VDEV_PARAM_FORCE_DTIM_CNT;
-		break;
-	case pmo_vdev_param_moddtim:
-		param_id = WMI_VDEV_PARAM_MODDTIM_CNT;
 		break;
 	default:
 		target_if_err("invalid vdev param id %d", param_id);
@@ -277,7 +274,7 @@ QDF_STATUS target_if_pmo_psoc_send_wow_enable_req(
 		return QDF_STATUS_E_INVAL;
 	}
 
-	wma_check_and_set_wake_timer(INSTALL_KEY_TIMEOUT_MS);
+	wma_check_and_set_wake_timer(SIR_INSTALL_KEY_TIMEOUT_MS);
 	return wmi_unified_wow_enable_send(wmi_handle,
 					   (struct wow_cmd_params *)param,
 					   TGT_WILDCARD_PDEV_ID);

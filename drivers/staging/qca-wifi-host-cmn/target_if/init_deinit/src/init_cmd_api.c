@@ -467,17 +467,12 @@ void init_deinit_prepare_send_init_cmd(
 	if (info->service_ext2_param.twt_ack_support_cap)
 		info->wlan_res_cfg.twt_ack_support_cap = true;
 
-	info->wlan_res_cfg.target_cap_flags =
-		target_psoc_get_target_cap_flags(tgt_hdl);
-
 	target_if_debug("FW version 0x%x ", info->target_caps.fw_version);
 	if (init_deinit_is_service_ext_msg(psoc, tgt_hdl) == QDF_STATUS_SUCCESS)
 		target_if_debug("0x%x\n",
 				info->service_ext_param.fw_build_vers_ext);
 	else
 		target_if_debug("0x%x\n", info->target_caps.fw_version_1);
-
-	target_if_ext_res_cfg_enable(psoc, tgt_hdl, NULL);
 
 	wmi_unified_init_cmd_send(wmi_handle, &init_param);
 

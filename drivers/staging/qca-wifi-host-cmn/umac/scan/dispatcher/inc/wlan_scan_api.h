@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -89,6 +90,22 @@ QDF_STATUS wlan_scan_cfg_set_passive_6g_dwelltime(struct wlan_objmgr_psoc *psoc,
  */
 QDF_STATUS wlan_scan_cfg_get_passive_6g_dwelltime(struct wlan_objmgr_psoc *psoc,
 						  uint32_t *dwell_time);
+
+/**
+ * wlan_scan_cfg_get_min_dwelltime_6g() - API to get minimum 6g dwelltime
+ * @psoc: pointer to psoc object
+ * @min_dwell_time_6ghz: minimum dwelltime 6g
+ *
+ * Return: QDF_STATUS
+ */
+void wlan_scan_cfg_get_min_dwelltime_6g(struct wlan_objmgr_psoc *psoc,
+					uint32_t *min_dwell_time_6ghz);
+#else
+static inline
+void wlan_scan_cfg_get_min_dwelltime_6g(struct wlan_objmgr_psoc *psoc,
+					uint32_t *min_dwell_time_6ghz)
+{
+}
 #endif
 
 /**
@@ -128,20 +145,6 @@ void wlan_scan_cfg_set_passive_dwelltime(struct wlan_objmgr_psoc *psoc,
  */
 void wlan_scan_cfg_get_passive_dwelltime(struct wlan_objmgr_psoc *psoc,
 					 uint32_t *dwell_time);
-
-#ifdef WLAN_POLICY_MGR_ENABLE
-/*
- * wlan_scan_update_pno_dwell_time() - update active and passive dwell time
- * depending on active concurrency modes
- * @vdev: vdev object pointer
- * @req: scan request
- *
- * Return: void
- */
-void wlan_scan_update_pno_dwell_time(struct wlan_objmgr_vdev *vdev,
-				     struct pno_scan_req_params *req,
-				     struct scan_default_params *scan_def);
-#endif
 
 /**
  * wlan_scan_cfg_get_conc_active_dwelltime() - Get concurrent active dwelltime
@@ -268,16 +271,6 @@ wlan_scan_process_bcn_probe_rx_sync(struct wlan_objmgr_psoc *psoc,
 qdf_time_t wlan_scan_get_aging_time(struct wlan_objmgr_psoc *psoc);
 
 /**
- * wlan_scan_set_aging_time  - Set the scan aging time config
- * @psoc: psoc context
- * @time: scan aging time
- *
- * Return: success or error code.
- */
-QDF_STATUS wlan_scan_set_aging_time(struct wlan_objmgr_psoc *psoc,
-				    qdf_time_t time);
-
-/**
  * wlan_scan_purge_results() - purge the scan list
  * @scan_list: scan list to be purged
  *
@@ -343,63 +336,12 @@ QDF_STATUS wlan_scan_start(struct scan_start_request *req);
 QDF_STATUS wlan_scan_cancel(struct scan_cancel_request *req);
 
 /**
- * wlan_scan_get_scan_id() - Public API to allocate scan ID
+ * wlan_scan_cfg_skip_6g_and_indoor_freq() - API to get 6g and indoor freq
+ * scan ini val
  * @psoc: psoc object
  *
- * Public API, allocates a new scan id for caller
- *
- * Return: newly allocated scan ID
+ * Return: skip 6g and indoor freq scan or not
  */
-wlan_scan_id
-wlan_scan_get_scan_id(struct wlan_objmgr_psoc *psoc);
-
-/**
- * wlan_scan_init_default_params() - Public API to initialize scan params
- * @vdev: vdev object
- * @req: scan request object
- *
- * Public API to initialize scan start request with defaults scan params
- *
- * Return: QDF_STATUS_SUCCESS or error code
- */
-QDF_STATUS
-wlan_scan_init_default_params(struct wlan_objmgr_vdev *vdev,
-			      struct scan_start_request *req);
-
-/**
- * wlan_scan_register_requester() - Public API, assigns requester ID
- * to caller and registers scan event call back handler
- * @psoc:       psoc object
- * @module_name:name of requester module
- * @event_cb:   event callback function pointer
- * @arg:        argument to @event_cb
- *
- * API, allows other components to allocate requester id.
- * Normally used by modules at init time to register their callback
- * and get one requester id. @event_cb will be invoked for
- * all scan events whose requester id matches with @requester.
- *
- * Return: assigned non zero requester id for success
- *         zero (0) for failure
- */
-wlan_scan_requester
-wlan_scan_register_requester(struct wlan_objmgr_psoc *psoc,
-			     uint8_t *module_name,
-			     scan_event_handler event_cb,
-			     void *arg);
-
-/**
- * wlan_scan_unregister_requester() -Public API, reclaims previously
- * allocated requester ID
- * @psoc:       psoc object
- * @requester:  requester ID to reclaim.
- *
- * API, reclaims previously allocated requester id.
- *
- * Return: void
- */
-void
-wlan_scan_unregister_requester(struct wlan_objmgr_psoc *psoc,
-			       wlan_scan_requester requester);
-
+bool wlan_scan_cfg_skip_6g_and_indoor_freq(
+			struct wlan_objmgr_psoc *psoc);
 #endif

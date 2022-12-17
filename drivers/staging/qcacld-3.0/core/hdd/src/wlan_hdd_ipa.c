@@ -30,11 +30,6 @@
 #include <wlan_hdd_softap_tx_rx.h>
 #include <linux/inetdevice.h>
 #include <qdf_trace.h>
-/* Test against msm kernel version */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)) && \
-	IS_ENABLED(CONFIG_SCHED_WALT)
-#include <linux/sched/walt.h>
-#endif
 
 void hdd_ipa_set_tx_flow_info(void)
 {
@@ -63,12 +58,16 @@ void hdd_ipa_set_tx_flow_info(void)
 	wlan_net_dev_ref_dbgid dbgid = NET_DEV_HOLD_IPA_SET_TX_FLOW_INFO;
 
 	hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
-	if (!hdd_ctx)
+	if (!hdd_ctx) {
+		hdd_err("HDD context is NULL");
 		return;
+	}
 
 	cds_ctx = cds_get_context(QDF_MODULE_ID_QDF);
-	if (!cds_ctx)
+	if (!cds_ctx) {
+		hdd_err("Invalid CDS Context");
 		return;
+	}
 
 	psoc = hdd_ctx->psoc;
 
@@ -77,7 +76,8 @@ void hdd_ipa_set_tx_flow_info(void)
 		switch (adapter->device_mode) {
 		case QDF_STA_MODE:
 			sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
-			if (hdd_cm_is_vdev_associated(adapter)) {
+			if (eConnectionState_Associated ==
+			    sta_ctx->conn_info.conn_state) {
 				staChannel = wlan_reg_freq_to_chan(
 						hdd_ctx->pdev,
 						sta_ctx->conn_info.chan_freq);
@@ -90,7 +90,8 @@ void hdd_ipa_set_tx_flow_info(void)
 			break;
 		case QDF_P2P_CLIENT_MODE:
 			sta_ctx = WLAN_HDD_GET_STATION_CTX_PTR(adapter);
-			if (hdd_cm_is_vdev_associated(adapter)) {
+			if (eConnectionState_Associated ==
+			    sta_ctx->conn_info.conn_state) {
 				p2pChannel = wlan_reg_freq_to_chan(
 					hdd_ctx->pdev,
 					sta_ctx->conn_info.chan_freq);
@@ -326,8 +327,7 @@ void hdd_ipa_set_tx_flow_info(void)
 	}
 }
 
-#if (defined(QCA_CONFIG_SMP) && defined(PF_WAKE_UP_IDLE)) ||\
-	IS_ENABLED(CONFIG_SCHED_WALT)
+#if defined(QCA_CONFIG_SMP) && defined(PF_WAKE_UP_IDLE)
 /**
  * hdd_ipa_get_wake_up_idle() - Get PF_WAKE_UP_IDLE flag in the task structure
  *
@@ -363,7 +363,6 @@ static void hdd_ipa_set_wake_up_idle(bool wake_up_idle)
 }
 #endif
 
-#ifdef QCA_CONFIG_SMP
 /**
  * hdd_ipa_send_to_nw_stack() - Check if IPA supports NAPI
  * polling during RX
@@ -385,15 +384,6 @@ static int hdd_ipa_send_to_nw_stack(qdf_nbuf_t skb)
 		result = netif_rx_ni(skb);
 	return result;
 }
-#else
-static int hdd_ipa_send_to_nw_stack(qdf_nbuf_t skb)
-{
-	int result;
-
-	result = netif_rx_ni(skb);
-	return result;
-}
-#endif
 
 #ifdef QCA_CONFIG_SMP
 
@@ -529,8 +519,10 @@ void hdd_ipa_set_mcc_mode(bool mcc_mode)
 	struct hdd_context *hdd_ctx;
 
 	hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
-	if (!hdd_ctx)
+	if (!hdd_ctx) {
+		hdd_err("HDD context is NULL");
 		return;
+	}
 
 	ucfg_ipa_set_mcc_mode(hdd_ctx->pdev, mcc_mode);
 }

@@ -38,7 +38,6 @@
 #include <linux/tcp.h>
 #include <qdf_util.h>
 #include <qdf_nbuf_frag.h>
-#include "qdf_time.h"
 
 /*
  * Use socket buffer as the underlying implementation as skbuf .
@@ -70,14 +69,6 @@ typedef struct sk_buff_head __qdf_nbuf_queue_head_t;
 #define QDF_NBUF_CB_PACKET_TYPE_ICMP   5
 #define QDF_NBUF_CB_PACKET_TYPE_ICMPv6 6
 
-#define RADIOTAP_BASE_HEADER_LEN sizeof(struct ieee80211_radiotap_header)
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0))
-#define IEEE80211_RADIOTAP_HE 23
-#define IEEE80211_RADIOTAP_HE_MU 24
-#endif
-
-#define IEEE80211_RADIOTAP_HE_MU_OTHER 25
 
 /* mark the first packet after wow wakeup */
 #define QDF_MARK_FIRST_WAKEUP_PACKET   0x80000000
@@ -118,7 +109,6 @@ typedef union {
  * @rx.dev.priv_cb_w.fctx: ctx to handle special pkts defined by ftype
  * @rx.dev.priv_cb_w.msdu_len: length of RX packet
  * @rx.dev.priv_cb_w.peer_id: peer_id for RX packet
- * @rx.dev.priv_cb_w.flag_intra_bss: flag to indicate this is intra bss packet
  * @rx.dev.priv_cb_w.protocol_tag: protocol tag set by app for rcvd packet type
  * @rx.dev.priv_cb_w.flow_tag: flow tag set by application for 5 tuples rcvd
  *
@@ -231,9 +221,7 @@ struct qdf_nbuf_cb {
 				struct {
 					void *ext_cb_ptr;
 					void *fctx;
-					uint16_t msdu_len : 14,
-						 flag_intra_bss : 1,
-						 reserved : 1;
+					uint16_t msdu_len;
 					uint16_t peer_id;
 					uint16_t protocol_tag;
 					uint16_t flow_tag;
@@ -323,9 +311,7 @@ struct qdf_nbuf_cb {
 						uint8_t bi_map:1,
 							reserved:7;
 					} dma_option;
-					uint8_t flag_notify_comp:1,
-						rsvd:7;
-					uint8_t reserved[2];
+					uint8_t reserved[3];
 				} priv_cb_m;
 			} dev;
 			uint8_t ftype;
@@ -340,7 +326,7 @@ struct qdf_nbuf_cb {
 						flag_chfrag_cont:1,
 						flag_chfrag_end:1,
 						flag_ext_header:1,
-						reserved:1;
+						flag_notify_comp:1;
 				} bits;
 				uint8_t u8;
 			} flags;
@@ -486,6 +472,8 @@ QDF_COMPILE_TIME_ASSERT(qdf_nbuf_cb_size,
 		((skb)->cb))->u.tx.flags.bits.flag_nbuf)
 #define QDF_NBUF_CB_TX_NUM_EXTRA_FRAGS(skb) \
 	(((struct qdf_nbuf_cb *)((skb)->cb))->u.tx.flags.bits.num)
+#define QDF_NBUF_CB_TX_EXTRA_FRAG_FLAGS_NOTIFY_COMP(skb) \
+	(((struct qdf_nbuf_cb *)((skb)->cb))->u.tx.flags.bits.flag_notify_comp)
 #define QDF_NBUF_CB_TX_EXTRA_FRAG_FLAGS_CHFRAG_START(skb) \
 	(((struct qdf_nbuf_cb *) \
 	((skb)->cb))->u.tx.flags.bits.flag_chfrag_start)
@@ -797,20 +785,6 @@ __qdf_nbuf_alloc(__qdf_device_t osdev, size_t size, int reserve, int align,
 __qdf_nbuf_t __qdf_nbuf_alloc_no_recycler(size_t size, int reserve, int align,
 					  const char *func, uint32_t line);
 
-/**
- * __qdf_nbuf_clone() - clone the nbuf (copy is readonly)
- * @skb: Pointer to network buffer
- *
- * if GFP_ATOMIC is overkill then we can check whether its
- * called from interrupt context and then do it or else in
- * normal case use GFP_KERNEL
- *
- * example     use "in_irq() || irqs_disabled()"
- *
- * Return: cloned skb
- */
-__qdf_nbuf_t __qdf_nbuf_clone(__qdf_nbuf_t nbuf);
-
 void __qdf_nbuf_free(struct sk_buff *skb);
 QDF_STATUS __qdf_nbuf_map(__qdf_device_t osdev,
 			struct sk_buff *skb, qdf_dma_dir_t dir);
@@ -1082,6 +1056,30 @@ static inline size_t __qdf_nbuf_get_nr_frags(struct sk_buff *skb)
 #define __qdf_nbuf_pool_delete(osdev)
 
 /**
+ * __qdf_nbuf_clone() - clone the nbuf (copy is readonly)
+ * @skb: Pointer to network buffer
+ *
+ * if GFP_ATOMIC is overkill then we can check whether its
+ * called from interrupt context and then do it or else in
+ * normal case use GFP_KERNEL
+ *
+ * example     use "in_irq() || irqs_disabled()"
+ *
+ * Return: cloned skb
+ */
+static inline struct sk_buff *__qdf_nbuf_clone(struct sk_buff *skb)
+{
+	struct sk_buff *skb_new = NULL;
+
+	skb_new = skb_clone(skb, GFP_ATOMIC);
+	if (skb_new) {
+		__qdf_frag_count_inc(__qdf_nbuf_get_nr_frags(skb_new));
+		__qdf_nbuf_count_inc(skb_new);
+	}
+	return skb_new;
+}
+
+/**
  * __qdf_nbuf_copy() - returns a private copy of the skb
  * @skb: Pointer to network buffer
  *
@@ -1096,6 +1094,7 @@ static inline struct sk_buff *__qdf_nbuf_copy(struct sk_buff *skb)
 
 	skb_new = skb_copy(skb, GFP_ATOMIC);
 	if (skb_new) {
+		__qdf_frag_count_inc(__qdf_nbuf_get_nr_frags(skb_new));
 		__qdf_nbuf_count_inc(skb_new);
 	}
 	return skb_new;
@@ -1404,8 +1403,8 @@ __qdf_nbuf_append_ext_list(struct sk_buff *skb_head,
 			struct sk_buff *ext_list, size_t ext_len)
 {
 	skb_shinfo(skb_head)->frag_list = ext_list;
-	skb_head->data_len += ext_len;
-	skb_head->len += ext_len;
+	skb_head->data_len = ext_len;
+	skb_head->len += skb_head->data_len;
 }
 
 /**
@@ -2260,60 +2259,6 @@ static inline void __qdf_nbuf_orphan(struct sk_buff *skb)
 }
 
 /**
- * __qdf_nbuf_get_end_offset() - Return the size of the nbuf from
- * head pointer to end pointer
- * @nbuf: qdf_nbuf_t
- *
- * Return: size of network buffer from head pointer to end
- * pointer
- */
-static inline unsigned int __qdf_nbuf_get_end_offset(__qdf_nbuf_t nbuf)
-{
-	return skb_end_offset(nbuf);
-}
-
-#ifdef CONFIG_WLAN_SYSFS_MEM_STATS
-/**
- * __qdf_record_nbuf_nbytes() - add or subtract the size of the nbuf
- * from the total skb mem and DP tx/rx skb mem
- * @nbytes: number of bytes
- * @dir: direction
- * @is_mapped: is mapped or unmapped memory
- *
- * Return: none
- */
-static inline void __qdf_record_nbuf_nbytes(
-	int nbytes, qdf_dma_dir_t dir, bool is_mapped)
-{
-	if (is_mapped) {
-		if (dir == QDF_DMA_TO_DEVICE) {
-			qdf_mem_dp_tx_skb_cnt_inc();
-			qdf_mem_dp_tx_skb_inc(nbytes);
-		} else if (dir == QDF_DMA_FROM_DEVICE) {
-			qdf_mem_dp_rx_skb_cnt_inc();
-			qdf_mem_dp_rx_skb_inc(nbytes);
-		}
-		qdf_mem_skb_total_inc(nbytes);
-	} else {
-		if (dir == QDF_DMA_TO_DEVICE) {
-			qdf_mem_dp_tx_skb_cnt_dec();
-			qdf_mem_dp_tx_skb_dec(nbytes);
-		} else if (dir == QDF_DMA_FROM_DEVICE) {
-			qdf_mem_dp_rx_skb_cnt_dec();
-			qdf_mem_dp_rx_skb_dec(nbytes);
-		}
-		qdf_mem_skb_total_dec(nbytes);
-	}
-}
-
-#else /* CONFIG_WLAN_SYSFS_MEM_STATS */
-static inline void __qdf_record_nbuf_nbytes(
-	int nbytes, qdf_dma_dir_t dir, bool is_mapped)
-{
-}
-#endif /* CONFIG_WLAN_SYSFS_MEM_STATS */
-
-/**
  * __qdf_nbuf_map_nbytes_single() - map nbytes
  * @osdev: os device
  * @buf: buffer
@@ -2338,18 +2283,13 @@ static inline QDF_STATUS __qdf_nbuf_map_nbytes_single(
 		qdf_dma_dir_t dir, int nbytes)
 {
 	qdf_dma_addr_t paddr;
-	QDF_STATUS ret;
 
 	/* assume that the OS only provides a single fragment */
 	QDF_NBUF_CB_PADDR(buf) = paddr =
 		dma_map_single(osdev->dev, buf->data,
 			       nbytes, __qdf_dma_dir_to_os(dir));
-	ret =  dma_mapping_error(osdev->dev, paddr) ?
+	return dma_mapping_error(osdev->dev, paddr) ?
 		QDF_STATUS_E_FAULT : QDF_STATUS_SUCCESS;
-	if (QDF_IS_STATUS_SUCCESS(ret))
-		__qdf_record_nbuf_nbytes(__qdf_nbuf_get_end_offset(buf),
-					 dir, true);
-	return ret;
 }
 #endif
 /**
@@ -2376,8 +2316,6 @@ __qdf_nbuf_unmap_nbytes_single(qdf_device_t osdev, struct sk_buff *buf,
 	qdf_dma_addr_t paddr = QDF_NBUF_CB_PADDR(buf);
 
 	if (qdf_likely(paddr)) {
-		__qdf_record_nbuf_nbytes(
-			__qdf_nbuf_get_end_offset(buf), dir, false);
 		dma_unmap_single(osdev->dev, paddr, nbytes,
 				 __qdf_dma_dir_to_os(dir));
 		return;
@@ -2567,17 +2505,6 @@ static inline qdf_size_t __qdf_nbuf_get_data_len(__qdf_nbuf_t nbuf)
 static inline uint16_t __qdf_nbuf_get_gso_segs(struct sk_buff *skb)
 {
 	return skb_shinfo(skb)->gso_segs;
-}
-
-/*
- * __qdf_nbuf_net_timedelta() - get time delta
- * @t: time as __qdf_ktime_t object
- *
- * Return: time delta as ktime_t object
- */
-static inline qdf_ktime_t __qdf_nbuf_net_timedelta(qdf_ktime_t t)
-{
-	return net_timedelta(t);
 }
 
 #ifdef CONFIG_NBUF_AP_PLATFORM

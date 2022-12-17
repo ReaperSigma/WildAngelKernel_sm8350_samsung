@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -58,7 +59,6 @@
 
 #include <cdp_txrx_cfg.h>
 #include <cdp_txrx_cmn.h>
-#include <lim_mlo.h>
 
 #ifdef FEATURE_WLAN_TDLS
 #define IS_TDLS_PEER(type)  ((type) == STA_ENTRY_TDLS_PEER)
@@ -203,8 +203,7 @@ lim_check_rx_basic_rates(struct mac_context *mac, tSirMacRateSet rxRateSet,
 
 	/* Extract BSS basic rateset from operational rateset */
 	for (i = 0, j = 0;
-	     ((i < pRateSet->numRates) && (i < SIR_MAC_MAX_NUMBER_OF_RATES));
-	     i++) {
+	     ((i < pRateSet->numRates) && (i < WLAN_SUPPORTED_RATES_IE_MAX_LEN)); i++) {
 		if ((pRateSet->rate[i] & 0x80) == 0x80) {
 			/* msb is set, so this is a basic rate */
 			basicRate.rate[j++] = pRateSet->rate[i];
@@ -218,8 +217,8 @@ lim_check_rx_basic_rates(struct mac_context *mac, tSirMacRateSet rxRateSet,
 	for (k = 0; k < j; k++) {
 		match = 0;
 		for (i = 0;
-		     ((i < rxRateSet.numRates) &&
-		      (i < SIR_MAC_MAX_NUMBER_OF_RATES)); i++) {
+		     ((i < rxRateSet.numRates)
+		      && (i < WLAN_SUPPORTED_RATES_IE_MAX_LEN)); i++) {
 			if ((rxRateSet.rate[i] | 0x80) == basicRate.rate[k])
 				match = 1;
 		}
@@ -359,8 +358,6 @@ QDF_STATUS lim_del_sta_all(struct mac_context *mac,
 {
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	struct vdev_mlme_obj *mlme_obj;
-	uint32_t i;
-	tpDphHashNode sta_ds;
 
 	if (!LIM_IS_AP_ROLE(pe_session))
 		return QDF_STATUS_E_INVAL;
@@ -371,17 +368,6 @@ QDF_STATUS lim_del_sta_all(struct mac_context *mac,
 		return QDF_STATUS_E_FAILURE;
 	}
 
-	if (wlan_vdev_mlme_is_mlo_ap(pe_session->vdev)) {
-		for (i = 1; i < pe_session->dph.dphHashTable.size; i++) {
-			sta_ds = dph_get_hash_entry(
-					mac, i,
-					&pe_session->dph.dphHashTable);
-			if (!sta_ds)
-				continue;
-			if (lim_is_mlo_conn(pe_session, sta_ds))
-				lim_mlo_delete_link_peer(pe_session, sta_ds);
-		}
-	}
 	status = vdev_mgr_peer_delete_all_send(mlme_obj);
 	if (status != QDF_STATUS_SUCCESS) {
 		pe_err("failed status = %d", status);
@@ -737,40 +723,22 @@ lim_reject_association(struct mac_context *mac_ctx, tSirMacAddr peer_addr,
 				      sub_type, 0, session_entry, false);
 
 	if (session_entry->parsedAssocReq[sta_ds->assocId]) {
-		lim_free_assoc_req_frm_buf(
-			session_entry->parsedAssocReq[sta_ds->assocId]);
+		uint8_t *assoc_req_frame;
+
+		assoc_req_frame = (uint8_t *)((tpSirAssocReq) (session_entry->
+			parsedAssocReq[sta_ds->assocId]))->assocReqFrame;
+		/*
+		 *Assoction confirmation is complete,
+		 *free the copy of association request frame.
+		 */
+		if (assoc_req_frame) {
+			qdf_mem_free(assoc_req_frame);
+			assoc_req_frame = NULL;
+		}
 
 		qdf_mem_free(session_entry->parsedAssocReq[sta_ds->assocId]);
 		session_entry->parsedAssocReq[sta_ds->assocId] = NULL;
 	}
-}
-
-void lim_free_assoc_req_frm_buf(tpSirAssocReq assoc_req)
-{
-	if (!assoc_req)
-		return;
-	if (assoc_req->assoc_req_buf) {
-		qdf_nbuf_free(assoc_req->assoc_req_buf);
-		assoc_req->assoc_req_buf = NULL;
-		assoc_req->assocReqFrame = NULL;
-		assoc_req->assocReqFrameLength = 0;
-	}
-}
-
-bool lim_alloc_assoc_req_frm_buf(tpSirAssocReq assoc_req,
-				 qdf_nbuf_t buf, uint32_t mac_header_len,
-				 uint32_t frame_len)
-{
-	if (!assoc_req)
-		return false;
-	assoc_req->assoc_req_buf = qdf_nbuf_clone(buf);
-	if (!assoc_req->assoc_req_buf)
-		return false;
-	assoc_req->assocReqFrame = qdf_nbuf_data(assoc_req->assoc_req_buf) +
-				   mac_header_len;
-	assoc_req->assocReqFrameLength = frame_len;
-
-	return true;
 }
 
 /**
@@ -1443,8 +1411,7 @@ QDF_STATUS lim_populate_own_rate_set(struct mac_context *mac_ctx,
 				     uint8_t basic_only,
 				     struct pe_session *session_entry,
 				     struct sDot11fIEVHTCaps *vht_caps,
-				     struct sDot11fIEhe_cap *he_caps,
-				     struct sDot11fIEeht_cap *eht_caps)
+				     struct sDot11fIEhe_cap *he_caps)
 {
 	tSirMacRateSet temp_rate_set;
 	tSirMacRateSet temp_rate_set2;
@@ -1514,7 +1481,7 @@ QDF_STATUS lim_populate_own_rate_set(struct mac_context *mac_ctx,
 		is_arate = 0;
 
 		for (j = 0; (j < temp_rate_set.numRates) &&
-			 (j < SIR_MAC_MAX_NUMBER_OF_RATES); j++) {
+			 (j < WLAN_SUPPORTED_RATES_IE_MAX_LEN); j++) {
 			if ((uint32_t) (temp_rate_set.rate[j] & 0x7f) <
 					val) {
 				val = temp_rate_set.rate[j] & 0x7f;
@@ -1564,13 +1531,26 @@ QDF_STATUS lim_populate_own_rate_set(struct mac_context *mac_ctx,
 				 session_entry->nss, NULL);
 	lim_populate_he_mcs_set(mac_ctx, rates, he_caps,
 			session_entry, session_entry->nss);
-	lim_populate_eht_mcs_set(mac_ctx, rates, eht_caps,
-				 session_entry, session_entry->nss);
 
 	return QDF_STATUS_SUCCESS;
 }
 
 #ifdef WLAN_FEATURE_11AX
+/**
+ * lim_calculate_he_nss() - function to calculate new nss from he rates
+ * @rates: supported rtes struct object
+ * @session: pe session entry
+ * This function calculates nss from rx_he_mcs_map_lt_80 within rates struct
+ * object and assigns new value to nss within pe_session
+ *
+ * Return: None
+ */
+static void lim_calculate_he_nss(struct supported_rates *rates,
+				 struct pe_session *session)
+{
+	HE_GET_NSS(rates->rx_he_mcs_map_lt_80, session->nss);
+}
+
 static bool lim_check_valid_mcs_for_nss(struct pe_session *session,
 					tDot11fIEhe_cap *he_caps)
 {
@@ -1596,6 +1576,11 @@ static bool lim_check_valid_mcs_for_nss(struct pe_session *session,
 
 }
 #else
+static void lim_calculate_he_nss(struct supported_rates *rates,
+				 struct pe_session *session)
+{
+}
+
 static bool lim_check_valid_mcs_for_nss(struct pe_session *session,
 					tDot11fIEhe_cap *he_caps)
 {
@@ -1645,7 +1630,6 @@ QDF_STATUS lim_populate_peer_rate_set(struct mac_context *mac,
 				      struct pe_session *pe_session,
 				      tDot11fIEVHTCaps *pVHTCaps,
 				      tDot11fIEhe_cap *he_caps,
-				      tDot11fIEeht_cap *eht_caps,
 				      struct sDphHashNode *sta_ds,
 				      struct bss_description *bss_desc)
 {
@@ -1659,13 +1643,13 @@ QDF_STATUS lim_populate_peer_rate_set(struct mac_context *mac,
 	tSchBeaconStruct *pBeaconStruct = NULL;
 
 	/* copy operational rate set from pe_session */
-	if (pe_session->rateSet.numRates <= SIR_MAC_MAX_NUMBER_OF_RATES) {
+	if (pe_session->rateSet.numRates <= WLAN_SUPPORTED_RATES_IE_MAX_LEN) {
 		qdf_mem_copy((uint8_t *) tempRateSet.rate,
 			     (uint8_t *) (pe_session->rateSet.rate),
 			     pe_session->rateSet.numRates);
 		tempRateSet.numRates = pe_session->rateSet.numRates;
 	} else {
-		pe_err("more than SIR_MAC_MAX_NUMBER_OF_RATES rates");
+		pe_err("more than WLAN_SUPPORTED_RATES_IE_MAX_LEN rates");
 		return QDF_STATUS_E_FAILURE;
 	}
 	if ((pe_session->dot11mode == MLME_DOT11_MODE_11G) ||
@@ -1674,7 +1658,7 @@ QDF_STATUS lim_populate_peer_rate_set(struct mac_context *mac,
 		(pe_session->dot11mode == MLME_DOT11_MODE_11N) ||
 		(pe_session->dot11mode == MLME_DOT11_MODE_11AX)) {
 		if (pe_session->extRateSet.numRates <=
-		    SIR_MAC_MAX_NUMBER_OF_RATES) {
+		    WLAN_SUPPORTED_RATES_IE_MAX_LEN) {
 			qdf_mem_copy((uint8_t *) tempRateSet2.rate,
 				     (uint8_t *) (pe_session->extRateSet.
 						  rate),
@@ -1682,7 +1666,7 @@ QDF_STATUS lim_populate_peer_rate_set(struct mac_context *mac,
 			tempRateSet2.numRates =
 				pe_session->extRateSet.numRates;
 		} else {
-			pe_err("numRates more than SIR_MAC_MAX_NUM_OF_RATES");
+			pe_err("pe_session->extRateSet.numRates more than WLAN_SUPPORTED_RATES_IE_MAX_LEN rates");
 			return QDF_STATUS_E_FAILURE;
 		}
 	} else
@@ -1692,8 +1676,8 @@ QDF_STATUS lim_populate_peer_rate_set(struct mac_context *mac,
 	lim_remove_membership_selectors(&tempRateSet2);
 
 	if ((tempRateSet.numRates + tempRateSet2.numRates) >
-	    SIR_MAC_MAX_NUMBER_OF_RATES) {
-		pe_err("rates in CFG are more than SIR_MAC_MAX_NUM_OF_RATES");
+	    WLAN_SUPPORTED_RATES_IE_MAX_LEN) {
+		pe_err("more than 12 rates in CFG");
 		return QDF_STATUS_E_FAILURE;
 	}
 
@@ -1712,7 +1696,7 @@ QDF_STATUS lim_populate_peer_rate_set(struct mac_context *mac,
 		min = 0;
 		val = 0xff;
 		for (j = 0; (j < tempRateSet.numRates) &&
-		     (j < SIR_MAC_MAX_NUMBER_OF_RATES); j++) {
+		     (j < WLAN_SUPPORTED_RATES_IE_MAX_LEN); j++) {
 			if ((uint32_t)(tempRateSet.rate[j] & 0x7f) <
 					val) {
 				val = tempRateSet.rate[j] & 0x7f;
@@ -1812,9 +1796,19 @@ QDF_STATUS lim_populate_peer_rate_set(struct mac_context *mac,
 
 	lim_populate_he_mcs_set(mac, pRates, peer_he_caps,
 			pe_session, pe_session->nss);
-	lim_populate_eht_mcs_set(mac, pRates, eht_caps,
-				 pe_session, pe_session->nss);
 
+	if (IS_DOT11_MODE_HE(pe_session->dot11mode) && he_caps) {
+		lim_calculate_he_nss(pRates, pe_session);
+	} else if (pe_session->vhtCapability) {
+		/*
+		 * pRates->vhtTxMCSMap is intersection of self tx and peer rx
+		 * mcs so update nss as per peer rx mcs
+		 */
+		if ((pRates->vhtTxMCSMap & MCSMAPMASK2x2) == MCSMAPMASK2x2)
+			pe_session->nss = NSS_1x1_MODE;
+	} else if (pRates->supportedMCSSet[1] == 0) {
+		pe_session->nss = NSS_1x1_MODE;
+	}
 	pe_debug("nss 1x1 %d nss %d", pe_session->supported_nss_1x1,
 		 pe_session->nss);
 
@@ -1834,8 +1828,6 @@ QDF_STATUS lim_populate_peer_rate_set(struct mac_context *mac,
  * @supported_mcs_set: pointer to supported rate set
  * @session_entry: pointer to pe session entry
  * @vht_caps: pointer to vht capabilities
- * @he_caps: pointer to he capabilities
- * @eht_caps: pointer to eht capabilities
  *
  * This is called at the time of Association Request
  * processing on AP and while adding peer's context
@@ -1862,8 +1854,7 @@ QDF_STATUS lim_populate_matching_rate_set(struct mac_context *mac_ctx,
 					  uint8_t *supported_mcs_set,
 					  struct pe_session *session_entry,
 					  tDot11fIEVHTCaps *vht_caps,
-					  tDot11fIEhe_cap *he_caps,
-					  tDot11fIEeht_cap *eht_caps)
+					  tDot11fIEhe_cap *he_caps)
 {
 	tSirMacRateSet temp_rate_set;
 	tSirMacRateSet temp_rate_set2;
@@ -1947,7 +1938,7 @@ QDF_STATUS lim_populate_matching_rate_set(struct mac_context *mac_ctx,
 	 * unicity of the rates so there cannot be more than 12
 	 */
 	for (i = 0; (i < oper_rate_set->numRates &&
-			 i < SIR_MAC_MAX_NUMBER_OF_RATES); i++)
+			 i < WLAN_SUPPORTED_RATES_IE_MAX_LEN); i++)
 		temp_rate_set.rate[i] = oper_rate_set->rate[i];
 
 	temp_rate_set.numRates = oper_rate_set->numRates;
@@ -1962,7 +1953,7 @@ QDF_STATUS lim_populate_matching_rate_set(struct mac_context *mac_ctx,
 		int tail = temp_rate_set.numRates;
 
 		for (i = 0; (i < ext_rate_set->numRates &&
-				i < SIR_MAC_MAX_NUMBER_OF_RATES); i++) {
+				i < WLAN_SUPPORTED_RATES_IE_MAX_LEN); i++) {
 			found = 0;
 			for (j = 0; j < (uint32_t) tail; j++) {
 				if ((temp_rate_set.rate[j] & 0x7F) ==
@@ -1982,8 +1973,8 @@ QDF_STATUS lim_populate_matching_rate_set(struct mac_context *mac_ctx,
 	} else if (ext_rate_set->numRates &&
 		 ((temp_rate_set.numRates + ext_rate_set->numRates) <= 12)) {
 		for (j = 0; ((j < ext_rate_set->numRates) &&
-				 (j < SIR_MAC_MAX_NUMBER_OF_RATES) &&
-				 ((i + j) < SIR_MAC_MAX_NUMBER_OF_RATES)); j++)
+				 (j < WLAN_SUPPORTED_RATES_IE_MAX_LEN) &&
+				 ((i + j) < WLAN_SUPPORTED_RATES_IE_MAX_LEN)); j++)
 			temp_rate_set.rate[i + j] = ext_rate_set->rate[j];
 
 		temp_rate_set.numRates += ext_rate_set->numRates;
@@ -1994,9 +1985,9 @@ QDF_STATUS lim_populate_matching_rate_set(struct mac_context *mac_ctx,
 	rates = &sta_ds->supportedRates;
 	qdf_mem_zero(rates, sizeof(*rates));
 	for (i = 0; (i < temp_rate_set2.numRates &&
-			 i < SIR_MAC_MAX_NUMBER_OF_RATES); i++) {
+			 i < WLAN_SUPPORTED_RATES_IE_MAX_LEN); i++) {
 		for (j = 0; (j < temp_rate_set.numRates &&
-				 j < SIR_MAC_MAX_NUMBER_OF_RATES); j++) {
+				 j < WLAN_SUPPORTED_RATES_IE_MAX_LEN); j++) {
 			if ((temp_rate_set2.rate[i] & 0x7F) !=
 				(temp_rate_set.rate[j] & 0x7F))
 				continue;
@@ -2050,8 +2041,6 @@ QDF_STATUS lim_populate_matching_rate_set(struct mac_context *mac_ctx,
 				 session_entry, session_entry->nss, sta_ds);
 	lim_populate_he_mcs_set(mac_ctx, &sta_ds->supportedRates, he_caps,
 				session_entry, session_entry->nss);
-	lim_populate_eht_mcs_set(mac_ctx, &sta_ds->supportedRates, eht_caps,
-				 session_entry, session_entry->nss);
 	/*
 	 * Set the erpEnabled bit if the phy is in G mode and at least
 	 * one A rate is supported
@@ -2144,26 +2133,6 @@ static void lim_update_he_mcs_12_13(tpAddStaParams add_sta_params,
 		add_sta_params->he_mcs_12_13_map = sta_ds->he_mcs_12_13_map;
 }
 
-static bool lim_is_add_sta_params_he_capable(tpAddStaParams add_sta_params)
-{
-	return add_sta_params->he_capable;
-}
-#else
-static void lim_update_he_stbc_capable(tpAddStaParams add_sta_params)
-{}
-
-static void lim_update_he_mcs_12_13(tpAddStaParams add_sta_params,
-				    tpDphHashNode sta_ds)
-{}
-
-static bool lim_is_add_sta_params_he_capable(tpAddStaParams add_sta_params)
-{
-	return false;
-}
-#endif
-
-#ifdef FEATURE_WLAN_TDLS
-#ifdef WLAN_FEATURE_11AX
 static void lim_add_tdls_sta_he_config(tpAddStaParams add_sta_params,
 				       tpDphHashNode sta_ds)
 {
@@ -2181,6 +2150,13 @@ static void lim_add_tdls_sta_6ghz_he_cap(struct mac_context *mac_ctx,
 }
 
 #else
+static void lim_update_he_stbc_capable(tpAddStaParams add_sta_params)
+{}
+
+static void lim_update_he_mcs_12_13(tpAddStaParams add_sta_params,
+				    tpDphHashNode sta_ds)
+{}
+
 static void lim_add_tdls_sta_he_config(tpAddStaParams add_sta_params,
 				       tpDphHashNode sta_ds)
 {
@@ -2191,21 +2167,6 @@ static void lim_add_tdls_sta_6ghz_he_cap(struct mac_context *mac_ctx,
 					 tpDphHashNode sta_ds)
 {
 }
-#endif /* WLAN_FEATURE_11AX */
-#endif /* FEATURE_WLAN_TDLS */
-
-#ifdef WLAN_FEATURE_11BE
-static bool lim_is_add_sta_params_eht_capable(tpAddStaParams add_sta_params)
-{
-	return add_sta_params->eht_capable;
-}
-
-#else
-static bool lim_is_add_sta_params_eht_capable(tpAddStaParams add_sta_params)
-{
-	return false;
-}
-
 #endif
 
 /**
@@ -2346,10 +2307,6 @@ lim_add_sta(struct mac_context *mac_ctx,
 	lim_update_sta_he_capable(mac_ctx, add_sta_params, sta_ds,
 				  session_entry);
 
-	lim_update_sta_eht_capable(mac_ctx, add_sta_params, sta_ds,
-				   session_entry);
-	lim_update_sta_mlo_info(add_sta_params, sta_ds);
-
 	add_sta_params->maxAmpduDensity = sta_ds->htAMpduDensity;
 	add_sta_params->maxAmpduSize = sta_ds->htMaxRxAMpduFactor;
 	add_sta_params->fShortGI20Mhz = sta_ds->htShortGI20Mhz;
@@ -2474,9 +2431,6 @@ lim_add_sta(struct mac_context *mac_ctx,
 		lim_add_he_cap(mac_ctx, session_entry,
 			       add_sta_params, assoc_req);
 
-		lim_add_eht_cap(mac_ctx, session_entry, add_sta_params,
-				assoc_req);
-
 	}
 
 #ifdef FEATURE_WLAN_TDLS
@@ -2535,8 +2489,10 @@ lim_add_sta(struct mac_context *mac_ctx,
 		pe_debug("uAPSD = 0x%x, maxSpLen = %d",
 			add_sta_params->uAPSD, add_sta_params->maxSPLen);
 	}
+#ifdef WLAN_FEATURE_11W
 	add_sta_params->rmfEnabled = sta_ds->rmfEnabled;
 	pe_debug("PMF enabled %d", add_sta_params->rmfEnabled);
+#endif
 
 	pe_debug("htLdpcCapable: %d vhtLdpcCapable: %d "
 			"p2pCapableSta: %d",
@@ -2557,9 +2513,7 @@ lim_add_sta(struct mac_context *mac_ctx,
 
 	add_sta_params->nwType = session_entry->nwType;
 
-	if (!(add_sta_params->htCapable || add_sta_params->vhtCapable ||
-	    lim_is_add_sta_params_he_capable(add_sta_params) ||
-	    lim_is_add_sta_params_eht_capable(add_sta_params))) {
+	if (!(add_sta_params->htCapable || add_sta_params->vhtCapable)) {
 		nw_type_11b = 1;
 		for (i = 0; i < SIR_NUM_11A_RATES; i++) {
 			if (sirIsArate(sta_ds->supportedRates.llaRates[i] &
@@ -2572,7 +2526,7 @@ lim_add_sta(struct mac_context *mac_ctx,
 			add_sta_params->nwType = eSIR_11B_NW_TYPE;
 	}
 
-	if (add_sta_params->htCapable && session_entry->ht_config.tx_stbc) {
+	if (add_sta_params->htCapable && session_entry->ht_config.ht_tx_stbc) {
 		struct sDot11fIEHTCaps *ht_caps = (struct sDot11fIEHTCaps *)
 			&add_sta_params->ht_caps;
 		if (ht_caps->rxSTBC)
@@ -2598,9 +2552,11 @@ lim_add_sta(struct mac_context *mac_ctx,
 			assoc_req =
 			(tpSirAssocReq) session_entry->parsedAssocReq[aid];
 
-			add_sta_params->wpa_rsn = assoc_req->rsnPresent;
-			add_sta_params->wpa_rsn |=
-				(assoc_req->wpaPresent << 1);
+			if (assoc_req) {
+				add_sta_params->wpa_rsn = assoc_req->rsnPresent;
+				add_sta_params->wpa_rsn |=
+					(assoc_req->wpaPresent << 1);
+			}
 		}
 	}
 
@@ -2720,11 +2676,6 @@ lim_del_sta(struct mac_context *mac,
 		pDelStaParams->respReqd = 1;
 	}
 
-	/* notify mlo peer to detach reference of the
-	 * link peer before post WMA_DELETE_STA_REQ, which will free
-	 * wlan_objmgr_peer of the link peer
-	 */
-	lim_mlo_delete_link_peer(pe_session, sta);
 	/* Update PE session ID */
 	pDelStaParams->sessionId = pe_session->peSessionId;
 	pDelStaParams->smesessionId = pe_session->smeSessionId;
@@ -2769,16 +2720,7 @@ static void lim_set_mbssid_info(struct pe_session *pe_session)
 {
 	struct scan_mbssid_info *mbssid_info;
 
-	if (!pe_session->lim_join_req && !pe_session->pLimReAssocReq)
-		return;
-
-	if (pe_session->lim_join_req)
-		mbssid_info =
-			&pe_session->lim_join_req->bssDescription.mbssid_info;
-	else
-		mbssid_info =
-			&pe_session->pLimReAssocReq->bssDescription.mbssid_info;
-
+	mbssid_info = &pe_session->lim_join_req->bssDescription.mbssid_info;
 	mlme_set_mbssid_info(pe_session->vdev, mbssid_info);
 }
 
@@ -2853,7 +2795,7 @@ lim_add_sta_self(struct mac_context *mac, uint8_t updateSta,
 
 	lim_populate_own_rate_set(mac, &pAddStaParams->supportedRates,
 				  NULL, false,
-				  pe_session, NULL, NULL, NULL);
+				  pe_session, NULL, NULL);
 	if (IS_DOT11_MODE_HT(selfStaDot11Mode)) {
 		pAddStaParams->htCapable = true;
 
@@ -2868,10 +2810,8 @@ lim_add_sta_self(struct mac_context *mac, uint8_t updateSta,
 		pAddStaParams->maxAmpduSize =
 			lim_get_ht_capability(mac, eHT_MAX_RX_AMPDU_FACTOR,
 					      pe_session);
-		pAddStaParams->fShortGI20Mhz =
-			pe_session->ht_config.short_gi_20_mhz;
-		pAddStaParams->fShortGI40Mhz =
-			pe_session->ht_config.short_gi_40_mhz;
+		pAddStaParams->fShortGI20Mhz = pe_session->ht_config.ht_sgi20;
+		pAddStaParams->fShortGI40Mhz = pe_session->ht_config.ht_sgi40;
 	}
 	pAddStaParams->vhtCapable = pe_session->vhtCapability;
 	if (pAddStaParams->vhtCapable)
@@ -2917,9 +2857,6 @@ lim_add_sta_self(struct mac_context *mac, uint8_t updateSta,
 
 	if (IS_DOT11_MODE_HE(selfStaDot11Mode))
 		lim_add_self_he_cap(pAddStaParams, pe_session);
-
-	if (IS_DOT11_MODE_EHT(selfStaDot11Mode))
-		lim_add_self_eht_cap(pAddStaParams, pe_session);
 
 	if (lim_is_fils_connection(pe_session))
 		pAddStaParams->no_ptk_4_way = true;
@@ -3085,12 +3022,14 @@ lim_delete_dph_hash_entry(struct mac_context *mac_ctx, tSirMacAddr sta_addr,
 
 		lim_obss_send_detection_cfg(mac_ctx, session_entry, false);
 
+#ifdef WLAN_FEATURE_11W
 		if (sta_ds->rmfEnabled) {
 			pe_debug("delete pmf timer assoc-id:%d sta mac "
 				 QDF_MAC_ADDR_FMT, sta_ds->assocId,
 				 QDF_MAC_ADDR_REF(sta_ds->staAddr));
 			tx_timer_delete(&sta_ds->pmfSaQueryTimer);
 		}
+#endif
 	}
 
 	if (dph_delete_hash_entry(mac_ctx, sta_addr, sta_id,
@@ -3625,22 +3564,6 @@ QDF_STATUS lim_sta_send_add_bss(struct mac_context *mac, tpSirAssocRsp pAssocRsp
 		lim_add_bss_he_cap(pAddBssParams, pAssocRsp);
 		lim_add_bss_he_cfg(pAddBssParams, pe_session);
 	}
-
-	if (lim_is_session_eht_capable(pe_session) &&
-	    (pAssocRsp->eht_cap.present)) {
-		lim_add_bss_eht_cap(pAddBssParams, pAssocRsp);
-		lim_add_bss_eht_cfg(pAddBssParams, pe_session);
-	}
-
-	if (pAssocRsp->bss_max_idle_period.present) {
-		pAddBssParams->bss_max_idle_period =
-			pAssocRsp->bss_max_idle_period.max_idle_period;
-		pe_debug("bss_max_idle_period %d",
-			 pAddBssParams->bss_max_idle_period);
-	} else {
-		pAddBssParams->bss_max_idle_period = 0;
-	}
-
 	/*
 	 * Populate the STA-related parameters here
 	 * Note that the STA here refers to the AP
@@ -3677,7 +3600,7 @@ QDF_STATUS lim_sta_send_add_bss(struct mac_context *mac, tpSirAssocRsp pAssocRsp
 	if (IS_DOT11_MODE_HT(pe_session->dot11mode)
 			&& pBeaconStruct->HTCaps.present) {
 		pAddBssParams->staContext.htCapable = 1;
-		if (pe_session->ht_config.tx_stbc)
+		if (pe_session->ht_config.ht_tx_stbc)
 			pAddBssParams->staContext.stbc_capable =
 				pAssocRsp->HTCaps.rxSTBC;
 
@@ -3741,15 +3664,6 @@ QDF_STATUS lim_sta_send_add_bss(struct mac_context *mac, tpSirAssocRsp pAssocRsp
 						sta);
 		}
 
-		if (lim_is_session_eht_capable(pe_session) &&
-		    (pAssocRsp->eht_cap.present ||
-		     pBeaconStruct->eht_cap.present)) {
-			lim_intersect_ap_eht_caps(pe_session,
-						  pAddBssParams,
-						  pBeaconStruct,
-						  pAssocRsp);
-		}
-
 		/*
 		 * in limExtractApCapability function intersection of FW
 		 * advertised channel width and AP advertised channel
@@ -3782,14 +3696,14 @@ QDF_STATUS lim_sta_send_add_bss(struct mac_context *mac, tpSirAssocRsp pAssocRsp
 		 * values are set as 0 in session entry then we will
 		 * hardcode this values to 0.
 		 */
-		if (pe_session->ht_config.short_gi_20_mhz) {
+		if (pe_session->ht_config.ht_sgi20) {
 			pAddBssParams->staContext.fShortGI20Mhz =
 				(uint8_t)pAssocRsp->HTCaps.shortGI20MHz;
 		} else {
 			pAddBssParams->staContext.fShortGI20Mhz = false;
 		}
 
-		if (pe_session->ht_config.short_gi_40_mhz) {
+		if (pe_session->ht_config.ht_sgi40) {
 			pAddBssParams->staContext.fShortGI40Mhz =
 				(uint8_t) pAssocRsp->HTCaps.shortGI40MHz;
 		} else {
@@ -3856,14 +3770,6 @@ QDF_STATUS lim_sta_send_add_bss(struct mac_context *mac, tpSirAssocRsp pAssocRsp
 						&pAssocRsp->he_6ghz_band_cap,
 						&pAddBssParams->staContext);
 		}
-		if (lim_is_session_eht_capable(pe_session) &&
-		    (pAssocRsp->eht_cap.present ||
-		     pBeaconStruct->eht_cap.present)) {
-			lim_intersect_ap_eht_caps(pe_session,
-						  pAddBssParams,
-						  pBeaconStruct,
-						  pAssocRsp);
-		}
 	}
 	pAddBssParams->staContext.smesessionId =
 		pe_session->smeSessionId;
@@ -3908,10 +3814,12 @@ QDF_STATUS lim_sta_send_add_bss(struct mac_context *mac, tpSirAssocRsp pAssocRsp
 	if (QDF_P2P_CLIENT_MODE == pe_session->opmode)
 		pAddBssParams->staContext.p2pCapableSta = 1;
 
+#ifdef WLAN_FEATURE_11W
 	if (pe_session->limRmfEnabled) {
 		pAddBssParams->rmfEnabled = 1;
 		pAddBssParams->staContext.rmfEnabled = 1;
 	}
+#endif
 
 	/* Set a new state for MLME */
 	if (eLIM_MLM_WT_ASSOC_RSP_STATE == pe_session->limMlmState)
@@ -4072,12 +3980,6 @@ QDF_STATUS lim_sta_send_add_bss_pre_assoc(struct mac_context *mac,
 		lim_add_bss_he_cfg(pAddBssParams, pe_session);
 	}
 
-	if (lim_is_session_eht_capable(pe_session) &&
-	    pBeaconStruct->eht_cap.present) {
-		lim_update_bss_eht_capable(mac, pAddBssParams);
-		lim_add_bss_eht_cfg(pAddBssParams, pe_session);
-	}
-
 	/*
 	 * Populate the STA-related parameters here
 	 * Note that the STA here refers to the AP
@@ -4129,11 +4031,6 @@ QDF_STATUS lim_sta_send_add_bss_pre_assoc(struct mac_context *mac,
 			lim_intersect_ap_he_caps(pe_session, pAddBssParams,
 					      pBeaconStruct, NULL);
 
-		if (lim_is_session_eht_capable(pe_session) &&
-		    pBeaconStruct->eht_cap.present)
-			lim_intersect_ap_eht_caps(pe_session, pAddBssParams,
-						  pBeaconStruct, NULL);
-
 		if (pBeaconStruct->HTCaps.supportedChannelWidthSet &&
 		    chan_width_support) {
 			pAddBssParams->staContext.ch_width =
@@ -4159,13 +4056,13 @@ QDF_STATUS lim_sta_send_add_bss_pre_assoc(struct mac_context *mac,
 		 * from AP supports. If these values are set as 0 in ini file
 		 * then we will hardcode this values to 0.
 		 */
-		if (pe_session->ht_config.short_gi_20_mhz)
+		if (pe_session->ht_config.ht_sgi20)
 			pAddBssParams->staContext.fShortGI20Mhz =
 				(uint8_t)pBeaconStruct->HTCaps.shortGI20MHz;
 		else
 			pAddBssParams->staContext.fShortGI20Mhz = false;
 
-		if (pe_session->ht_config.short_gi_40_mhz)
+		if (pe_session->ht_config.ht_sgi40)
 			pAddBssParams->staContext.fShortGI40Mhz =
 				(uint8_t) pBeaconStruct->HTCaps.shortGI40MHz;
 		else
@@ -4219,8 +4116,7 @@ QDF_STATUS lim_sta_send_add_bss_pre_assoc(struct mac_context *mac,
 			pBeaconStruct->HTCaps.supportedMCSSet,
 			false, pe_session,
 			&pBeaconStruct->VHTCaps,
-			&pBeaconStruct->he_cap,
-			&pBeaconStruct->eht_cap, NULL,
+			&pBeaconStruct->he_cap, NULL,
 			bssDescription);
 
 	pAddBssParams->staContext.encryptType = pe_session->encryptType;
@@ -4230,10 +4126,12 @@ QDF_STATUS lim_sta_send_add_bss_pre_assoc(struct mac_context *mac,
 	pAddBssParams->staContext.smesessionId = pe_session->smeSessionId;
 	pAddBssParams->staContext.sessionId = pe_session->peSessionId;
 
+#ifdef WLAN_FEATURE_11W
 	if (pe_session->limRmfEnabled) {
 		pAddBssParams->rmfEnabled = 1;
 		pAddBssParams->staContext.rmfEnabled = 1;
 	}
+#endif
 	/* Set a new state for MLME */
 	pe_session->limMlmState = eLIM_MLM_WT_ADD_BSS_RSP_PREASSOC_STATE;
 
@@ -4294,14 +4192,9 @@ void lim_prepare_and_send_del_all_sta_cnf(struct mac_context *mac,
 					    &pe_session->dph.dphHashTable);
 		if (!sta_ds)
 			continue;
-
 		lim_delete_dph_hash_entry(mac, sta_ds->staAddr,
 					  sta_ds->assocId, pe_session);
-		if (lim_is_mlo_conn(pe_session, sta_ds))
-			lim_release_mlo_conn_idx(mac, sta_ds->assocId,
-						 pe_session, false);
-		else
-			lim_release_peer_idx(mac, sta_ds->assocId, pe_session);
+		lim_release_peer_idx(mac, sta_ds->assocId, pe_session);
 	}
 
 	qdf_set_macaddr_broadcast(&mlm_deauth.peer_macaddr);
@@ -4334,29 +4227,18 @@ lim_prepare_and_send_del_sta_cnf(struct mac_context *mac, tpDphHashNode sta,
 	uint16_t staDsAssocId = 0;
 	struct qdf_mac_addr sta_dsaddr;
 	struct lim_sta_context mlmStaContext;
-	bool mlo_conn = false;
-	bool mlo_recv_assoc_frm = false;
 
 	if (!sta) {
 		pe_err("sta is NULL");
 		return;
 	}
-
 	staDsAssocId = sta->assocId;
 	qdf_mem_copy((uint8_t *) sta_dsaddr.bytes,
 		     sta->staAddr, QDF_MAC_ADDR_SIZE);
 
 	mlmStaContext = sta->mlmStaContext;
-	mlo_conn = lim_is_mlo_conn(pe_session, sta);
-	mlo_recv_assoc_frm = lim_is_mlo_recv_assoc(sta);
-
-	if (LIM_IS_AP_ROLE(pe_session)) {
-		if (mlo_conn)
-			lim_release_mlo_conn_idx(mac, sta->assocId,
-						 pe_session, false);
-		else
-			lim_release_peer_idx(mac, sta->assocId, pe_session);
-	}
+	if (LIM_IS_AP_ROLE(pe_session))
+		lim_release_peer_idx(mac, sta->assocId, pe_session);
 
 	lim_delete_dph_hash_entry(mac, sta->staAddr, sta->assocId,
 				  pe_session);
@@ -4367,9 +4249,6 @@ lim_prepare_and_send_del_sta_cnf(struct mac_context *mac, tpDphHashNode sta,
 				 pe_session->peSessionId,
 				 pe_session->limMlmState));
 	}
-	if (mlo_conn && !mlo_recv_assoc_frm && LIM_IS_AP_ROLE(pe_session))
-		return;
-
 	lim_send_del_sta_cnf(mac, sta_dsaddr, staDsAssocId, mlmStaContext,
 			     status_code, pe_session);
 }
@@ -4510,6 +4389,7 @@ void lim_fill_rx_highest_supported_rate(struct mac_context *mac,
 	return;
 }
 
+#ifdef WLAN_FEATURE_11W
 /** -------------------------------------------------------------
    \fn     lim_send_sme_unprotected_mgmt_frame_ind
    \brief  Forwards the unprotected management frame to SME.
@@ -4548,6 +4428,7 @@ void lim_send_sme_unprotected_mgmt_frame_ind(struct mac_context *mac, uint8_t fr
 	lim_sys_process_mmh_msg_api(mac, &mmhMsg);
 	return;
 }
+#endif
 
 #ifdef FEATURE_WLAN_ESE
 void lim_send_sme_tsm_ie_ind(struct mac_context *mac,
@@ -4583,7 +4464,7 @@ void lim_extract_ies_from_deauth_disassoc(struct pe_session *session,
 					  uint16_t deauth_disassoc_frame_len)
 {
 	uint16_t reason_code, ie_offset;
-	struct element_info ie;
+	struct wlan_ies ie;
 
 	if (!session) {
 		pe_err("NULL session");
@@ -4596,7 +4477,7 @@ void lim_extract_ies_from_deauth_disassoc(struct pe_session *session,
 	if (!deauth_disassoc_frame || deauth_disassoc_frame_len <= ie_offset)
 		return;
 
-	ie.ptr = deauth_disassoc_frame + ie_offset;
+	ie.data = deauth_disassoc_frame + ie_offset;
 	ie.len = deauth_disassoc_frame_len - ie_offset;
 
 	mlme_set_peer_disconnect_ies(session->vdev, &ie);

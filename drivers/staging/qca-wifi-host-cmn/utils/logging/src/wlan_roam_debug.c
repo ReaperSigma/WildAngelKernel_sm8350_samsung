@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2018, 2020-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -49,7 +50,7 @@ static struct wlan_roam_debug_info *global_wlan_roam_debug_table;
 void wlan_roam_debug_init(void)
 {
 	uint8_t i;
-	global_wlan_roam_debug_table = qdf_mem_valloc(
+	global_wlan_roam_debug_table = vzalloc(
 				sizeof(struct wlan_roam_debug_info) * REC_MAX);
 
 	QDF_BUG(global_wlan_roam_debug_table);
@@ -86,7 +87,7 @@ static inline struct wlan_roam_debug_info *wlan_roam_debug_get_table(
  */
 void wlan_roam_debug_deinit(void)
 {
-	qdf_mem_vfree(global_wlan_roam_debug_table);
+	vfree(global_wlan_roam_debug_table);
 	global_wlan_roam_debug_table = NULL;
 }
 
@@ -248,6 +249,8 @@ static char *wlan_roam_debug_string(uint32_t op)
 		return "dishdr";
 	case DEBUG_CONN_DISCONNECT_IND:
 		return "disind";
+	case DEBUG_CONN_RSO:
+		return "rso";
 	default:
 		return "unknown";
 	}

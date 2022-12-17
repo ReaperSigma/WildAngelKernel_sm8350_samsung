@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -310,6 +311,18 @@ void hdd_init_scan_reject_params(struct hdd_context *hdd_ctx)
 	}
 }
 
+void hdd_reset_scan_reject_params(struct hdd_context *hdd_ctx,
+				  eRoamCmdStatus roam_status,
+				  eCsrRoamResult roam_result)
+{
+	if ((roam_status == eCSR_ROAM_ASSOCIATION_FAILURE) ||
+	    (roam_status == eCSR_ROAM_CANCELLED) ||
+	    (roam_result == eCSR_ROAM_RESULT_ASSOCIATED)) {
+		hdd_debug("Reset scan reject params");
+		hdd_init_scan_reject_params(hdd_ctx);
+	}
+}
+
 /*
  * wlan_hdd_update_scan_ies() - API to update the scan IEs of scan request
  * with already stored default scan IEs
@@ -490,7 +503,10 @@ static int __wlan_hdd_cfg80211_scan(struct wiphy *wiphy,
 
 	enable_connected_scan = ucfg_scan_is_connected_scan_enabled(
 							hdd_ctx->psoc);
-	if (hdd_cm_is_vdev_associated(adapter) && !enable_connected_scan) {
+	if ((eConnectionState_Associated ==
+			WLAN_HDD_GET_STATION_CTX_PTR(adapter)->
+						conn_info.conn_state) &&
+	    (!enable_connected_scan)) {
 		hdd_info("enable_connected_scan is false, Aborting scan");
 		if (wlan_hdd_enqueue_blocked_scan_request(dev, request, source))
 			return -EAGAIN;
@@ -641,13 +657,25 @@ static int __wlan_hdd_cfg80211_scan(struct wiphy *wiphy,
 		}
 	}
 
+	if ((QDF_STA_MODE == adapter->device_mode) ||
+	    (QDF_P2P_CLIENT_MODE == adapter->device_mode) ||
+	    (QDF_P2P_DEVICE_MODE == adapter->device_mode)) {
+		struct csr_roam_profile *roam_profile =
+			hdd_roam_profile(adapter);
+
+		roam_profile->pAddIEScan =
+			scan_info->scan_add_ie.addIEdata;
+		roam_profile->nAddIEScanLength =
+			scan_info->scan_add_ie.length;
+	}
+
 	if (QDF_P2P_CLIENT_MODE == adapter->device_mode ||
 	    QDF_P2P_DEVICE_MODE == adapter->device_mode) {
 		/* Disable NAN Discovery if enabled */
 		ucfg_nan_disable_concurrency(hdd_ctx->psoc);
 	}
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_SCAN_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
 	if (!vdev) {
 		status = -EINVAL;
 		goto error;
@@ -665,14 +693,8 @@ static int __wlan_hdd_cfg80211_scan(struct wiphy *wiphy,
 		/* Use default scan priority */
 		params.priority = SCAN_PRIORITY_COUNT;
 
-	status = ucfg_mlme_get_scan_probe_unicast_ra(
-						hdd_ctx->psoc,
-						&params.scan_probe_unicast_ra);
-	if (QDF_IS_STATUS_ERROR(status))
-		hdd_err("Failed to get unicast probe req ra cfg");
-
 	status = wlan_cfg80211_scan(vdev, request, &params);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_SCAN_ID);
+	hdd_objmgr_put_vdev(vdev);
 error:
 	if (params.default_ie.ptr)
 		qdf_mem_free(params.default_ie.ptr);
@@ -948,6 +970,11 @@ static int __wlan_hdd_cfg80211_vendor_scan(struct wiphy *wiphy,
 	int ret;
 
 	hdd_enter_dev(wdev->netdev);
+
+	if (QDF_GLOBAL_FTM_MODE == hdd_get_conparam()) {
+		hdd_err("Command not allowed in FTM mode");
+		return -EPERM;
+	}
 
 	ret = wlan_hdd_validate_context(hdd_ctx);
 	if (ret) {
@@ -1302,12 +1329,15 @@ static int __wlan_hdd_cfg80211_sched_scan_start(struct wiphy *wiphy,
 
 	enable_connected_scan = ucfg_scan_is_connected_scan_enabled(
 							hdd_ctx->psoc);
-	if (hdd_cm_is_vdev_associated(adapter) && !enable_connected_scan) {
+	if ((eConnectionState_Associated ==
+				WLAN_HDD_GET_STATION_CTX_PTR(adapter)->
+							conn_info.conn_state) &&
+	    (!enable_connected_scan)) {
 		hdd_info("enable_connected_scan is false, Aborting scan");
 		return -EBUSY;
 	}
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_SCAN_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
 	if (!vdev)
 		return -EINVAL;
 
@@ -1315,7 +1345,7 @@ static int __wlan_hdd_cfg80211_sched_scan_start(struct wiphy *wiphy,
 			ucfg_get_scan_backoff_multiplier(hdd_ctx->psoc);
 	ret = wlan_cfg80211_sched_scan_start(vdev, request,
 					     scan_backoff_multiplier);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_SCAN_ID);
+	hdd_objmgr_put_vdev(vdev);
 
 	return ret;
 }
@@ -1375,11 +1405,11 @@ int wlan_hdd_sched_scan_stop(struct net_device *dev)
 		return -EINVAL;
 	}
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_SCAN_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
 	if (!vdev)
 		return -EINVAL;
 	ret = wlan_cfg80211_sched_scan_stop(vdev);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_SCAN_ID);
+	hdd_objmgr_put_vdev(vdev);
 
 	return ret;
 }

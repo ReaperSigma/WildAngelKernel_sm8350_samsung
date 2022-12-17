@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020, The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -26,6 +26,7 @@
 #include "wlan_mlme_api.h"
 #include "wlan_crypto_global_api.h"
 #include "wlan_mlme_main.h"
+#include "wlan_cm_roam_api.h"
 
 static struct wmi_unified
 *target_if_cm_roam_get_wmi_handle_from_vdev(struct wlan_objmgr_vdev *vdev)
@@ -75,55 +76,77 @@ target_if_cm_roam_send_vdev_set_pcl_cmd(struct wlan_objmgr_vdev *vdev,
 }
 
 /**
- * target_if_cm_roam_send_roam_invoke_cmd  - Send roam invoke command to wmi.
- * @vdev: VDEV object pointer
- * @req:  Pointer to the roam invoke request msg
+ * target_if_roam_set_param() - set roam params in fw
+ * @wmi_handle: wmi handle
+ * @vdev_id: vdev id
+ * @param_id: parameter id
+ * @param_value: parameter value
  *
- * Return: QDF_STATUS
+ * Return: QDF_STATUS_SUCCESS for success or error code
  */
 static QDF_STATUS
-target_if_cm_roam_send_roam_invoke_cmd(struct wlan_objmgr_vdev *vdev,
-				       struct roam_invoke_req *req)
+target_if_roam_set_param(wmi_unified_t wmi_handle, uint8_t vdev_id,
+			 uint32_t param_id, uint32_t param_value)
 {
-	wmi_unified_t wmi_handle;
+	struct vdev_set_params roam_param = {0};
 
-	wmi_handle = target_if_cm_roam_get_wmi_handle_from_vdev(vdev);
-	if (!wmi_handle)
-		return QDF_STATUS_E_FAILURE;
+	roam_param.vdev_id = vdev_id;
+	roam_param.param_id = param_id;
+	roam_param.param_value = param_value;
 
-	return wmi_unified_roam_invoke_cmd(wmi_handle, req);
+	return wmi_unified_roam_set_param_send(wmi_handle, &roam_param);
 }
 
 /**
- * target_if_cm_roam_send_roam_sync_complete  - Send roam sync complete to wmi.
- * @vdev: VDEV object pointer
+ * target_if_cm_roam_rt_stats_config() - Send enable/disable roam event stats
+ * commands to wmi
+ * @vdev: vdev object
+ * @vdev_id: vdev id
+ * @rstats_config: roam event stats config parameters
  *
  * Return: QDF_STATUS
  */
 static QDF_STATUS
-target_if_cm_roam_send_roam_sync_complete(struct wlan_objmgr_vdev *vdev)
+target_if_cm_roam_rt_stats_config(struct wlan_objmgr_vdev *vdev,
+				  uint8_t vdev_id, uint8_t rstats_config)
 {
+	QDF_STATUS status = QDF_STATUS_E_FAILURE;
 	wmi_unified_t wmi_handle;
 
 	wmi_handle = target_if_cm_roam_get_wmi_handle_from_vdev(vdev);
 	if (!wmi_handle)
-		return QDF_STATUS_E_FAILURE;
+		return status;
 
-	return wmi_unified_roam_synch_complete_cmd(wmi_handle,
-						   wlan_vdev_get_id(vdev));
+	status = target_if_roam_set_param(
+				wmi_handle,
+				vdev_id,
+				WMI_ROAM_PARAM_ROAM_EVENTS_CONFIG,
+				rstats_config);
+
+	if (QDF_IS_STATUS_ERROR(status))
+		target_if_err("Failed to set "
+			      "WMI_ROAM_PARAM_ROAM_EVENTS_CONFIG");
+
+	return status;
 }
 
 static void
 target_if_cm_roam_register_lfr3_ops(struct wlan_cm_roam_tx_ops *tx_ops)
 {
 	tx_ops->send_vdev_set_pcl_cmd = target_if_cm_roam_send_vdev_set_pcl_cmd;
-	tx_ops->send_roam_invoke_cmd = target_if_cm_roam_send_roam_invoke_cmd;
-	tx_ops->send_roam_sync_complete_cmd = target_if_cm_roam_send_roam_sync_complete;
+	tx_ops->send_roam_rt_stats_config = target_if_cm_roam_rt_stats_config;
 }
 #else
 static inline void
 target_if_cm_roam_register_lfr3_ops(struct wlan_cm_roam_tx_ops *tx_ops)
 {}
+
+static QDF_STATUS
+target_if_cm_roam_rt_stats_config(struct wlan_objmgr_vdev *vdev,
+				  uint8_t vdev_id, uint8_t rstats_config)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
 #endif
 
 /**
@@ -345,6 +368,8 @@ target_if_cm_roam_idle_params(wmi_unified_t wmi_handle, uint8_t command,
 	switch (command) {
 	case ROAM_SCAN_OFFLOAD_START:
 	case ROAM_SCAN_OFFLOAD_UPDATE_CFG:
+		if (!req->enable)
+			return;
 		break;
 	case ROAM_SCAN_OFFLOAD_STOP:
 		req->enable = false;
@@ -881,6 +906,7 @@ target_if_cm_roam_send_start(struct wlan_objmgr_vdev *vdev,
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	wmi_unified_t wmi_handle;
 	struct wlan_objmgr_psoc *psoc;
+	uint8_t vdev_id;
 	bool bss_load_enabled;
 
 	wmi_handle = target_if_cm_roam_get_wmi_handle_from_vdev(vdev);
@@ -1001,6 +1027,11 @@ target_if_cm_roam_send_start(struct wlan_objmgr_vdev *vdev,
 
 	target_if_cm_roam_idle_params(wmi_handle, ROAM_SCAN_OFFLOAD_START,
 				      &req->idle_params);
+
+	vdev_id = wlan_vdev_get_id(vdev);
+	if (req->wlan_roam_rt_stats_config)
+		target_if_cm_roam_rt_stats_config(vdev, vdev_id,
+						  req->wlan_roam_rt_stats_config);
 	/* add other wmi commands */
 end:
 	return status;
@@ -1022,6 +1053,8 @@ target_if_cm_roam_send_stop(struct wlan_objmgr_vdev *vdev,
 {
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	wmi_unified_t wmi_handle;
+	uint32_t mode = 0;
+	bool is_roam_offload_enabled = false;
 	struct wlan_objmgr_psoc *psoc;
 	uint8_t vdev_id;
 
@@ -1050,6 +1083,20 @@ target_if_cm_roam_send_stop(struct wlan_objmgr_vdev *vdev,
 	if (!psoc) {
 		target_if_err("psoc handle is NULL");
 		return QDF_STATUS_E_INVAL;
+	}
+
+	wlan_mlme_get_roaming_offload(psoc, &is_roam_offload_enabled);
+	if (req->reason == REASON_ROAM_STOP_ALL ||
+	    req->reason == REASON_DISCONNECTED ||
+	    req->reason == REASON_ROAM_SYNCH_FAILED ||
+	    req->reason == REASON_SUPPLICANT_DISABLED_ROAMING) {
+		mode = WMI_ROAM_SCAN_MODE_NONE;
+	} else {
+		if (is_roam_offload_enabled)
+			mode = WMI_ROAM_SCAN_MODE_NONE |
+				WMI_ROAM_SCAN_MODE_ROAMOFFLOAD;
+		else
+			mode = WMI_ROAM_SCAN_MODE_NONE;
 	}
 
 	status = target_if_cm_roam_scan_offload_mode(wmi_handle,
@@ -1094,7 +1141,7 @@ target_if_cm_roam_send_stop(struct wlan_objmgr_vdev *vdev,
 	 * disconnect
 	 */
 	vdev_id = wlan_vdev_get_id(vdev);
-	if (req->rso_config.rso_mode_info.roam_scan_mode == WMI_ROAM_SCAN_MODE_NONE) {
+	if (mode == WMI_ROAM_SCAN_MODE_NONE) {
 		req->roam_triggers.vdev_id = vdev_id;
 		req->roam_triggers.trigger_bitmap = 0;
 		req->roam_triggers.roam_scan_scheme_bitmap = 0;
@@ -1202,6 +1249,11 @@ target_if_cm_roam_send_update_config(struct wlan_objmgr_vdev *vdev,
 				wmi_handle, ROAM_SCAN_OFFLOAD_UPDATE_CFG,
 				&req->idle_params);
 		target_if_cm_roam_triggers(vdev, &req->roam_triggers);
+
+		if (req->wlan_roam_rt_stats_config)
+			target_if_cm_roam_rt_stats_config(
+						vdev, vdev_id,
+						req->wlan_roam_rt_stats_config);
 	}
 end:
 	return status;

@@ -56,24 +56,6 @@ static void dp_rx_refill_thread_schedule(ol_txrx_soc_handle soc)
 }
 #endif
 
-/**
- * dp_get_rx_threads_num() - Get number of threads in use
- * @soc: ol_txrx_soc_handle object
- *
- * Return: number of threads
- */
-#ifdef WLAN_FEATURE_REDUCE_RX_THREADS
-static uint8_t dp_get_rx_threads_num(ol_txrx_soc_handle soc)
-{
-	return DP_REDUCED_NUM_RX_THREADS;
-}
-#else
-static uint8_t dp_get_rx_threads_num(ol_txrx_soc_handle soc)
-{
-	return cdp_get_num_rx_contexts(soc);
-}
-#endif
-
 QDF_STATUS dp_txrx_init(ol_txrx_soc_handle soc, uint8_t pdev_id,
 			struct dp_txrx_config *config)
 {
@@ -124,8 +106,7 @@ QDF_STATUS dp_txrx_init(ol_txrx_soc_handle soc, uint8_t pdev_id,
 						dp_rx_refill_thread_schedule);
 	}
 
-	num_dp_rx_threads = dp_get_rx_threads_num(soc);
-	dp_info("%d RX threads in use", num_dp_rx_threads);
+	num_dp_rx_threads = cdp_get_num_rx_contexts(soc);
 
 	if (dp_ext_hdl->config.enable_rx_threads) {
 		qdf_status = dp_rx_tm_init(&dp_ext_hdl->rx_tm_hdl,
@@ -228,10 +209,6 @@ int dp_rx_tm_get_pending(ol_txrx_soc_handle soc)
 
 /* Num TX desc in TX desc pool */
 #define DP_TX_DESC_POOL_SIZE 6144
-
-#define DP_TX_RX_DESC_MAX_NUM \
-		(WLAN_CFG_NUM_TX_DESC_MAX * MAX_TXDESC_POOLS + \
-			WLAN_CFG_RX_SW_DESC_NUM_SIZE_MAX * MAX_RXDESC_POOLS)
 
 /**
  * struct dp_consistent_prealloc - element representing DP pre-alloc memory
@@ -347,16 +324,12 @@ static struct dp_prealloc_context g_dp_context_allocs[] = {
 };
 
 static struct  dp_consistent_prealloc g_dp_consistent_allocs[] = {
+	/* 5 REO DST rings */
 	{REO_DST, (sizeof(struct reo_destination_ring)) * REO_DST_RING_SIZE, 0, NULL, NULL, 0, 0},
 	{REO_DST, (sizeof(struct reo_destination_ring)) * REO_DST_RING_SIZE, 0, NULL, NULL, 0, 0},
 	{REO_DST, (sizeof(struct reo_destination_ring)) * REO_DST_RING_SIZE, 0, NULL, NULL, 0, 0},
 	{REO_DST, (sizeof(struct reo_destination_ring)) * REO_DST_RING_SIZE, 0, NULL, NULL, 0, 0},
-#ifdef CONFIG_BERYLLIUM
 	{REO_DST, (sizeof(struct reo_destination_ring)) * REO_DST_RING_SIZE, 0, NULL, NULL, 0, 0},
-	{REO_DST, (sizeof(struct reo_destination_ring)) * REO_DST_RING_SIZE, 0, NULL, NULL, 0, 0},
-	{REO_DST, (sizeof(struct reo_destination_ring)) * REO_DST_RING_SIZE, 0, NULL, NULL, 0, 0},
-	{REO_DST, (sizeof(struct reo_destination_ring)) * REO_DST_RING_SIZE, 0, NULL, NULL, 0, 0},
-#endif
 	/* 3 TCL data rings */
 	{TCL_DATA, 0, 0, NULL, NULL, 0, 0},
 	{TCL_DATA, 0, 0, NULL, NULL, 0, 0},
@@ -455,11 +428,7 @@ static struct  dp_multi_page_prealloc g_dp_multi_page_allocs[] = {
 #endif
 	/* DP HW Link DESCs pools */
 	{DP_HW_LINK_DESC_TYPE, HW_LINK_DESC_SIZE, NUM_HW_LINK_DESCS, 0, NON_CACHEABLE, { 0 } },
-#ifdef CONFIG_BERYLLIUM
-	{DP_HW_CC_SPT_PAGE_TYPE, qdf_page_size,
-	 ((DP_TX_RX_DESC_MAX_NUM * sizeof(uint64_t)) / qdf_page_size),
-	 0, NON_CACHEABLE, { 0 } },
-#endif
+
 };
 
 static struct dp_consistent_prealloc_unaligned
@@ -499,8 +468,10 @@ void dp_prealloc_deinit(void)
 	struct dp_consistent_prealloc_unaligned *up;
 	qdf_device_t qdf_ctx = cds_get_context(QDF_MODULE_ID_QDF_DEVICE);
 
-	if (!qdf_ctx)
+	if (!qdf_ctx) {
+		dp_warn("qdf_ctx is NULL");
 		return;
+	}
 
 	for (i = 0; i < QDF_ARRAY_SIZE(g_dp_consistent_allocs); i++) {
 		p = &g_dp_consistent_allocs[i];
@@ -666,6 +637,7 @@ QDF_STATUS dp_prealloc_init(struct cdp_ctrl_objmgr_psoc *ctrl_psoc)
 	struct wlan_dp_prealloc_cfg cfg;
 
 	if (!qdf_ctx || !ctrl_psoc) {
+		dp_err("qdf_ctx is NULL");
 		QDF_BUG(0);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -833,8 +805,8 @@ void *dp_prealloc_get_coherent(uint32_t *size, void **base_vaddr_unaligned,
 			va_aligned = p->va_aligned;
 			*size = p->size;
 			dp_debug("index %i -> ring type %s va-aligned %pK", i,
-				 dp_srng_get_str_from_hal_ring_type(ring_type),
-				 va_aligned);
+				dp_srng_get_str_from_hal_ring_type(ring_type),
+				va_aligned);
 			break;
 		}
 	}
@@ -973,21 +945,5 @@ void dp_prealloc_put_consistent_mem_unaligned(void *va_unaligned)
 
 	if (i == QDF_ARRAY_SIZE(g_dp_consistent_unaligned_allocs))
 		dp_err("unable to find vaddr %pK", va_unaligned);
-}
-#endif
-
-#ifdef FEATURE_RUNTIME_PM
-uint32_t dp_get_tx_inqueue(ol_txrx_soc_handle soc)
-{
-	struct dp_soc *dp_soc;
-
-	dp_soc = cdp_soc_t_to_dp_soc(soc);
-
-	return qdf_atomic_read(&dp_soc->tx_pending_rtpm);
-}
-#else
-uint32_t dp_get_tx_inqueue(ol_txrx_soc_handle soc)
-{
-	return 0;
 }
 #endif

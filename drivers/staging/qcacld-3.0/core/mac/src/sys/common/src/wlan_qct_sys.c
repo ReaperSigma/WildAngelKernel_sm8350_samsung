@@ -154,9 +154,12 @@ static QDF_STATUS sys_mc_process_msg(struct scheduler_msg *pMsg)
 			QDF_TRACE(QDF_MODULE_ID_SYS, QDF_TRACE_LEVEL_ERROR,
 				"Processing SYS MC STOP");
 			mac_handle = cds_get_context(QDF_MODULE_ID_PE);
-			if (!mac_handle)
+			if (!mac_handle) {
+				QDF_TRACE(QDF_MODULE_ID_SYS,
+					QDF_TRACE_LEVEL_ERROR,
+					"%s: Invalid mac_handle", __func__);
 				break;
-
+			}
 			qdf_status = sme_stop(mac_handle);
 			QDF_ASSERT(QDF_IS_STATUS_SUCCESS(qdf_status));
 			qdf_status = mac_stop(mac_handle);

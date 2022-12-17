@@ -155,7 +155,7 @@ void pmo_tgt_update_target_suspend_flag(struct wlan_objmgr_psoc *psoc,
 }
 
 void pmo_tgt_update_target_suspend_acked_flag(struct wlan_objmgr_psoc *psoc,
-					      uint8_t val)
+		uint8_t val)
 {
 	struct wlan_pmo_tx_ops pmo_tx_ops;
 

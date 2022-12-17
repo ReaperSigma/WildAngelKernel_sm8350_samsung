@@ -66,9 +66,6 @@ static QDF_STATUS vdev_mgr_create_param_update(
 	param->mbssid_flags = mbss->mbssid_flags;
 	param->vdevid_trans = mbss->vdevid_trans;
 	param->special_vdev_mode = mlme_obj->mgmt.generic.special_vdev_mode;
-#ifdef WLAN_FEATURE_11BE_MLO
-	WLAN_ADDR_COPY(param->mlo_mac, wlan_vdev_mlme_get_mldaddr(vdev));
-#endif
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -94,7 +91,7 @@ QDF_STATUS vdev_mgr_create_send(struct vdev_mlme_obj *mlme_obj)
 	return status;
 }
 
-#ifdef MOBILE_DFS_SUPPORT
+#ifdef QCA_MCL_DFS_SUPPORT
 static bool vdev_mgr_is_opmode_sap_or_p2p_go(enum QDF_OPMODE op_mode)
 {
 	return (op_mode == QDF_SAP_MODE || op_mode == QDF_P2P_GO_MODE);
@@ -117,31 +114,13 @@ static inline bool vdev_mgr_is_49G_5G_chan_freq(uint16_t chan_freq)
 }
 #endif
 
-#ifdef WLAN_FEATURE_11BE
-static void
-vdev_mgr_start_param_update_11be(struct vdev_mlme_obj *mlme_obj,
-				 struct vdev_start_params *param,
-				 struct wlan_channel *des_chan)
-{
-	param->eht_ops = mlme_obj->proto.eht_ops_info.eht_ops;
-	param->channel.puncture_pattern = des_chan->puncture_bitmap;
-}
-#else
-static void
-vdev_mgr_start_param_update_11be(struct vdev_mlme_obj *mlme_obj,
-				 struct vdev_start_params *param,
-				 struct wlan_channel *des_chan)
-{
-}
-#endif
-
 static QDF_STATUS vdev_mgr_start_param_update(
 					struct vdev_mlme_obj *mlme_obj,
 					struct vdev_start_params *param)
 {
 	struct wlan_channel *des_chan;
 	uint32_t dfs_reg;
-	bool set_agile = false, dfs_set_cfreq2 = false, is_stadfs_en = false;
+	bool set_agile = false, dfs_set_cfreq2 = false;
 	struct wlan_objmgr_vdev *vdev;
 	struct wlan_objmgr_pdev *pdev;
 	enum QDF_OPMODE op_mode;
@@ -194,8 +173,6 @@ static QDF_STATUS vdev_mgr_start_param_update(
 		utils_dfs_agile_sm_deliver_evt(pdev,
 					       DFS_AGILE_SM_EV_AGILE_STOP);
 
-	is_stadfs_en = tgt_dfs_is_stadfs_enabled(pdev);
-	param->channel.is_stadfs_en = is_stadfs_en;
 	param->beacon_interval = mlme_obj->proto.generic.beacon_interval;
 	param->dtim_period = mlme_obj->proto.generic.dtim_period;
 	param->disable_hw_ack = mlme_obj->mgmt.generic.disable_hw_ack;
@@ -208,15 +185,13 @@ static QDF_STATUS vdev_mgr_start_param_update(
 	param->regdomain = dfs_reg;
 	param->he_ops = mlme_obj->proto.he_ops_info.he_ops;
 
-	vdev_mgr_start_param_update_11be(mlme_obj, param, des_chan);
-
 	param->channel.chan_id = des_chan->ch_ieee;
 	param->channel.pwr = mlme_obj->mgmt.generic.tx_power;
 	param->channel.mhz = des_chan->ch_freq;
 	param->channel.half_rate = mlme_obj->mgmt.rate_info.half_rate;
 	param->channel.quarter_rate = mlme_obj->mgmt.rate_info.quarter_rate;
 
-	if (vdev_mgr_is_opmode_sap_or_p2p_go(op_mode))
+	if (op_mode == QDF_SAP_MODE || op_mode == QDF_P2P_GO_MODE)
 		param->channel.dfs_set = wlan_reg_is_dfs_for_freq(
 							pdev,
 							des_chan->ch_freq);
@@ -238,8 +213,6 @@ static QDF_STATUS vdev_mgr_start_param_update(
 
 	mbss = &mlme_obj->mgmt.mbss_11ax;
 	param->mbssid_flags = mbss->mbssid_flags;
-	param->mbssid_multi_group_flag = mbss->is_multi_mbssid;
-	param->mbssid_multi_group_id   = mbss->grp_id;
 	param->vdevid_trans = mbss->vdevid_trans;
 
 	if (mlme_obj->mgmt.generic.type == WLAN_VDEV_MLME_TYPE_AP) {
@@ -261,16 +234,7 @@ static QDF_STATUS vdev_mgr_start_param_update(
 		param->channel.dfs_set_cfreq2 = dfs_set_cfreq2;
 		param->channel.set_agile = set_agile;
 	}
-/* WLAN_FEATURE_11BE_MLO macro is termporary,
- *  will be removed once MLO testing is complete
- */
-#ifdef WLAN_FEATURE_11BE_MLO
-	if (wlan_vdev_mlme_is_mlo_vdev(vdev)) {
-		param->mlo_flags.mlo_enabled = 1;
-		if (!wlan_vdev_mlme_is_mlo_link_vdev(vdev))
-			param->mlo_flags.mlo_assoc_link = 1;
-	}
-#endif
+
 	wlan_objmgr_pdev_release_ref(pdev, WLAN_MLME_SB_ID);
 	return QDF_STATUS_SUCCESS;
 }

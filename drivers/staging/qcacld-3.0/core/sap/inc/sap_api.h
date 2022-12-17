@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -246,9 +246,15 @@ typedef struct sap_StationAssocIndication_s {
 	uint8_t staId;
 	uint8_t status;
 	/* Required for indicating the frames to upper layer */
+	uint32_t beaconLength;
+	uint8_t *beaconPtr;
 	uint32_t assocReqLength;
 	uint8_t *assocReqPtr;
 	bool fWmmEnabled;
+	enum csr_akm_type negotiatedAuthType;
+	eCsrEncryptionType negotiatedUCEncryptionType;
+	eCsrEncryptionType negotiatedMCEncryptionType;
+	bool fAuthRequired;
 	uint8_t ecsa_capable;
 	uint32_t owe_ie_len;
 	uint8_t *owe_ie;
@@ -281,7 +287,6 @@ typedef struct sap_StationAssocReassocCompleteEvent_s {
 	tDot11fIEVHTCaps vht_caps;
 	tSirMacCapabilityInfo capability_info;
 	bool he_caps_present;
-	struct qdf_mac_addr sta_mld;
 } tSap_StationAssocReassocCompleteEvent;
 
 typedef struct sap_StationDisassocCompleteEvent_s {
@@ -475,17 +480,23 @@ struct sap_config {
 	eCsrPhyMode SapHw_mode;         /* Wireless Mode */
 	eSapMacAddrACL SapMacaddr_acl;
 	struct qdf_mac_addr accept_mac[MAX_ACL_MAC_ADDRESS]; /* MAC filtering */
+	bool ieee80211d;      /* Specify if 11D is enabled or disabled */
 	struct qdf_mac_addr deny_mac[MAX_ACL_MAC_ADDRESS];  /* MAC filtering */
 	struct qdf_mac_addr self_macaddr;       /* self macaddress or BSSID */
 	uint32_t chan_freq;          /* Operation channel frequency */
 	uint32_t sec_ch_freq;
 	struct ch_params ch_params;
 	uint32_t ch_width_orig;
+	uint8_t max_num_sta;      /* maximum number of STAs in station table */
 	uint8_t dtim_period;      /* dtim interval */
-	uint16_t num_accept_mac;
-	uint16_t num_deny_mac;
+	uint8_t num_accept_mac;
+	uint8_t num_deny_mac;
 	/* Max ie length 255 * 2(WPA+RSN) + 2 bytes(vendor specific ID) * 2 */
 	uint8_t RSNWPAReqIE[(WLAN_MAX_IE_LEN * 2) + 4];
+	/* it is ignored if [0] is 0. */
+	uint8_t countryCode[REG_ALPHA2_LEN + 1];
+	uint8_t RSNEncryptType;
+	uint8_t mcRSNEncryptType;
 	eSapAuthType authType;
 	tCsrAuthList akm_list;
 	bool privacy;
@@ -496,6 +507,10 @@ struct sap_config {
 	uint32_t beacon_int;            /* Beacon Interval */
 	enum QDF_OPMODE persona; /* Tells us which persona, GO or AP */
 	bool enOverLapCh;
+#ifdef WLAN_FEATURE_11W
+	bool mfpRequired;
+	bool mfpCapable;
+#endif
 #ifdef FEATURE_WLAN_MCC_TO_SCC_SWITCH
 	uint8_t cc_switch_mode;
 #endif
@@ -511,6 +526,10 @@ struct sap_config {
 	void *pProbeRespBcnIEsBuffer;
 	uint16_t beacon_tx_rate;
 	uint8_t *vendor_ie;
+	uint16_t sta_inactivity_timeout;
+	uint16_t tx_pkt_fail_cnt_threshold;
+	uint8_t short_retry_limit;
+	uint8_t long_retry_limit;
 	tSirMacRateSet supported_rates;
 	tSirMacRateSet extended_rates;
 	bool require_h2e;
@@ -518,11 +537,6 @@ struct sap_config {
 	struct hdd_channel_info *channel_info;
 	uint32_t channel_info_count;
 	bool dfs_cac_offload;
-#ifdef WLAN_FEATURE_11BE_MLO
-	bool mlo_sap;
-	uint8_t link_id;
-	uint8_t num_link;
-#endif
 };
 
 #ifdef FEATURE_WLAN_AP_AP_ACS_OPTIMIZE
@@ -609,35 +623,6 @@ typedef struct sSapDfsInfo {
 	uint8_t sap_ch_switch_mode;
 	uint16_t reduced_beacon_interval;
 } tSapDfsInfo;
-
-/* MAX number of CAC channels to be recorded */
-#define MAX_NUM_OF_CAC_HISTORY 8
-
-/**
- * struct prev_cac_result - previous cac result
- * @ap_start_time: ap start timestamp
- * @ap_end_time: ap stop or cac end timestamp
- * @cac_complete: cac complete without found radar event
- * @cac_ch_param: ap channel parameters
- */
-struct prev_cac_result {
-	uint64_t ap_start_time;
-	uint64_t ap_end_time;
-	bool cac_complete;
-	struct ch_params cac_ch_param;
-};
-
-/**
- * struct dfs_radar_history - radar found history element
- * @time: timestamp in us from system boot
- * @radar_found: radar found or not
- * @ch_freq: channel frequency in Mhz
- */
-struct dfs_radar_history {
-	uint64_t time;
-	bool radar_found;
-	uint16_t ch_freq;
-};
 
 #ifdef DCS_INTERFERENCE_DETECTION
 /**
@@ -779,26 +764,26 @@ typedef QDF_STATUS (*sap_event_cb)(struct sap_event *sap_event,
  * wlansap_is_channel_in_nol_list() - This API checks if channel is
  * in nol list
  * @sap_ctx: SAP context pointer
- * @chan_freq: channel frequency
+ * @channelNumber: channel number
  * @chanBondState: channel bonding state
  *
  * Return: True if the channel is in the NOL list, false otherwise
  */
 bool wlansap_is_channel_in_nol_list(struct sap_context *sap_ctx,
-				    qdf_freq_t chan_freq,
+				    uint8_t channelNumber,
 				    ePhyChanBondState chanBondState);
 
 /**
  * wlansap_is_channel_leaking_in_nol() - This API checks if channel is leaking
  * in nol list
  * @sap_ctx: SAP context pointer
- * @chan_freq: channel frequency
+ * @channel: channel
  * @chan_bw: channel bandwidth
  *
  * Return: True/False
  */
 bool wlansap_is_channel_leaking_in_nol(struct sap_context *sap_ctx,
-				       uint16_t chan_freq,
+				       uint8_t channel,
 				       uint8_t chan_bw);
 
 /**
@@ -1020,7 +1005,7 @@ QDF_STATUS wlansap_clear_acl(struct sap_context *sap_ctx);
  */
 QDF_STATUS wlansap_get_acl_accept_list(struct sap_context *sap_ctx,
 				       struct qdf_mac_addr *pAcceptList,
-				       uint16_t *nAcceptList);
+				       uint8_t *nAcceptList);
 
 /**
  * wlansap_is_channel_present_in_acs_list() - Freq present in ACS list or not
@@ -1046,7 +1031,7 @@ bool wlansap_is_channel_present_in_acs_list(uint32_t freq,
  */
 QDF_STATUS wlansap_get_acl_deny_list(struct sap_context *sap_ctx,
 				     struct qdf_mac_addr *pDenyList,
-				     uint16_t *nDenyList);
+				     uint8_t *nDenyList);
 
 /**
  * wlansap_set_acl_mode() - Set the SAP ACL mode
@@ -1245,6 +1230,16 @@ QDF_STATUS wlansap_set_dfs_preferred_channel_location(mac_handle_t mac_handle);
  */
 QDF_STATUS wlansap_set_dfs_target_chnl(mac_handle_t mac_handle,
 				       uint32_t target_chan_freq);
+
+/**
+ * wlan_sap_get_roam_profile() - Returns sap roam profile.
+ * @sap_ctx:	Pointer to Sap Context.
+ *
+ * This function provides the SAP roam profile.
+ *
+ * Return: SAP RoamProfile
+ */
+struct csr_roam_profile *wlan_sap_get_roam_profile(struct sap_context *sap_ctx);
 
 /**
  * wlan_sap_get_phymode() - Returns sap phymode.
@@ -1581,24 +1576,6 @@ uint32_t wlansap_get_safe_channel_from_pcl_for_sap(struct sap_context *sap_ctx);
  */
 qdf_freq_t wlansap_get_chan_band_restrict(struct sap_context *sap_ctx,
 					  enum sap_csa_reason_code *csa_reason);
-
-#ifdef FEATURE_RADAR_HISTORY
-/**
- * wlansap_query_radar_history() -  get radar history info
- * @mac_handle: mac context
- * @radar_history: radar history buffer to be returned
- * @count: total history count
- *
- * The API will return the dfs nol list(Radar found history) and
- * CAC history (no Radar found).
- *
- * Return - QDF_STATUS
- */
-QDF_STATUS
-wlansap_query_radar_history(mac_handle_t mac_handle,
-			    struct dfs_radar_history **radar_history,
-			    uint32_t *count);
-#endif
 
 #ifdef DCS_INTERFERENCE_DETECTION
 /**

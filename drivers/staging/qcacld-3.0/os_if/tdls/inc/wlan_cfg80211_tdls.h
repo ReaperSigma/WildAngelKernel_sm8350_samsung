@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -51,6 +52,7 @@
  * @mgmt_tx_completion_status: Tdls mgmt frames TX completion status code
  * @tdls_user_cmd_len: tdls user command written buffer length
  * @tdls_antenna_switch_status: return status after antenna switch
+ * @tdls_user_cmd_in_progress: tdls user command progress status.
  */
 struct osif_tdls_vdev {
 	struct completion tdls_add_peer_comp;
@@ -64,6 +66,7 @@ struct osif_tdls_vdev {
 	uint32_t mgmt_tx_completion_status;
 	uint32_t tdls_user_cmd_len;
 	int tdls_antenna_switch_status;
+	bool tdls_user_cmd_in_progress;
 };
 
 /**
@@ -226,6 +229,39 @@ void wlan_cfg80211_tdls_rx_callback(void *user_data,
  */
 void hdd_notify_tdls_reset_adapter(struct wlan_objmgr_vdev *vdev);
 
+/**
+ * hdd_notify_sta_connect() - notify sta connect to TDLS
+ * @session_id: pointer to soc object
+ * @tdls_chan_swit_prohibited: indicates channel switch capability
+ * @tdls_prohibited: indicates tdls allowed or not
+ * @vdev: vdev object manager
+ *
+ * Notify sta connect event to TDLS component
+ *
+ * Return: None
+ */
+void
+hdd_notify_sta_connect(uint8_t session_id,
+		       bool tdls_chan_swit_prohibited,
+		       bool tdls_prohibited,
+		       struct wlan_objmgr_vdev *vdev);
+
+/**
+ * hdd_notify_sta_disconnect() - notify sta disconnect to TDLS
+ * @session_id: pointer to soc object
+ * @lfr_roam: indicate, whether disconnect due to lfr roam
+ * @bool user_disconnect: disconnect from user space
+ * @vdev: vdev object manager
+ *
+ * Notify sta disconnect event to TDLS component
+ *
+ * Return: None
+ */
+void hdd_notify_sta_disconnect(uint8_t session_id,
+			       bool lfr_roam,
+			       bool user_disconnect,
+			       struct wlan_objmgr_vdev *vdev);
+
 #else /* FEATURE_WLAN_TDLS */
 static inline
 QDF_STATUS wlan_cfg80211_tdls_osif_priv_init(struct wlan_objmgr_vdev *vdev)
@@ -243,11 +279,34 @@ hdd_notify_tdls_reset_adapter(struct wlan_objmgr_vdev *vdev)
 {
 }
 
+static inline void
+hdd_notify_sta_connect(uint8_t session_id,
+		       bool tdls_chan_swit_prohibited,
+		       bool tdls_prohibited,
+		       struct wlan_objmgr_vdev *vdev)
+{
+}
+
+static inline
+void hdd_notify_sta_disconnect(uint8_t session_id,
+			       bool lfr_roam,
+			       bool user_disconnect,
+			       struct wlan_objmgr_vdev *vdev)
+{
+
+}
+
 static inline
 int wlan_cfg80211_tdls_configure_mode(struct wlan_objmgr_vdev *vdev,
 						uint32_t trigger_mode)
 {
 	return 0;
+}
+
+static inline
+void hdd_notify_teardown_tdls_links(struct wlan_objmgr_psoc *psoc)
+{
+
 }
 #endif /* FEATURE_WLAN_TDLS */
 #endif /* _WLAN_CFG80211_TDLS_H_ */

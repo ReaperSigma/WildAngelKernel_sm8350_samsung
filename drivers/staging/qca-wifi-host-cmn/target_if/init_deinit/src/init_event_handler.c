@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -41,24 +42,6 @@ static void init_deinit_set_send_init_cmd(struct wlan_objmgr_psoc *psoc,
 	/* send init command */
 	init_deinit_prepare_send_init_cmd(psoc, tgt_hdl);
 }
-
-#ifdef WLAN_FEATURE_P2P_P2P_STA
-static void
-init_deinit_update_p2p_p2p_conc_support(struct wmi_unified *wmi_handle,
-					struct wlan_objmgr_psoc *psoc)
-{
-	if (wmi_service_enabled(wmi_handle, wmi_service_p2p_p2p_cc_support))
-		wlan_psoc_nif_fw_ext_cap_set(psoc,
-					     WLAN_SOC_EXT_P2P_P2P_CONC_SUPPORT);
-	else
-		target_if_debug("P2P + P2P conc disabled");
-}
-#else
-static inline void
-init_deinit_update_p2p_p2p_conc_support(struct wmi_unified *wmi_handle,
-					struct wlan_objmgr_psoc *psoc)
-{}
-#endif
 
 static int init_deinit_service_ready_event_handler(ol_scn_t scn_handle,
 							uint8_t *event,
@@ -116,6 +99,8 @@ static int init_deinit_service_ready_event_handler(ol_scn_t scn_handle,
 		wlan_psoc_nif_op_flag_set(psoc, WLAN_SOC_OP_VHT_INVALID_CAP);
 	}
 
+	target_if_ext_res_cfg_enable(psoc, tgt_hdl, event);
+
 	if (wmi_service_enabled(wmi_handle, wmi_service_tt))
 		wlan_psoc_nif_fw_ext_cap_set(psoc, WLAN_SOC_CEXT_TT_SUPPORT);
 
@@ -158,16 +143,6 @@ static int init_deinit_service_ready_event_handler(ol_scn_t scn_handle,
 		wlan_psoc_nif_fw_ext_cap_set(
 				psoc, WLAN_SOC_NSS_RATIO_TO_HOST_SUPPORT);
 
-	if (wmi_service_enabled(wmi_handle,
-				wmi_service_rtt_ap_initiator_staggered_mode_supported))
-		wlan_psoc_nif_fw_ext_cap_set(
-				psoc, WLAN_SOC_RTT_AP_INITIATOR_STAGGERED_MODE_SUPPORTED);
-
-	if (wmi_service_enabled(wmi_handle,
-				wmi_service_rtt_ap_initiator_bursted_mode_supported))
-		wlan_psoc_nif_fw_ext_cap_set(
-				psoc, WLAN_SOC_RTT_AP_INITIATOR_BURSTED_MODE_SUPPORTED);
-
 	target_if_debug(" TT support %d, Wide BW Scan %d, SW cal %d",
 		wlan_psoc_nif_fw_ext_cap_get(psoc, WLAN_SOC_CEXT_TT_SUPPORT),
 		wlan_psoc_nif_fw_ext_cap_get(psoc, WLAN_SOC_CEXT_WIDEBAND_SCAN),
@@ -185,11 +160,6 @@ static int init_deinit_service_ready_event_handler(ol_scn_t scn_handle,
 
 	target_if_atf_cfg_enable(psoc, tgt_hdl, event);
 
-	if (wmi_service_enabled(wmi_handle,
-				wmi_service_mgmt_rx_reo_supported))
-		wlan_psoc_nif_fw_ext_cap_set(psoc,
-					     WLAN_SOC_F_MGMT_RX_REO_CAPABLE);
-
 	if (!wmi_service_enabled(wmi_handle, wmi_service_ext_msg))
 		target_if_qwrap_cfg_enable(psoc, tgt_hdl, event);
 
@@ -203,6 +173,11 @@ static int init_deinit_service_ready_event_handler(ol_scn_t scn_handle,
 				wmi_service_scan_conf_per_ch_support))
 		wlan_psoc_nif_fw_ext_cap_set(psoc,
 					     WLAN_SOC_CEXT_SCAN_PER_CH_CONFIG);
+
+	if (wmi_service_enabled(wmi_handle,
+				wmi_service_pno_scan_conf_per_ch_support))
+		wlan_psoc_nif_fw_ext_cap_set(psoc,
+					WLAN_SOC_PNO_SCAN_CONFIG_PER_CHANNEL);
 
 	if (wmi_service_enabled(wmi_handle, wmi_service_csa_beacon_template))
 		wlan_psoc_nif_fw_ext_cap_set(psoc,
@@ -236,7 +211,6 @@ static int init_deinit_service_ready_event_handler(ol_scn_t scn_handle,
 					       WLAN_SOC_CEXT_WMI_MGMT_REF);
 		target_if_debug("WMI mgmt service disabled");
 	}
-	init_deinit_update_p2p_p2p_conc_support(wmi_handle, psoc);
 
 	err_code = init_deinit_handle_host_mem_req(psoc, tgt_hdl, event);
 	if (err_code != QDF_STATUS_SUCCESS)
@@ -309,11 +283,8 @@ static int init_deinit_service_ext2_ready_event_handler(ol_scn_t scn_handle,
 		goto exit;
 
 	if (wmi_service_enabled(wmi_handle,
-				wmi_service_reg_cc_ext_event_support)) {
+				wmi_service_reg_cc_ext_event_support))
 		target_if_set_reg_cc_ext_supp(tgt_hdl, psoc);
-		wlan_psoc_nif_fw_ext_cap_set(psoc,
-					     WLAN_SOC_EXT_EVENT_SUPPORTED);
-	}
 
 	/* dbr_ring_caps could have already come as part of EXT event */
 	if (info->service_ext2_param.num_dbr_ring_caps) {
@@ -637,7 +608,7 @@ static int init_deinit_ready_event_handler(ol_scn_t scn_handle,
 
 		if (cdp_peer_map_attach(wlan_psoc_get_dp_handle(psoc),
 					max_peers, max_ast_index,
-					tgt_cfg->peer_map_unmap_version) !=
+					tgt_cfg->peer_map_unmap_v2) !=
 				QDF_STATUS_SUCCESS) {
 			target_if_err("DP peer map attach failed");
 			return -EINVAL;

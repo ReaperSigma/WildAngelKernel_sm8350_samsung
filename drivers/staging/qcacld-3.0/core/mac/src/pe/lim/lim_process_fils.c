@@ -1025,7 +1025,7 @@ void lim_add_fils_data_to_auth_frame(struct pe_session *session,
 	 * MDIE to be sent in auth frame during initial
 	 * mobility domain association
 	 */
-	if (session->is11Rconnection) {
+	if (session->lim_join_req->is11Rconnection) {
 		struct bss_description *bss_desc;
 
 		bss_desc = &session->lim_join_req->bssDescription;
@@ -1408,52 +1408,22 @@ bool lim_process_fils_auth_frame2(struct mac_context *mac_ctx,
 	return true;
 }
 
-static enum eAniAuthType lim_get_auth_type(uint8_t auth_type)
-{
-	switch (auth_type) {
-	case FILS_SK_WITHOUT_PFS:
-		return SIR_FILS_SK_WITHOUT_PFS;
-	case FILS_SK_WITH_PFS:
-		return SIR_FILS_SK_WITH_PFS;
-	case FILS_PK_AUTH:
-		return SIR_FILS_PK_AUTH;
-	default:
-		return eSIR_DONOT_USE_AUTH_TYPE;
-	}
-}
-
-static uint8_t lim_get_akm_type(struct wlan_objmgr_vdev *vdev)
-{
-	int32_t akm;
-
-	akm = wlan_crypto_get_param(vdev, WLAN_CRYPTO_PARAM_KEY_MGMT);
-
-	if (QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FT_FILS_SHA384))
-		return eCSR_AUTH_TYPE_FT_FILS_SHA384;
-	else if (QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FT_FILS_SHA256))
-		return eCSR_AUTH_TYPE_FT_FILS_SHA256;
-	else if (QDF_HAS_PARAM(akm, WLAN_CRYPTO_KEY_MGMT_FILS_SHA384))
-		return eCSR_AUTH_TYPE_FILS_SHA384;
-	else
-		return eCSR_AUTH_TYPE_FILS_SHA256;
-}
-
 void lim_update_fils_config(struct mac_context *mac_ctx,
 			    struct pe_session *session,
-			    struct cm_vdev_join_req *join_req)
+			    struct join_req *sme_join_req)
 {
 	struct pe_fils_session *pe_fils_info;
 	struct wlan_fils_connection_info *fils_info = NULL;
 	tDot11fIERSN dot11f_ie_rsn = {0};
 	uint32_t ret;
-	struct mlme_legacy_priv *mlme_priv;
 
-	mlme_priv = wlan_vdev_mlme_get_ext_hdl(session->vdev);
-	if (!mlme_priv)
+	fils_info = wlan_cm_get_fils_connection_info(mac_ctx->psoc,
+						     session->vdev_id);
+	if (!fils_info) {
+		pe_debug("FILS: CM Fils info is NULL");
 		return;
-	fils_info = mlme_priv->connect_info.fils_con_info;
-	if (!fils_info)
-		return;
+	}
+
 	pe_fils_info = session->fils_info;
 	if (!pe_fils_info)
 		return;
@@ -1464,8 +1434,8 @@ void lim_update_fils_config(struct mac_context *mac_ctx,
 	pe_fils_info->is_fils_connection = fils_info->is_fils_connection;
 	pe_fils_info->keyname_nai_length = fils_info->key_nai_length;
 	pe_fils_info->fils_rrk_len = fils_info->r_rk_length;
-	pe_fils_info->akm = lim_get_akm_type(session->vdev);
-	pe_fils_info->auth = lim_get_auth_type(fils_info->auth_type);
+	pe_fils_info->akm = fils_info->akm_type;
+	pe_fils_info->auth = fils_info->auth_type;
 	pe_fils_info->sequence_number = fils_info->erp_sequence_number;
 
 	if (fils_info->key_nai_length > FILS_MAX_KEYNAME_NAI_LENGTH) {
@@ -1502,11 +1472,11 @@ void lim_update_fils_config(struct mac_context *mac_ctx,
 
 	qdf_mem_copy(pe_fils_info->fils_pmkid, fils_info->pmkid,
 		     PMKID_LEN);
-	pe_fils_info->rsn_ie_len = session->lim_join_req->rsnIE.length;
-	qdf_mem_copy(pe_fils_info->rsn_ie,
-		     session->lim_join_req->rsnIE.rsnIEdata,
-		     session->lim_join_req->rsnIE.length);
 
+	pe_fils_info->rsn_ie_len = sme_join_req->rsnIE.length;
+	qdf_mem_copy(pe_fils_info->rsn_ie,
+		     sme_join_req->rsnIE.rsnIEdata,
+		     sme_join_req->rsnIE.length);
 	/*
 	 * When AP is MFP capable and STA is also MFP capable,
 	 * the supplicant fills the RSN IE with PMKID count as 0
@@ -1540,13 +1510,13 @@ void lim_update_fils_config(struct mac_context *mac_ctx,
 			     fils_info->pmk_len);
 	}
 
-	pe_debug("FILS: fils=%d nai-len=%d rrk_len=%d akm=%d auth=%d pmk_len=%d rsn_len:%d",
+	pe_debug("FILS: fils=%d nai-len=%d rrk_len=%d akm=%d auth=%d pmk_len=%d",
 		 fils_info->is_fils_connection,
 		 fils_info->key_nai_length,
 		 fils_info->r_rk_length,
 		 fils_info->akm_type,
 		 fils_info->auth_type,
-		 fils_info->pmk_len, pe_fils_info->rsn_ie_len);
+		 fils_info->pmk_len);
 }
 
 #define EXTENDED_IE_HEADER_LEN 3
@@ -1606,58 +1576,60 @@ QDF_STATUS lim_create_fils_auth_data(struct mac_context *mac_ctx,
 
 void populate_fils_connect_params(struct mac_context *mac_ctx,
 				  struct pe_session *session,
-				  struct wlan_cm_connect_resp *connect_rsp)
+				  struct join_rsp *sme_join_rsp)
 {
+	struct fils_join_rsp_params *fils_join_rsp;
 	struct pe_fils_session *fils_info = session->fils_info;
-	struct fils_connect_rsp_params *fils_ie;
 
 	if (!lim_is_fils_connection(session))
 		return;
 
 	if (!fils_info->fils_pmk_len ||
-	    !fils_info->tk_len || !fils_info->gtk_len ||
-	    !fils_info->fils_pmk || !fils_info->kek_len) {
+			!fils_info->tk_len || !fils_info->gtk_len ||
+			!fils_info->fils_pmk || !fils_info->kek_len) {
 		pe_err("Invalid FILS info pmk len %d kek len %d tk len %d gtk len %d",
-		       fils_info->fils_pmk_len, fils_info->kek_len,
-		       fils_info->tk_len, fils_info->gtk_len);
+			fils_info->fils_pmk_len,
+			fils_info->kek_len,
+			fils_info->tk_len,
+			fils_info->gtk_len);
 		return;
 	}
 
-	connect_rsp->connect_ies.fils_ie = qdf_mem_malloc(sizeof(*fils_ie));
-	if (!connect_rsp->connect_ies.fils_ie) {
+	sme_join_rsp->fils_join_rsp = qdf_mem_malloc(sizeof(*fils_join_rsp));
+	if (!sme_join_rsp->fils_join_rsp) {
 		pe_delete_fils_info(session);
 		return;
 	}
 
-	fils_ie = connect_rsp->connect_ies.fils_ie;
-	fils_ie->fils_pmk = qdf_mem_malloc(fils_info->fils_pmk_len);
-	if (!fils_ie->fils_pmk) {
-		qdf_mem_free(fils_ie);
-		connect_rsp->connect_ies.fils_ie = NULL;
+	fils_join_rsp = sme_join_rsp->fils_join_rsp;
+	fils_join_rsp->fils_pmk = qdf_mem_malloc(fils_info->fils_pmk_len);
+	if (!fils_join_rsp->fils_pmk) {
+		qdf_mem_free(fils_join_rsp);
 		pe_delete_fils_info(session);
 		return;
 	}
-	fils_ie->fils_seq_num = fils_info->sequence_number;
-	fils_ie->fils_pmk_len = fils_info->fils_pmk_len;
-	qdf_mem_copy(fils_ie->fils_pmk, fils_info->fils_pmk,
-		     fils_info->fils_pmk_len);
 
-	qdf_mem_copy(fils_ie->fils_pmkid, fils_info->fils_pmkid, PMKID_LEN);
+	fils_join_rsp->fils_pmk_len = fils_info->fils_pmk_len;
+	qdf_mem_copy(fils_join_rsp->fils_pmk, fils_info->fils_pmk,
+			fils_info->fils_pmk_len);
 
-	fils_ie->kek_len = fils_info->kek_len;
-	qdf_mem_copy(fils_ie->kek, fils_info->kek, fils_info->kek_len);
+	qdf_mem_copy(fils_join_rsp->fils_pmkid, fils_info->fils_pmkid,
+			PMKID_LEN);
 
-	fils_ie->tk_len = fils_info->tk_len;
-	qdf_mem_copy(fils_ie->tk, fils_info->tk, fils_info->tk_len);
+	fils_join_rsp->kek_len = fils_info->kek_len;
+	qdf_mem_copy(fils_join_rsp->kek, fils_info->kek, fils_info->kek_len);
 
-	fils_ie->gtk_len = fils_info->gtk_len;
-	qdf_mem_copy(fils_ie->gtk, fils_info->gtk, fils_info->gtk_len);
+	fils_join_rsp->tk_len = fils_info->tk_len;
+	qdf_mem_copy(fils_join_rsp->tk, fils_info->tk, fils_info->tk_len);
+
+	fils_join_rsp->gtk_len = fils_info->gtk_len;
+	qdf_mem_copy(fils_join_rsp->gtk, fils_info->gtk, fils_info->gtk_len);
 
 	cds_copy_hlp_info(&fils_info->dst_mac, &fils_info->src_mac,
 			  fils_info->hlp_data_len, fils_info->hlp_data,
-			  &fils_ie->dst_mac, &fils_ie->src_mac,
-			  &fils_ie->hlp_data_len,
-			  fils_ie->hlp_data);
+			  &fils_join_rsp->dst_mac, &fils_join_rsp->src_mac,
+			  &fils_join_rsp->hlp_data_len,
+			  fils_join_rsp->hlp_data);
 
 	pe_debug("FILS connect params copied lim");
 }
@@ -1830,10 +1802,8 @@ bool lim_verify_fils_params_assoc_rsp(struct mac_context *mac_ctx,
 	}
 
 	fils_key_auth = qdf_mem_malloc(sizeof(*fils_key_auth));
-	if (!fils_key_auth) {
-		pe_err("malloc failed for fils_key_auth");
+	if (!fils_key_auth)
 		goto verify_fils_params_fails;
-	}
 
 	*fils_key_auth = assoc_rsp->fils_key_auth;
 

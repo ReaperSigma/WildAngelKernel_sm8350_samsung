@@ -34,7 +34,6 @@
 #include "wlan_pmo_cfg.h"
 #include "wlan_pmo_static_config.h"
 #include "cfg_ucfg_api.h"
-#include "wlan_pmo_icmp.h"
 
 QDF_STATUS ucfg_pmo_psoc_open(struct wlan_objmgr_psoc *psoc)
 {
@@ -900,30 +899,6 @@ ucfg_pmo_get_active_mc_bc_apf_mode(struct wlan_objmgr_psoc *psoc)
 	return pmo_psoc_ctx->psoc_cfg.active_mc_bc_apf_mode;
 }
 
-#ifdef WLAN_ENABLE_GPIO_WAKEUP
-bool ucfg_pmo_is_gpio_wakeup_enabled(struct wlan_objmgr_psoc *psoc)
-{
-	struct pmo_psoc_priv_obj *pmo_psoc_ctx = pmo_psoc_get_priv(psoc);
-
-	return pmo_psoc_ctx->psoc_cfg.enable_gpio_wakeup;
-}
-
-uint32_t ucfg_pmo_get_gpio_wakeup_pin(struct wlan_objmgr_psoc *psoc)
-{
-	struct pmo_psoc_priv_obj *pmo_psoc_ctx = pmo_psoc_get_priv(psoc);
-
-	return pmo_psoc_ctx->psoc_cfg.gpio_wakeup_pin;
-}
-
-enum pmo_gpio_wakeup_mode
-ucfg_pmo_get_gpio_wakeup_mode(struct wlan_objmgr_psoc *psoc)
-{
-	struct pmo_psoc_priv_obj *pmo_psoc_ctx = pmo_psoc_get_priv(psoc);
-
-	return pmo_psoc_ctx->psoc_cfg.gpio_wakeup_mode;
-}
-#endif
-
 bool
 ucfg_pmo_get_sap_mode_bus_suspend(struct wlan_objmgr_psoc *psoc)
 {
@@ -940,22 +915,6 @@ ucfg_pmo_get_go_mode_bus_suspend(struct wlan_objmgr_psoc *psoc)
 	return pmo_psoc_ctx->psoc_cfg.is_bus_suspend_enabled_in_go_mode;
 }
 
-enum pmo_suspend_mode
-ucfg_pmo_get_suspend_mode(struct wlan_objmgr_psoc *psoc)
-{
-	struct pmo_psoc_priv_obj *pmo_psoc_ctx = pmo_psoc_get_priv(psoc);
-
-	return pmo_psoc_ctx->psoc_cfg.suspend_mode;
-}
-
-bool
-ucfg_pmo_get_dynamic_pcie_gen_switch_cfg(struct wlan_objmgr_psoc *psoc)
-{
-	struct pmo_psoc_priv_obj *pmo_psoc_ctx = pmo_psoc_get_priv(psoc);
-
-	return pmo_psoc_ctx->psoc_cfg.is_dynamic_pcie_gen_speed_change_enabled;
-}
-
 QDF_STATUS ucfg_pmo_core_txrx_suspend(struct wlan_objmgr_psoc *psoc)
 {
 	return pmo_core_txrx_suspend(psoc);
@@ -970,56 +929,5 @@ QDF_STATUS ucfg_pmo_core_txrx_resume(struct wlan_objmgr_psoc *psoc)
 void ucfg_pmo_notify_system_resume(struct wlan_objmgr_psoc *psoc)
 {
 	pmo_core_system_resume(psoc);
-}
-#endif
-
-bool ucfg_pmo_get_moddtim_user_enable(struct wlan_objmgr_vdev *vdev)
-{
-	return pmo_core_vdev_get_moddtim_user_enabled(vdev);
-}
-
-void ucfg_pmo_set_moddtim_user_enable(struct wlan_objmgr_vdev *vdev,
-				      bool value)
-{
-	pmo_core_vdev_set_moddtim_user_enabled(vdev, value);
-}
-
-bool ucfg_pmo_get_moddtim_user_active(struct wlan_objmgr_vdev *vdev)
-{
-	return pmo_core_vdev_get_moddtim_user_active(vdev);
-}
-
-uint32_t ucfg_pmo_get_moddtim_user(struct wlan_objmgr_vdev *vdev)
-{
-	return pmo_core_vdev_get_moddtim_user(vdev);
-}
-
-bool
-ucfg_pmo_get_disconnect_sap_tdls_in_wow(struct wlan_objmgr_psoc *psoc)
-{
-	struct pmo_psoc_priv_obj *pmo_psoc_ctx = pmo_psoc_get_priv(psoc);
-
-	return pmo_psoc_ctx->psoc_cfg.disconnect_sap_tdls_in_wow;
-}
-
-#ifdef WLAN_FEATURE_ICMP_OFFLOAD
-QDF_STATUS ucfg_pmo_check_icmp_offload(struct wlan_objmgr_psoc *psoc,
-				       uint8_t vdev_id)
-{
-	return pmo_core_icmp_check_offload(psoc, vdev_id);
-}
-
-bool
-ucfg_pmo_is_icmp_offload_enabled(struct wlan_objmgr_psoc *psoc)
-{
-	struct pmo_psoc_priv_obj *pmo_psoc_ctx = pmo_psoc_get_priv(psoc);
-
-	return pmo_psoc_ctx->psoc_cfg.is_icmp_offload_enable;
-}
-
-QDF_STATUS ucfg_pmo_config_icmp_offload(struct wlan_objmgr_psoc *psoc,
-					struct pmo_icmp_offload *pmo_icmp_req)
-{
-	return pmo_tgt_config_icmp_offload_req(psoc, pmo_icmp_req);
 }
 #endif

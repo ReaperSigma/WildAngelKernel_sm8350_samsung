@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -296,7 +297,7 @@ bool wma_capability_enhanced_mcast_filter(void);
 void wma_process_pdev_hw_mode_trans_ind(void *wma,
 	wmi_pdev_hw_mode_transition_event_fixed_param *fixed_param,
 	wmi_pdev_set_hw_mode_response_vdev_mac_entry *vdev_mac_entry,
-	struct cm_hw_mode_trans_ind *hw_mode_trans_ind);
+	struct sir_hw_mode_trans_ind *hw_mode_trans_ind);
 
 /**
  * wma_set_cts2self_for_p2p_go() - set CTS2SELF command for P2P GO.
@@ -565,6 +566,20 @@ bool wma_get_channel_switch_in_progress(struct wma_txrx_node *iface);
  */
 QDF_STATUS wma_sta_mlme_vdev_start_continue(struct vdev_mlme_obj *vdev_mlme,
 					    uint16_t data_len, void *data);
+
+/**
+ * wma_sta_mlme_vdev_roam_notify() - VDEV roam notify handling
+ * @vdev_mlme_obj:  VDEV MLME comp object
+ * @data_len: data size
+ * @data: event data
+ *
+ * API invokes VDEV roam event handling
+ *
+ * Return: SUCCESS on successful completion of roam event handling
+ *         FAILURE, if it fails due to any
+ */
+QDF_STATUS wma_sta_mlme_vdev_roam_notify(struct vdev_mlme_obj *vdev_mlme,
+					 uint16_t data_len, void *data);
 
 /**
  * wma_ap_mlme_vdev_start_continue() - VDEV start response handling

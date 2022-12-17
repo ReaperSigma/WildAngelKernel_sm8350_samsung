@@ -95,28 +95,13 @@
 /* EAPOL Related MASK */
 #define EAPOL_PACKET_TYPE_OFFSET		15
 #define EAPOL_KEY_INFO_OFFSET			19
-#define EAPOL_PKT_LEN_OFFSET			16
-#define EAPOL_KEY_LEN_OFFSET			21
-#define EAPOL_PACKET_TYPE_KEY			3
+#define EAPOL_PKT_LEN_OFFSET            16
+#define EAPOL_KEY_LEN_OFFSET            21
 #define EAPOL_MASK				0x8013
 #define EAPOL_M1_BIT_MASK			0x8000
 #define EAPOL_M2_BIT_MASK			0x0001
 #define EAPOL_M3_BIT_MASK			0x8013
 #define EAPOL_M4_BIT_MASK			0x0003
-#define EAPOL_KEY_TYPE_MASK			0x0800
-#define EAPOL_KEY_ENCRYPTED_MASK		0x0010
-
-/* EAP Related Mask */
-
-#define EAP_CODE_OFFSET				18
-#define EAP_LENGTH_OFFSET			20
-#define EAP_TYPE_OFFSET				22
-#define QDF_EAP_REQUEST				1
-#define QDF_EAP_RESPONE				2
-#define QDF_EAP_SUCCESS				3
-#define QDF_EAP_FAILURE				4
-#define QDF_EAP_INITIATE			5
-#define QDF_EAP_FINISH				6
 
 /* ARP Related MASK */
 #define QDF_NBUF_PKT_ARP_OPCODE_OFFSET	20
@@ -192,41 +177,6 @@
 
 #define MAX_CHAIN 8
 #define QDF_MON_STATUS_MPDU_FCS_BMAP_NWORDS 8
-
-/**
- * This is the length for radiotap, combined length
- * (Mandatory part struct ieee80211_radiotap_header + RADIOTAP_HEADER_LEN)
- * cannot be more than available headroom_sz.
- * increase this when we add more radiotap elements.
- * Number after '+' indicates maximum possible increase due to alignment
- */
-#define RADIOTAP_VHT_FLAGS_LEN (12 + 1)
-#define RADIOTAP_HE_FLAGS_LEN (12 + 1)
-#define RADIOTAP_HE_MU_FLAGS_LEN (8 + 1)
-#define RADIOTAP_HE_MU_OTHER_FLAGS_LEN (18 + 1)
-#define RADIOTAP_FIXED_HEADER_LEN 17
-#define RADIOTAP_HT_FLAGS_LEN 3
-#define RADIOTAP_AMPDU_STATUS_LEN (8 + 3)
-#define RADIOTAP_VENDOR_NS_LEN \
-	(sizeof(struct qdf_radiotap_vendor_ns_ath) + 1)
-/* This is Radio Tap Header Extension Length.
- * 4 Bytes for Extended it_present bit map +
- * 4 bytes padding for alignment
- */
-#define RADIOTAP_HEADER_EXT_LEN (2 * sizeof(uint32_t))
-#define RADIOTAP_HEADER_EXT2_LEN \
-	(sizeof(struct qdf_radiotap_ext2))
-#define RADIOTAP_HEADER_LEN (RADIOTAP_BASE_HEADER_LEN + \
-				RADIOTAP_FIXED_HEADER_LEN + \
-				RADIOTAP_HT_FLAGS_LEN + \
-				RADIOTAP_VHT_FLAGS_LEN + \
-				RADIOTAP_AMPDU_STATUS_LEN + \
-				RADIOTAP_HE_FLAGS_LEN + \
-				RADIOTAP_HE_MU_FLAGS_LEN + \
-				RADIOTAP_HE_MU_OTHER_FLAGS_LEN + \
-				RADIOTAP_VENDOR_NS_LEN + \
-				RADIOTAP_HEADER_EXT_LEN + \
-				RADIOTAP_HEADER_EXT2_LEN)
 
 /**
  * struct mon_rx_status - This will have monitor mode rx_status extracted from
@@ -427,7 +377,6 @@ struct mon_rx_status {
  * @mpdu_fcs_ok_bitmap: mpdu with fcs ok bitmap
  * @mpdu_ok_byte_count: mpdu byte count with fcs ok
  * @mpdu_err_byte_count: mpdu byte count with fcs err
- * @sw_peer_id: software peer id
  */
 struct mon_rx_user_status {
 	uint32_t mcs:4,
@@ -458,7 +407,6 @@ struct mon_rx_user_status {
 	uint32_t mpdu_fcs_ok_bitmap[QDF_MON_STATUS_MPDU_FCS_BMAP_NWORDS];
 	uint32_t mpdu_ok_byte_count;
 	uint32_t mpdu_err_byte_count;
-	uint16_t sw_peer_id;
 };
 
 /**
@@ -552,7 +500,6 @@ struct qdf_radiotap_ext2 {
 #define IPV4_DST_PORT_OFFSET          36
 
 /* IPV4 ICMP Related Mask */
-#define ICMP_ID_OFFSET                38
 #define ICMP_SEQ_NUM_OFFSET           40
 #define ICMP_SUBTYPE_OFFSET           34
 #define ICMP_REQUEST                  0x08
@@ -905,16 +852,6 @@ void qdf_nbuf_unmap_nbytes_single_debug(qdf_device_t osdev,
 	qdf_nbuf_unmap_nbytes_single_debug(osdev, buf, dir, nbytes, \
 					   __func__, __LINE__)
 
-void qdf_nbuf_unmap_nbytes_single_paddr_debug(qdf_device_t osdev,
-					      qdf_nbuf_t buf,
-					      qdf_dma_addr_t phy_addr,
-					      qdf_dma_dir_t dir, int nbytes,
-					      const char *func, uint32_t line);
-
-#define qdf_nbuf_unmap_nbytes_single_paddr(osdev, buf, phy_addr, dir, nbytes) \
-	qdf_nbuf_unmap_nbytes_single_paddr_debug(osdev, buf, phy_addr, \
-						 dir, nbytes, __func__, \
-						 __LINE__)
 #else /* NBUF_MAP_UNMAP_DEBUG */
 
 static inline void qdf_nbuf_map_check_for_leaks(void) {}
@@ -969,14 +906,6 @@ qdf_nbuf_unmap_nbytes_single(
 	qdf_device_t osdev, qdf_nbuf_t buf, qdf_dma_dir_t dir, int nbytes)
 {
 	return __qdf_nbuf_unmap_nbytes_single(osdev, buf, dir, nbytes);
-}
-
-static inline void
-qdf_nbuf_unmap_nbytes_single_paddr(qdf_device_t osdev, qdf_nbuf_t buf,
-				   qdf_dma_addr_t phy_addr, qdf_dma_dir_t dir,
-				   int nbytes)
-{
-	__qdf_mem_unmap_nbytes_single(osdev, phy_addr, dir, nbytes);
 }
 #endif /* NBUF_MAP_UNMAP_DEBUG */
 
@@ -1796,7 +1725,12 @@ static inline qdf_nbuf_t
 qdf_nbuf_alloc_fl(qdf_device_t osdev, qdf_size_t size, int reserve, int align,
 		  int prio, const char *func, uint32_t line)
 {
-	return __qdf_nbuf_alloc(osdev, size, reserve, align, prio, func, line);
+	qdf_nbuf_t nbuf;
+
+	nbuf = __qdf_nbuf_alloc(osdev, size, reserve, align, prio, func, line);
+	if (qdf_likely(nbuf))
+		qdf_mem_skb_inc(nbuf->truesize);
+	return nbuf;
 }
 
 /**
@@ -1816,7 +1750,14 @@ static inline qdf_nbuf_t
 qdf_nbuf_alloc_no_recycler_fl(size_t size, int reserve, int align,
 			      const char *func, uint32_t line)
 {
-	return __qdf_nbuf_alloc_no_recycler(size, reserve, align, func, line);
+	qdf_nbuf_t nbuf;
+
+	nbuf = __qdf_nbuf_alloc_no_recycler(size, reserve, align, func, line);
+
+	if (qdf_likely(nbuf))
+		qdf_mem_skb_inc(nbuf->truesize);
+
+	return nbuf;
 }
 
 static inline void qdf_nbuf_free(qdf_nbuf_t buf)
@@ -3767,6 +3708,58 @@ qdf_nbuf_reg_free_cb(qdf_nbuf_free_t cb_func_ptr)
 }
 
 /**
+ * qdf_nbuf_set_timestamp() - set the timestamp for frame
+ *
+ * @buf: sk buff
+ *
+ * Return: void
+ */
+static inline void
+qdf_nbuf_set_timestamp(struct sk_buff *skb)
+{
+	__qdf_nbuf_set_timestamp(skb);
+}
+
+/**
+ * qdf_nbuf_get_timestamp() - get the timestamp for frame
+ *
+ * @buf: sk buff
+ *
+ * Return: timestamp stored in skb in ms
+ */
+static inline uint64_t
+qdf_nbuf_get_timestamp(struct sk_buff *skb)
+{
+	return __qdf_nbuf_get_timestamp(skb);
+}
+
+/**
+ * qdf_nbuf_get_timedelta_ms() - get time difference in ms
+ *
+ * @buf: sk buff
+ *
+ * Return: time difference ms
+ */
+static inline uint64_t
+qdf_nbuf_get_timedelta_ms(struct sk_buff *skb)
+{
+	return __qdf_nbuf_get_timedelta_ms(skb);
+}
+
+/**
+ * qdf_nbuf_get_timedelta_us() - get time difference in micro seconds
+ *
+ * @buf: sk buff
+ *
+ * Return: time difference in micro seconds
+ */
+static inline uint64_t
+qdf_nbuf_get_timedelta_us(struct sk_buff *skb)
+{
+	return __qdf_nbuf_get_timedelta_us(skb);
+}
+
+/**
  * qdf_nbuf_count_get() - get global nbuf gauge
  *
  * Return: global nbuf gauge
@@ -3909,19 +3902,6 @@ static inline qdf_size_t qdf_nbuf_get_data_len(qdf_nbuf_t nbuf)
 	return __qdf_nbuf_get_data_len(nbuf);
 }
 
-/**
- * qdf_nbuf_get_end_offset() - Return the size of the nbuf from
- * head pointer to end pointer
- * @nbuf: qdf_nbuf_t
- *
- * Return: size of network buffer from head pointer to end
- * pointer
- */
-static inline qdf_size_t qdf_nbuf_get_end_offset(qdf_nbuf_t nbuf)
-{
-	return __qdf_nbuf_get_end_offset(nbuf);
-}
-
 #ifdef NBUF_FRAG_MEMORY_DEBUG
 
 #define qdf_nbuf_move_frag_page_offset(f, i, o) \
@@ -3994,22 +3974,6 @@ void qdf_net_buf_debug_acquire_frag(qdf_nbuf_t buf, const char *func,
 void qdf_net_buf_debug_release_frag(qdf_nbuf_t buf, const char *func,
 				    uint32_t line);
 
-/**
- * qdf_nbuf_frag_count_inc() - Increment global frag counter
- * @buf: qdf_nbuf_t
- *
- * Return: none
- */
-void qdf_nbuf_frag_count_inc(qdf_nbuf_t buf);
-
-/**
- * qdf_nbuf_frag_count_dec() - Decrement global frag counter
- * @buf: qdf_nbuf_t
- *
- * Return: none
- */
-void qdf_nbuf_frag_count_dec(qdf_nbuf_t buf);
-
 #else /* NBUF_FRAG_MEMORY_DEBUG */
 
 /**
@@ -4064,16 +4028,21 @@ static inline void qdf_net_buf_debug_release_frag(qdf_nbuf_t buf,
 						  uint32_t line)
 {
 }
-
-static inline void qdf_nbuf_frag_count_inc(qdf_nbuf_t buf)
-{
-}
-
-static inline void qdf_nbuf_frag_count_dec(qdf_nbuf_t buf)
-{
-}
-
 #endif /* NBUF_FRAG_MEMORY_DEBUG */
+
+#ifdef NBUF_MEMORY_DEBUG
+/**
+ * qdf_set_smmu_fault_state() - Set smmu fault sate
+ * @smmu_fault_state: state of the wlan smmy
+ *
+ * Return: void
+ */
+void qdf_set_smmu_fault_state(bool smmu_fault_state);
+#else
+static inline void qdf_set_smmu_fault_state(bool smmu_fault_state)
+{
+}
+#endif
 
 #ifdef MEMORY_DEBUG
 /**
@@ -4107,111 +4076,6 @@ void qdf_nbuf_release_track_lock(uint32_t index,
  */
 QDF_NBUF_TRACK *qdf_nbuf_get_track_tbl(uint32_t index);
 #endif /* MEMORY_DEBUG */
-
-#ifdef CONFIG_WLAN_SYSFS_MEM_STATS
-/**
- * qdf_record_nbuf_nbytes() - add or subtract the size of the nbuf
- * from the total skb mem and DP tx/rx skb mem
- * @nbytes: number of bytes
- * @dir: direction
- * @is_mapped: is mapped or unmapped memory
- *
- * Return: none
- */
-void qdf_record_nbuf_nbytes(
-	uint32_t nbytes, qdf_dma_dir_t dir, bool is_mapped);
-
-#else /* CONFIG_WLAN_SYSFS_MEM_STATS */
-static inline void qdf_record_nbuf_nbytes(
-	int nbytes, qdf_dma_dir_t dir, bool is_mapped)
-{
-}
-#endif /* CONFIG_WLAN_SYSFS_MEM_STATS */
-
-#ifdef ENHANCED_OS_ABSTRACTION
-/**
- * qdf_nbuf_set_timestamp() - set the timestamp for frame
- * @buf: pointer to network buffer
- *
- * Return: none
- */
-void qdf_nbuf_set_timestamp(qdf_nbuf_t buf);
-
-/**
- * qdf_nbuf_get_timestamp() - get the timestamp for frame
- * @buf: pointer to network buffer
- *
- * Return: timestamp stored in skb in ms
- */
-uint64_t qdf_nbuf_get_timestamp(qdf_nbuf_t buf);
-
-/**
- * qdf_nbuf_get_timedelta_ms() - get time difference in ms
- * @buf: pointer to network buffer
- *
- * Return: time difference ms
- */
-uint64_t qdf_nbuf_get_timedelta_ms(qdf_nbuf_t buf);
-
-/**
- * qdf_nbuf_get_timedelta_us() - get time difference in micro seconds
- * @buf: pointer to network buffer
- *
- * Return: time difference in micro seconds
- */
-uint64_t qdf_nbuf_get_timedelta_us(qdf_nbuf_t buf);
-
-/**
- * qdf_nbuf_net_timedelta() - get time delta
- * @t: time as qdf_ktime_t object
- *
- * Return: time delta as ktime_t object
- */
-qdf_ktime_t qdf_nbuf_net_timedelta(qdf_ktime_t t);
-#else
-static inline void
-qdf_nbuf_set_timestamp(struct sk_buff *skb)
-{
-	__qdf_nbuf_set_timestamp(skb);
-}
-
-static inline uint64_t
-qdf_nbuf_get_timestamp(struct sk_buff *skb)
-{
-	return __qdf_nbuf_get_timestamp(skb);
-}
-
-static inline uint64_t
-qdf_nbuf_get_timedelta_ms(struct sk_buff *skb)
-{
-	return __qdf_nbuf_get_timedelta_ms(skb);
-}
-
-static inline uint64_t
-qdf_nbuf_get_timedelta_us(struct sk_buff *skb)
-{
-	return __qdf_nbuf_get_timedelta_us(skb);
-}
-
-static inline qdf_ktime_t qdf_nbuf_net_timedelta(qdf_ktime_t t)
-{
-	return __qdf_nbuf_net_timedelta(t);
-}
-#endif /* ENHANCED_OS_ABSTRACTION */
-
-#ifdef NBUF_MEMORY_DEBUG
-/**
- * qdf_set_smmu_fault_state() - Set smmu fault sate
- * @smmu_fault_state: state of the wlan smmy
- *
- * Return: void
- */
-void qdf_set_smmu_fault_state(bool smmu_fault_state);
-#else
-static inline void qdf_set_smmu_fault_state(bool smmu_fault_state)
-{
-}
-#endif
 
 #ifdef CONFIG_NBUF_AP_PLATFORM
 #include <i_qdf_nbuf_api_w.h>

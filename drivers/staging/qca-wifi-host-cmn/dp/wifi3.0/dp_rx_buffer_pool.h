@@ -26,6 +26,7 @@
 #include "wlan_cfg.h"
 #include "dp_internal.h"
 #include "dp_rx.h"
+#include "dp_rx_mon.h"
 
 #ifdef WLAN_FEATURE_RX_PREALLOC_BUFFER_POOL
 /**

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2019,2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2019 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -23,8 +23,6 @@
 #ifndef _CDP_TXRX_CFG_H_
 #define _CDP_TXRX_CFG_H_
 #include "cdp_txrx_handle.h"
-#include <cdp_txrx_cmn.h>
-
 /**
  * cdp_cfg_set_rx_fwd_disabled() - enable/disable rx forwarding
  * @soc - data path soc handle
@@ -40,7 +38,8 @@ cdp_cfg_set_rx_fwd_disabled(ol_txrx_soc_handle soc, struct cdp_cfg *cfg_pdev,
 		uint8_t disable_rx_fwd)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			"%s invalid instance", __func__);
 		QDF_BUG(0);
 		return;
 	}
@@ -68,7 +67,8 @@ cdp_cfg_set_packet_log_enabled(ol_txrx_soc_handle soc,
 		struct cdp_cfg *cfg_pdev, uint8_t val)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			"%s invalid instance", __func__);
 		QDF_BUG(0);
 		return;
 	}
@@ -96,7 +96,8 @@ static inline struct cdp_cfg
 		qdf_device_t osdev, void *cfg_param)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			"%s invalid instance", __func__);
 		QDF_BUG(0);
 		return NULL;
 	}
@@ -123,7 +124,8 @@ cdp_cfg_vdev_rx_set_intrabss_fwd(ol_txrx_soc_handle soc,
 				 uint8_t vdev_id, bool val)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			"%s invalid instance", __func__);
 		QDF_BUG(0);
 		return;
 	}
@@ -149,7 +151,8 @@ static inline uint8_t
 cdp_cfg_is_rx_fwd_disabled(ol_txrx_soc_handle soc, struct cdp_vdev *vdev)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			"%s invalid instance", __func__);
 		QDF_BUG(0);
 		return 0;
 	}
@@ -176,7 +179,8 @@ cdp_cfg_tx_set_is_mgmt_over_wmi_enabled(ol_txrx_soc_handle soc,
 		uint8_t value)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			"%s invalid instance", __func__);
 		QDF_BUG(0);
 		return;
 	}
@@ -202,7 +206,8 @@ static inline int
 cdp_cfg_is_high_latency(ol_txrx_soc_handle soc, struct cdp_cfg *cfg_pdev)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			"%s invalid instance", __func__);
 		QDF_BUG(0);
 		return 0;
 	}
@@ -229,7 +234,8 @@ cdp_cfg_set_flow_control_parameters(ol_txrx_soc_handle soc,
 		struct cdp_cfg *cfg_pdev, void *param)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			"%s invalid instance", __func__);
 		QDF_BUG(0);
 		return;
 	}
@@ -255,7 +261,8 @@ static inline void cdp_cfg_set_flow_steering(ol_txrx_soc_handle soc,
 		struct cdp_cfg *cfg_pdev, uint8_t val)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			"%s invalid instance", __func__);
 		QDF_BUG(0);
 		return;
 	}
@@ -287,7 +294,8 @@ cdp_cfg_set_ptp_rx_opt_enabled(ol_txrx_soc_handle soc,
 			       struct cdp_cfg *cfg_pdev, uint8_t val)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			  "%s invalid instance", __func__);
 		QDF_BUG(0);
 		return;
 	}
@@ -313,7 +321,8 @@ cdp_cfg_set_new_htt_msg_format(ol_txrx_soc_handle soc,
 			       uint8_t val)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			  "%s invalid instance", __func__);
 		return;
 	}
 
@@ -337,7 +346,8 @@ static inline void
 cdp_cfg_set_peer_unmap_conf_support(ol_txrx_soc_handle soc, bool val)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			  "%s invalid instance", __func__);
 		QDF_BUG(0);
 		return;
 	}
@@ -361,7 +371,8 @@ static inline bool
 cdp_cfg_get_peer_unmap_conf_support(ol_txrx_soc_handle soc)
 {
 	if (!soc || !soc->ops) {
-		dp_cdp_debug("invalid instance");
+		QDF_TRACE(QDF_MODULE_ID_DP, QDF_TRACE_LEVEL_DEBUG,
+			  "%s invalid instance", __func__);
 		QDF_BUG(0);
 		return false;
 	}

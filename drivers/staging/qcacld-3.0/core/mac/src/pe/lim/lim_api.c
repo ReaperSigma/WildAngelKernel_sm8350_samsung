@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -51,7 +52,6 @@
 #include "lim_session.h"
 #include "wma_types.h"
 #include "wlan_crypto_global_api.h"
-#include "wlan_crypto_def_i.h"
 
 #include "rrm_api.h"
 
@@ -79,7 +79,7 @@
 #include <qdf_hang_event_notifier.h>
 #include <qdf_notifier.h>
 #include "wlan_pkt_capture_ucfg_api.h"
-#include <lim_mlo.h>
+#include "wlan_crypto_def_i.h"
 
 struct pe_hang_event_fixed_param {
 	uint16_t tlv_header;
@@ -595,6 +595,7 @@ static inline void lim_nan_register_callbacks(struct mac_context *mac_ctx)
 }
 #endif
 
+#ifdef WLAN_FEATURE_11W
 void lim_stop_pmfcomeback_timer(struct pe_session *session)
 {
 	if (session->opmode != QDF_STA_MODE)
@@ -603,6 +604,7 @@ void lim_stop_pmfcomeback_timer(struct pe_session *session)
 	qdf_mc_timer_stop(&session->pmf_retry_timer);
 	session->pmf_retry_timer_info.retried = false;
 }
+#endif
 
 /*
  * pe_shutdown_notifier_cb - Shutdown notifier callback
@@ -628,18 +630,8 @@ static void pe_shutdown_notifier_cb(void *ctx)
 	}
 }
 
-/**
- * is_mgmt_protected - check RMF enabled for the peer
- * @vdev_id: vdev id
- * @peer_mac_addr: peer mac address
- *
- * The function check the mgmt frame protection enabled or not
- * for station mode and AP mode
- *
- * Return: true, if the connection is RMF enabled.
- */
-static bool is_mgmt_protected(uint32_t vdev_id,
-				  const uint8_t *peer_mac_addr)
+#ifdef WLAN_FEATURE_11W
+bool is_mgmt_protected(uint32_t vdev_id, const uint8_t *peer_mac_addr)
 {
 	uint16_t aid;
 	tpDphHashNode sta_ds;
@@ -673,6 +665,24 @@ static bool is_mgmt_protected(uint32_t vdev_id,
 
 	return protected;
 }
+
+#else
+/**
+ * is_mgmt_protected - check RMF enabled for the peer
+ * @vdev_id: vdev id
+ * @peer_mac_addr: peer mac address
+ *
+ * The function check the mgmt frame protection enabled or not
+ * for station mode and AP mode
+ *
+ * Return: true, if the connection is RMF enabled.
+ */
+static bool is_mgmt_protected(uint32_t vdev_id,
+				  const uint8_t *peer_mac_addr)
+{
+	return false;
+}
+#endif
 
 static void p2p_register_callbacks(struct mac_context *mac_ctx)
 {
@@ -1220,11 +1230,6 @@ static QDF_STATUS pe_handle_mgmt_frame(struct wlan_objmgr_psoc *psoc,
 		return QDF_STATUS_E_FAILURE;
 	}
 
-	if (mac->usr_cfg_disable_rsp_tx) {
-		pe_debug("Drop Rx pkt with user config");
-		qdf_nbuf_free(buf);
-		return QDF_STATUS_SUCCESS;
-	}
 	pVosPkt = qdf_mem_malloc_atomic(sizeof(*pVosPkt));
 	if (!pVosPkt) {
 		qdf_nbuf_free(buf);
@@ -1347,9 +1352,12 @@ void pe_register_callbacks_with_wma(struct mac_context *mac,
 	QDF_STATUS status;
 
 	status = wma_register_roaming_callbacks(
+			ready_req->csr_roam_synch_cb,
 			ready_req->csr_roam_auth_event_handle_cb,
 			ready_req->pe_roam_synch_cb,
-			ready_req->pe_disconnect_cb);
+			ready_req->pe_disconnect_cb,
+			ready_req->csr_roam_pmkid_req_cb,
+			ready_req->csr_roam_candidate_event_cb);
 	if (status != QDF_STATUS_SUCCESS)
 		pe_err("Registering roaming callbacks with WMA failed");
 }
@@ -1517,12 +1525,13 @@ lim_detect_change_in_ap_capabilities(struct mac_context *mac,
 				     struct pe_session *pe_session)
 {
 	uint8_t len;
+	struct ap_new_caps apNewCaps;
 	uint32_t new_chan_freq;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	bool security_caps_matched = true;
-	uint16_t ap_cap;
 
-	ap_cap = lim_get_u16((uint8_t *) &pBeacon->capabilityInfo);
+	apNewCaps.capabilityInfo =
+		lim_get_u16((uint8_t *) &pBeacon->capabilityInfo);
 	new_chan_freq = pBeacon->chan_freq;
 
 	security_caps_matched = lim_enc_type_matched(mac, pBeacon,
@@ -1530,11 +1539,11 @@ lim_detect_change_in_ap_capabilities(struct mac_context *mac,
 	if ((false == pe_session->limSentCapsChangeNtf) &&
 	    (((!lim_is_null_ssid(&pBeacon->ssId)) &&
 	       lim_cmp_ssid(&pBeacon->ssId, pe_session)) ||
-	     ((SIR_MAC_GET_ESS(ap_cap) !=
+	     ((SIR_MAC_GET_ESS(apNewCaps.capabilityInfo) !=
 	       SIR_MAC_GET_ESS(pe_session->limCurrentBssCaps)) ||
-	      (SIR_MAC_GET_PRIVACY(ap_cap) !=
+	      (SIR_MAC_GET_PRIVACY(apNewCaps.capabilityInfo) !=
 	       SIR_MAC_GET_PRIVACY(pe_session->limCurrentBssCaps)) ||
-	      (SIR_MAC_GET_QOS(ap_cap) !=
+	      (SIR_MAC_GET_QOS(apNewCaps.capabilityInfo) !=
 	       SIR_MAC_GET_QOS(pe_session->limCurrentBssCaps)) ||
 	      ((new_chan_freq != pe_session->curr_op_freq) &&
 		(new_chan_freq != 0)) ||
@@ -1572,6 +1581,8 @@ lim_detect_change_in_ap_capabilities(struct mac_context *mac,
 		len = sizeof(tSirMacCapabilityInfo) + sizeof(tSirMacAddr) + sizeof(uint8_t) + 3 * sizeof(uint8_t) + /* reserved fields */
 		      pBeacon->ssId.length + 1;
 
+		qdf_mem_copy(apNewCaps.bssId.bytes,
+			     pe_session->bssId, QDF_MAC_ADDR_SIZE);
 		if (new_chan_freq != pe_session->curr_op_freq) {
 			pe_err("Channel freq Change from %d --> %d Ignoring beacon!",
 			       pe_session->curr_op_freq, new_chan_freq);
@@ -1588,22 +1599,21 @@ lim_detect_change_in_ap_capabilities(struct mac_context *mac,
 		 * disconnect from the AP. The following check makes sure that we can
 		 * connect to such APs
 		 */
-		else if ((SIR_MAC_GET_PRIVACY(ap_cap) == 0) &&
+		else if ((SIR_MAC_GET_PRIVACY(apNewCaps.capabilityInfo) == 0) &&
 			 (pBeacon->rsnPresent || pBeacon->wpaPresent)) {
 			pe_err("BSS Caps (Privacy) bit 0 in beacon, but WPA or RSN IE present, Ignore Beacon!");
 			return;
 		}
+		qdf_mem_copy((uint8_t *) &apNewCaps.ssId,
+			     (uint8_t *) &pBeacon->ssId,
+			     pBeacon->ssId.length + 1);
 
 		pe_session->fIgnoreCapsChange = false;
 		pe_session->fWaitForProbeRsp = false;
 		pe_session->limSentCapsChangeNtf = true;
-		pe_err("Disconnect as cap mismatch!");
-		lim_send_deauth_mgmt_frame(mac, REASON_UNSPEC_FAILURE,
-					   pe_session->bssId, pe_session,
-					   false);
-		lim_tear_down_link_with_ap(mac, pe_session->peSessionId,
-					   REASON_UNSPEC_FAILURE,
-					   eLIM_HOST_DISASSOC);
+		lim_send_sme_wm_status_change_ntf(mac, eSIR_SME_AP_CAPS_CHANGED,
+						  (uint32_t *) &apNewCaps,
+						  len, pe_session->smeSessionId);
 	} else if (true == pe_session->fWaitForProbeRsp) {
 		/* Only for probe response frames and matching capabilities the control
 		 * will come here. If beacon is with broadcast ssid then fWaitForProbeRsp
@@ -1642,7 +1652,7 @@ QDF_STATUS lim_update_short_slot(struct mac_context *mac,
 				    struct pe_session *pe_session)
 {
 
-	uint16_t ap_cap;
+	struct ap_new_caps apNewCaps;
 	uint32_t nShortSlot;
 	uint32_t phyMode;
 
@@ -1656,7 +1666,8 @@ QDF_STATUS lim_update_short_slot(struct mac_context *mac,
 	    || (phyMode == WNI_CFG_PHY_MODE_11B))
 		return QDF_STATUS_SUCCESS;
 
-	ap_cap = lim_get_u16((uint8_t *) &pBeacon->capabilityInfo);
+	apNewCaps.capabilityInfo =
+		lim_get_u16((uint8_t *) &pBeacon->capabilityInfo);
 
 	/*  Earlier implementation: determine the appropriate short slot mode based on AP advertised modes */
 	/* when erp is present, apply short slot always unless, prot=on  && shortSlot=off */
@@ -1677,7 +1688,7 @@ QDF_STATUS lim_update_short_slot(struct mac_context *mac,
 	   Case7        0                                   0                       1                       1
 	   Case8        0                                   0                       0                       0
 	 */
-	nShortSlot = SIR_MAC_GET_SHORT_SLOT_TIME(ap_cap);
+	nShortSlot = SIR_MAC_GET_SHORT_SLOT_TIME(apNewCaps.capabilityInfo);
 
 	if (nShortSlot != pe_session->shortSlotTimeSupported) {
 		/* Short slot time capability of AP has changed. Adopt to it. */
@@ -1735,7 +1746,48 @@ void lim_ps_offload_handle_missed_beacon_ind(struct mac_context *mac,
 	lim_send_heart_beat_timeout_ind(mac, pe_session);
 }
 
+#ifdef FEATURE_WLAN_MCC_TO_SCC_SWITCH
+/**
+ * lim_fill_join_rsp_ht_caps() - Fill the HT caps in join response
+ * @session: PE Session
+ * @join_rsp: Join response buffer to be filled up.
+ *
+ * Return: None
+ */
+void lim_fill_join_rsp_ht_caps(struct pe_session *session,
+			       struct join_rsp *join_rsp)
+{
+	struct ht_profile *ht_profile;
+
+	if (!session) {
+		pe_err("Invalid Session");
+		return;
+	}
+	if (!join_rsp) {
+		pe_err("Invalid Join Response");
+		return;
+	}
+
+	if (session->cc_switch_mode == QDF_MCC_TO_SCC_SWITCH_DISABLE)
+		return;
+
+	ht_profile = &join_rsp->ht_profile;
+	ht_profile->htSupportedChannelWidthSet =
+		session->htSupportedChannelWidthSet;
+	ht_profile->htRecommendedTxWidthSet =
+		session->htRecommendedTxWidthSet;
+	ht_profile->htSecondaryChannelOffset =
+		session->htSecondaryChannelOffset;
+	ht_profile->dot11mode = session->dot11mode;
+	ht_profile->htCapability = session->htCapability;
+	ht_profile->vhtCapability = session->vhtCapability;
+	ht_profile->apCenterChan = session->ch_center_freq_seg0;
+	ht_profile->apChanWidth = session->ch_width;
+}
+#endif
+
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
+#ifdef WLAN_FEATURE_11W
 static void pe_set_rmf_caps(struct mac_context *mac_ctx,
 			    struct pe_session *ft_session,
 			    struct roam_offload_synch_ind *roam_synch)
@@ -1802,6 +1854,13 @@ static void pe_set_rmf_caps(struct mac_context *mac_ctx,
 	ft_session->limRmfEnabled =
 		lim_get_vdev_rmf_capable(mac_ctx, ft_session);
 }
+#else
+static inline void pe_set_rmf_caps(struct mac_context *mac_ctx,
+				   struct pe_session *ft_session,
+				   struct roam_offload_synch_ind *roam_synch)
+{
+}
+#endif
 
 /**
  * sir_parse_bcn_fixed_fields() - Parse fixed fields in Beacon IE's
@@ -2070,11 +2129,9 @@ lim_roam_fill_bss_descr(struct mac_context *mac,
 		 roam_synch_ind_ptr->beaconProbeRespLength,
 		 QDF_MAC_ADDR_REF(roam_synch_ind_ptr->bssid.bytes),
 		 QDF_MAC_ADDR_REF(mac_hdr->bssId));
-
 	QDF_TRACE_HEX_DUMP(QDF_MODULE_ID_PE, QDF_TRACE_LEVEL_DEBUG,
 			   bcn_proberesp_ptr,
 			   roam_synch_ind_ptr->beaconProbeRespLength);
-
 	status = lim_roam_gen_beacon_descr(mac,
 					   roam_synch_ind_ptr,
 					   parsed_frm_ptr,
@@ -2152,9 +2209,10 @@ lim_roam_fill_bss_descr(struct mac_context *mac,
 				(uint8_t *)parsed_frm_ptr->mdie,
 				SIR_MDIE_SIZE);
 	}
-	pe_debug("chan: %d rssi: %d ie_len %d",
+	pe_debug("chan: %d rssi: %d desc len %d",
 		 bss_desc_ptr->chan_freq,
-		 bss_desc_ptr->rssi, ie_len);
+		 bss_desc_ptr->rssi,
+		 bss_desc_ptr->length);
 
 	qdf_mem_free(parsed_frm_ptr);
 	if (ie_len) {
@@ -2165,6 +2223,7 @@ lim_roam_fill_bss_descr(struct mac_context *mac,
 		pe_err("Beacon/Probe rsp doesn't have any IEs");
 		return QDF_STATUS_E_FAILURE;
 	}
+
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -2459,68 +2518,10 @@ lim_check_ft_initial_im_association(struct roam_offload_synch_ind *roam_synch,
 	}
 }
 
-/**
- * lim_get_assoc_resp_from_roam_sync() - get assoc response from
- * roam sync event
- * @mac_ctx: mac context
- * @session: pe session
- * @roam_sync_ind_ptr: roam sync indication
- *
- * This function is to get parsed assoc response data
- *
- * Return: assoc response data struct
- */
-static tpSirAssocRsp
-lim_get_assoc_resp_from_roam_sync(
-		struct mac_context *mac_ctx,
-		struct pe_session *session,
-		struct roam_offload_synch_ind *roam_sync_ind_ptr)
-{
-	uint8_t *reassoc_resp;
-	tpSirAssocRsp assoc_rsp;
-	uint32_t frame_len;
-	uint8_t *frm_body;
-
-	if (roam_sync_ind_ptr->reassocRespLength <= SIR_MAC_HDR_LEN_3A) {
-		pe_warn("invalid roam sync assoc rsp");
-		return NULL;
-	}
-	reassoc_resp = (uint8_t *)roam_sync_ind_ptr +
-			roam_sync_ind_ptr->reassocRespOffset +
-			SIR_MAC_HDR_LEN_3A;
-	frame_len = roam_sync_ind_ptr->reassocRespLength - SIR_MAC_HDR_LEN_3A;
-
-	assoc_rsp = qdf_mem_malloc(sizeof(*assoc_rsp));
-	if (!assoc_rsp) {
-		pe_warn("err to malloc assoc rsp");
-		return NULL;
-	}
-
-	frm_body = qdf_mem_malloc(frame_len);
-	if (!frm_body) {
-		pe_warn("err to malloc assoc rsp body");
-		qdf_mem_free(assoc_rsp);
-		return NULL;
-	}
-	qdf_mem_copy(frm_body, reassoc_resp, frame_len);
-	/* parse Re/Association Response frame. */
-	if (sir_convert_assoc_resp_frame2_struct(
-		mac_ctx, session, frm_body,
-		frame_len, assoc_rsp) == QDF_STATUS_E_FAILURE) {
-		pe_err("Parse error Assoc resp length: %d", frame_len);
-		qdf_mem_free(frm_body);
-		qdf_mem_free(assoc_rsp);
-		return NULL;
-	}
-	qdf_mem_free(frm_body);
-
-	return assoc_rsp;
-}
-
 QDF_STATUS
 pe_roam_synch_callback(struct mac_context *mac_ctx,
 		       struct roam_offload_synch_ind *roam_sync_ind_ptr,
-		       uint16_t ie_len,
+		       struct bss_description *bss_desc,
 		       enum sir_roam_op_code reason)
 {
 	struct pe_session *session_ptr;
@@ -2531,9 +2532,7 @@ pe_roam_synch_callback(struct mac_context *mac_ctx,
 	uint16_t aid;
 	struct bss_params *add_bss_params;
 	QDF_STATUS status = QDF_STATUS_E_FAILURE;
-	struct bss_description *bss_desc = NULL;
-	uint16_t ric_tspec_len;
-	tpSirAssocRsp assoc_rsp;
+	uint16_t join_rsp_len;
 
 	if (!roam_sync_ind_ptr) {
 		pe_err("LFR3:roam_sync_ind_ptr is NULL");
@@ -2580,7 +2579,7 @@ pe_roam_synch_callback(struct mac_context *mac_ctx,
 
 	pe_debug("LFR3:Received ROAM SYNCH IND bssid "QDF_MAC_ADDR_FMT" auth: %d vdevId: %d",
 		 QDF_MAC_ADDR_REF(roam_sync_ind_ptr->bssid.bytes),
-		 roam_sync_ind_ptr->auth_status,
+		 roam_sync_ind_ptr->authStatus,
 		 roam_sync_ind_ptr->roamed_vdev_id);
 
 	/*
@@ -2591,18 +2590,9 @@ pe_roam_synch_callback(struct mac_context *mac_ctx,
 		pe_err("LFR3: Not in Link est state");
 		return status;
 	}
-
-	bss_desc = qdf_mem_malloc(sizeof(struct bss_description) + ie_len);
-	if (!bss_desc) {
-		QDF_ASSERT(bss_desc);
-		status = -QDF_STATUS_E_NOMEM;
-		return status;
-	}
-
 	status = lim_roam_fill_bss_descr(mac_ctx, roam_sync_ind_ptr, bss_desc);
 	if (!QDF_IS_STATUS_SUCCESS(status)) {
 		pe_err("LFR3:Failed to fill Bss Descr");
-		qdf_mem_free(bss_desc);
 		return status;
 	}
 	status = QDF_STATUS_E_FAILURE;
@@ -2610,11 +2600,11 @@ pe_roam_synch_callback(struct mac_context *mac_ctx,
 					   &session_id,
 					   mac_ctx->lim.max_sta_of_pe_session,
 					   session_ptr->bssType,
-					   session_ptr->vdev_id);
+					   session_ptr->vdev_id,
+					   session_ptr->opmode);
 	if (!ft_session_ptr) {
 		pe_err("LFR3:Cannot create PE Session");
 		lim_print_mac_addr(mac_ctx, bss_desc->bssId, LOGE);
-		qdf_mem_free(bss_desc);
 		return status;
 	}
 	/* Update the beacon/probe filter in mac_ctx */
@@ -2632,23 +2622,11 @@ pe_roam_synch_callback(struct mac_context *mac_ctx,
 	ft_session_ptr->csaOffloadEnable = session_ptr->csaOffloadEnable;
 
 	/* Next routine will update nss and vdev_nss with AP's capabilities */
-	assoc_rsp = lim_get_assoc_resp_from_roam_sync(
-			mac_ctx, ft_session_ptr, roam_sync_ind_ptr);
 	lim_fill_ft_session(mac_ctx, bss_desc, ft_session_ptr,
-			    session_ptr, roam_sync_ind_ptr->phy_mode,
-			    assoc_rsp);
-	roam_sync_ind_ptr->ssid.length =
-		qdf_min((qdf_size_t)ft_session_ptr->ssId.length,
-			sizeof(roam_sync_ind_ptr->ssid.ssid));
-	qdf_mem_copy(roam_sync_ind_ptr->ssid.ssid, ft_session_ptr->ssId.ssId,
-		     roam_sync_ind_ptr->ssid.length);
+			    session_ptr, roam_sync_ind_ptr->phy_mode);
 	pe_set_rmf_caps(mac_ctx, ft_session_ptr, roam_sync_ind_ptr);
 	/* Next routine may update nss based on dot11Mode */
-
-	lim_ft_prepare_add_bss_req(mac_ctx, ft_session_ptr, bss_desc,
-				   assoc_rsp);
-	qdf_mem_free(bss_desc);
-
+	lim_ft_prepare_add_bss_req(mac_ctx, ft_session_ptr, bss_desc);
 	if (session_ptr->is11Rconnection)
 		lim_fill_fils_ft(session_ptr, ft_session_ptr);
 
@@ -2661,11 +2639,9 @@ pe_roam_synch_callback(struct mac_context *mac_ctx,
 	if (!curr_sta_ds) {
 		pe_err("LFR3:failed to lookup hash entry");
 		ft_session_ptr->bRoamSynchInProgress = false;
-		qdf_mem_free(assoc_rsp);
 		return status;
 	}
 	session_ptr->limSmeState = eLIM_SME_IDLE_STATE;
-	lim_mlo_notify_peer_disconn(session_ptr, curr_sta_ds);
 	lim_cleanup_rx_path(mac_ctx, curr_sta_ds, session_ptr, false);
 	lim_delete_dph_hash_entry(mac_ctx, curr_sta_ds->staAddr, aid,
 				  session_ptr);
@@ -2679,12 +2655,12 @@ pe_roam_synch_callback(struct mac_context *mac_ctx,
 		pe_err("LFR3:failed to add hash entry for "QDF_MAC_ADDR_FMT,
 		       QDF_MAC_ADDR_REF(add_bss_params->staContext.staMac));
 		ft_session_ptr->bRoamSynchInProgress = false;
-		qdf_mem_free(assoc_rsp);
 		return status;
 	}
 
-	if (roam_sync_ind_ptr->auth_status ==
-	    ROAM_AUTH_STATUS_AUTHENTICATED) {
+
+	if (roam_sync_ind_ptr->authStatus ==
+	    CSR_ROAM_AUTH_STATUS_AUTHENTICATED) {
 		ft_session_ptr->is_key_installed = true;
 		curr_sta_ds->is_key_installed = true;
 	}
@@ -2707,51 +2683,58 @@ pe_roam_synch_callback(struct mac_context *mac_ctx,
 	ft_session_ptr->limMlmState = eLIM_MLM_LINK_ESTABLISHED_STATE;
 	ft_session_ptr->limPrevMlmState = ft_session_ptr->limMlmState;
 	lim_init_tdls_data(mac_ctx, ft_session_ptr);
-	ric_tspec_len = ft_session_ptr->RICDataLen;
-	pe_debug("LFR3: Session RicLength: %d", ft_session_ptr->RICDataLen);
+	join_rsp_len = ft_session_ptr->RICDataLen +
+			sizeof(struct join_rsp) - sizeof(uint8_t);
+
 #ifdef FEATURE_WLAN_ESE
-	ric_tspec_len += ft_session_ptr->tspecLen;
+	join_rsp_len += ft_session_ptr->tspecLen;
 	pe_debug("LFR3: tspecLen: %d", ft_session_ptr->tspecLen);
 #endif
-	if (ric_tspec_len) {
-		roam_sync_ind_ptr->ric_tspec_data =
-				qdf_mem_malloc(ric_tspec_len);
-		if (!roam_sync_ind_ptr->ric_tspec_data) {
-			ft_session_ptr->bRoamSynchInProgress = false;
-			qdf_mem_free(assoc_rsp);
-			return QDF_STATUS_E_NOMEM;
-		}
 
-		if (ft_session_ptr->ricData) {
-			roam_sync_ind_ptr->ric_data_len =
-					ft_session_ptr->RICDataLen;
-			qdf_mem_copy(roam_sync_ind_ptr->ric_tspec_data,
-				     ft_session_ptr->ricData,
-				     roam_sync_ind_ptr->ric_data_len);
-			qdf_mem_free(ft_session_ptr->ricData);
-			ft_session_ptr->ricData = NULL;
-			ft_session_ptr->RICDataLen = 0;
-		}
-#ifdef FEATURE_WLAN_ESE
-		if (ft_session_ptr->tspecIes) {
-			roam_sync_ind_ptr->tspec_len = ft_session_ptr->tspecLen;
-			qdf_mem_copy(roam_sync_ind_ptr->ric_tspec_data +
-				     roam_sync_ind_ptr->ric_data_len,
-				     ft_session_ptr->tspecIes,
-				     roam_sync_ind_ptr->tspec_len);
-			qdf_mem_free(ft_session_ptr->tspecIes);
-			ft_session_ptr->tspecIes = NULL;
-			ft_session_ptr->tspecLen = 0;
-		}
-#endif
+	roam_sync_ind_ptr->join_rsp = qdf_mem_malloc(join_rsp_len);
+	if (!roam_sync_ind_ptr->join_rsp) {
+		ft_session_ptr->bRoamSynchInProgress = false;
+		return QDF_STATUS_E_NOMEM;
 	}
-	roam_sync_ind_ptr->chan_width = ft_session_ptr->ch_width;
-	roam_sync_ind_ptr->max_rate_flags =
+
+	pe_debug("LFR3: Session RicLength: %d", ft_session_ptr->RICDataLen);
+	if (ft_session_ptr->ricData) {
+		roam_sync_ind_ptr->join_rsp->parsedRicRspLen =
+					ft_session_ptr->RICDataLen;
+		qdf_mem_copy(roam_sync_ind_ptr->join_rsp->frames,
+			     ft_session_ptr->ricData,
+			     roam_sync_ind_ptr->join_rsp->parsedRicRspLen);
+		qdf_mem_free(ft_session_ptr->ricData);
+		ft_session_ptr->ricData = NULL;
+		ft_session_ptr->RICDataLen = 0;
+	}
+
+#ifdef FEATURE_WLAN_ESE
+	if (ft_session_ptr->tspecIes) {
+		roam_sync_ind_ptr->join_rsp->tspecIeLen =
+					ft_session_ptr->tspecLen;
+		qdf_mem_copy(roam_sync_ind_ptr->join_rsp->frames +
+			     roam_sync_ind_ptr->join_rsp->parsedRicRspLen,
+			     ft_session_ptr->tspecIes,
+			     roam_sync_ind_ptr->join_rsp->tspecIeLen);
+		qdf_mem_free(ft_session_ptr->tspecIes);
+		ft_session_ptr->tspecIes = NULL;
+		ft_session_ptr->tspecLen = 0;
+	}
+#endif
+
+	roam_sync_ind_ptr->join_rsp->vht_channel_width =
+					ft_session_ptr->ch_width;
+	roam_sync_ind_ptr->join_rsp->timingMeasCap = curr_sta_ds->timingMeasCap;
+	roam_sync_ind_ptr->join_rsp->nss = curr_sta_ds->nss;
+	roam_sync_ind_ptr->join_rsp->max_rate_flags =
 			lim_get_max_rate_flags(mac_ctx, curr_sta_ds);
+	lim_set_tdls_flags(roam_sync_ind_ptr, ft_session_ptr);
+	roam_sync_ind_ptr->join_rsp->aid = ft_session_ptr->limAID;
+	lim_fill_join_rsp_ht_caps(ft_session_ptr, roam_sync_ind_ptr->join_rsp);
 	ft_session_ptr->limSmeState = eLIM_SME_LINK_EST_STATE;
 	ft_session_ptr->limPrevSmeState = ft_session_ptr->limSmeState;
 	ft_session_ptr->bRoamSynchInProgress = false;
-	qdf_mem_free(assoc_rsp);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -2956,7 +2939,8 @@ void lim_mon_init_session(struct mac_context *mac_ptr,
 					   &session_id,
 					   mac_ptr->lim.max_sta_of_pe_session,
 					   eSIR_MONITOR_MODE,
-					   msg->vdev_id);
+					   msg->vdev_id,
+					   QDF_MONITOR_MODE);
 	if (!psession_entry) {
 		pe_err("Monitor mode: Session Can not be created");
 		lim_print_mac_addr(mac_ptr, msg->bss_id.bytes, LOGE);

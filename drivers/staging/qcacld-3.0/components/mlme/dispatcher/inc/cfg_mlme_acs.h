@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -28,7 +29,7 @@
  * acs_with_more_param- Enable acs calculation with more param.
  * @Min: 0
  * @Max: 1
- * @Default: 1
+ * @Default: 0
  *
  * This ini is used to enable acs calculation with more param.
  *
@@ -43,7 +44,7 @@
 
 #define CFG_ACS_WITH_MORE_PARAM CFG_INI_BOOL( \
 		"acs_with_more_param", \
-		1, \
+		0, \
 		"Enable ACS with more param")
 
 /*
@@ -51,7 +52,7 @@
  * AutoChannelSelectWeight - ACS channel weight
  * @Min: 0
  * @Max: 0xFFFFFFFF
- * @Default: 0x00fafafa
+ * @Default: 0x000000FF
  *
  * This ini is used to adjust weight of factors in
  * acs algorithm.
@@ -75,7 +76,7 @@
 		"AutoChannelSelectWeight", \
 		0, \
 		0xFFFFFFFF, \
-		0x00fafafa, \
+		0x000000FF, \
 		CFG_VALUE_OR_DEFAULT, \
 		"Adjust weight factor in ACS")
 
@@ -176,7 +177,7 @@
 		"normalize_acs_weight", \
 		0, \
 		ACS_WEIGHT_MAX_STR_LEN, \
-		"5945-7125=0, 5975=100, 6055=100, 6135=100, 6215=100, 6295=100, 6375=100, 6615=100, 6695=100, 6775=100, 6855=100", \
+		"2407-5875=40, 5945-7125=90, 5975=100, 6055=100, 6135=100, 6215=100, 6295=100, 6375=100, 6615=100, 6695=100, 6775=100, 6855=100", \
 		"Used to specify the channel weights")
 
 /*

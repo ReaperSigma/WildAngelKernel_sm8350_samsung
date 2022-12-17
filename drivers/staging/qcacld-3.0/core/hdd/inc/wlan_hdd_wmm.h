@@ -309,14 +309,15 @@ QDF_STATUS hdd_wmm_acquire_access(struct hdd_adapter *adapter,
  * hdd_wmm_assoc() - Function which will handle the housekeeping
  * required by WMM when association takes place
  *
- * @adapter:  pointer to adapter context
- * @is_reassoc: is this reassoc scenario
- * @uapsd_mask : Negotiated uapsd msk
+ * @adapter: [in]  pointer to adapter context
+ * @roam_info: [in]  pointer to roam information
+ * @bss_type: [in]  type of BSS
  *
  * Return: QDF_STATUS enumeration
  */
 QDF_STATUS hdd_wmm_assoc(struct hdd_adapter *adapter,
-			 bool is_reassoc, uint8_t uapsd_mask);
+			 struct csr_roam_info *roam_info,
+			 eCsrRoamBssType bss_type);
 
 /**
  * hdd_wmm_connect() - Function which will handle the housekeeping

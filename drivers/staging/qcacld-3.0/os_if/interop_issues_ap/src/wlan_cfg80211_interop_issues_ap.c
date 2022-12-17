@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -181,14 +182,19 @@ __wlan_cfg80211_set_interop_issues_ap_config(struct wiphy *wiphy,
 	struct wlan_objmgr_psoc *psoc;
 	struct wlan_objmgr_vdev *vdev;
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_INTEROP_ISSUES_AP_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
+	if (QDF_GLOBAL_FTM_MODE == hdd_get_conparam()) {
+		hdd_err("Command not allowed in FTM mode");
+		return -EPERM;
+	}
+
 	if (!vdev) {
 		osif_err("Invalid vdev");
 		return -EINVAL;
 	}
 
 	psoc = wlan_vdev_get_psoc(vdev);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_INTEROP_ISSUES_AP_ID);
+	hdd_objmgr_put_vdev(vdev);
 	if (!psoc) {
 		osif_err("Invalid psoc");
 		return -EINVAL;

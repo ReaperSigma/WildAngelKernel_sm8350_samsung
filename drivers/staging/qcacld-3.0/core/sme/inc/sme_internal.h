@@ -394,6 +394,9 @@ struct sme_context {
 	void **sme_cmd_buf_addr;
 	tDblLinkList sme_cmd_freelist;    /* preallocated roam cmd list */
 	enum QDF_OPMODE curr_device_mode;
+#ifdef FEATURE_WLAN_DIAG_SUPPORT_CSR
+	host_event_wlan_status_payload_type eventPayload;
+#endif
 	void *ll_stats_context;
 	link_layer_stats_cb link_layer_stats_cb;
 	void (*link_layer_stats_ext_cb)(hdd_handle_t callback_ctx,
@@ -510,6 +513,10 @@ struct sme_context {
 #endif
 #if defined(CLD_PM_QOS) && defined(WLAN_FEATURE_LL_MODE)
 	void (*beacon_latency_event_cb)(uint32_t latency_level);
+#endif
+#ifdef WLAN_FEATURE_ROAM_OFFLOAD
+	void (*roam_rt_stats_cb)(hdd_handle_t hdd_handle,
+				 struct mlme_roam_debug_info *roam_stats);
 #endif
 };
 

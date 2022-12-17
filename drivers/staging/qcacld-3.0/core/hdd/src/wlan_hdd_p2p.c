@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -93,13 +94,13 @@ void wlan_hdd_cancel_existing_remain_on_channel(struct hdd_adapter *adapter)
 		return;
 	}
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_P2P_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
 	if (!vdev) {
 		hdd_err("vdev is NULL");
 		return;
 	}
 	ucfg_p2p_cleanup_roc_by_vdev(vdev);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_P2P_ID);
+	hdd_objmgr_put_vdev(vdev);
 }
 
 int wlan_hdd_check_remain_on_channel(struct hdd_adapter *adapter)
@@ -120,14 +121,14 @@ void wlan_hdd_cleanup_remain_on_channel_ctx(struct hdd_adapter *adapter)
 		return;
 	}
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_P2P_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
 	if (!vdev) {
 		hdd_err("vdev is NULL");
 		return;
 	}
 
 	ucfg_p2p_cleanup_roc_by_vdev(vdev);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_P2P_ID);
+	hdd_objmgr_put_vdev(vdev);
 }
 
 void wlan_hdd_cleanup_actionframe(struct hdd_adapter *adapter)
@@ -139,13 +140,13 @@ void wlan_hdd_cleanup_actionframe(struct hdd_adapter *adapter)
 		return;
 	}
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_P2P_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
 	if (!vdev) {
 		hdd_err("vdev is NULL");
 		return;
 	}
 	ucfg_p2p_cleanup_tx_by_vdev(vdev);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_P2P_ID);
+	hdd_objmgr_put_vdev(vdev);
 }
 
 static int __wlan_hdd_cfg80211_remain_on_channel(struct wiphy *wiphy,
@@ -179,7 +180,7 @@ static int __wlan_hdd_cfg80211_remain_on_channel(struct wiphy *wiphy,
 	if (wlan_hdd_validate_vdev_id(adapter->vdev_id))
 		return -EINVAL;
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_P2P_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
 	if (!vdev) {
 		hdd_err("vdev is NULL");
 		return -EINVAL;
@@ -189,7 +190,7 @@ static int __wlan_hdd_cfg80211_remain_on_channel(struct wiphy *wiphy,
 	ucfg_nan_disable_concurrency(hdd_ctx->psoc);
 
 	status = wlan_cfg80211_roc(vdev, chan, duration, cookie);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_P2P_ID);
+	hdd_objmgr_put_vdev(vdev);
 	hdd_debug("remain on channel request, status:%d, cookie:0x%llx",
 		  status, *cookie);
 
@@ -236,14 +237,14 @@ __wlan_hdd_cfg80211_cancel_remain_on_channel(struct wiphy *wiphy,
 	if (wlan_hdd_validate_vdev_id(adapter->vdev_id))
 		return -EINVAL;
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_P2P_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
 	if (!vdev) {
 		hdd_err("vdev is NULL");
 		return -EINVAL;
 	}
 
 	status = wlan_cfg80211_cancel_roc(vdev, cookie);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_P2P_ID);
+	hdd_objmgr_put_vdev(vdev);
 
 	hdd_debug("cancel remain on channel, status:%d", status);
 
@@ -285,16 +286,15 @@ wlan_hdd_validate_and_override_offchan(struct hdd_adapter *adapter,
 				       struct ieee80211_channel *chan,
 				       bool *offchan)
 {
-	qdf_freq_t home_ch_freq;
+	uint8_t home_ch;
 
 	if (!offchan || !chan || !(*offchan))
 		return;
 
-	home_ch_freq = hdd_get_adapter_home_channel(adapter);
+	home_ch = hdd_get_adapter_home_channel(adapter);
 
-	if (chan->center_freq == home_ch_freq) {
-		hdd_debug("override offchan to 0 at home channel %d",
-			  home_ch_freq);
+	if (ieee80211_frequency_to_channel(chan->center_freq) == home_ch) {
+		hdd_debug("override offchan to 0 at home channel %d", home_ch);
 		*offchan = false;
 	}
 }
@@ -363,7 +363,7 @@ static int __wlan_hdd_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
 
 	wlan_hdd_validate_and_override_offchan(adapter, chan, &offchan);
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_P2P_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
 	if (!vdev) {
 		hdd_err("vdev is NULL");
 		return -EINVAL;
@@ -375,7 +375,7 @@ static int __wlan_hdd_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
 
 	status = wlan_cfg80211_mgmt_tx(vdev, chan, offchan, wait, buf,
 				       len, no_cck, dont_wait_for_ack, cookie);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_P2P_ID);
+	hdd_objmgr_put_vdev(vdev);
 	hdd_debug("mgmt tx, status:%d, cookie:0x%llx", status, *cookie);
 
 	return 0;
@@ -434,14 +434,14 @@ static int __wlan_hdd_cfg80211_mgmt_tx_cancel_wait(struct wiphy *wiphy,
 	if (wlan_hdd_validate_vdev_id(adapter->vdev_id))
 		return -EINVAL;
 
-	vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_P2P_ID);
+	vdev = hdd_objmgr_get_vdev(adapter);
 	if (!vdev) {
 		hdd_err("vdev is NULL");
 		return -EINVAL;
 	}
 
 	status = wlan_cfg80211_mgmt_tx_cancel(vdev, cookie);
-	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_P2P_ID);
+	hdd_objmgr_put_vdev(vdev);
 
 	hdd_debug("cancel mgmt tx, status:%d", status);
 
@@ -528,7 +528,7 @@ int hdd_set_p2p_noa(struct net_device *dev, uint8_t *command)
 		noa.single_noa_duration = duration;
 		noa.ps_selection = P2P_POWER_SAVE_TYPE_SINGLE_NOA;
 	} else {
-		if (duration >= interval) {
+		if (count && (duration >= interval)) {
 			hdd_err("Duration should be less than interval");
 			return -EINVAL;
 		}
@@ -707,7 +707,6 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 	QDF_STATUS status;
 	struct wlan_objmgr_vdev *vdev;
 	int ret;
-	struct hdd_adapter_create_param create_params = {0};
 
 	hdd_enter();
 
@@ -753,7 +752,7 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 
 	adapter = hdd_get_adapter(hdd_ctx, QDF_STA_MODE);
 	if (adapter && !wlan_hdd_validate_vdev_id(adapter->vdev_id)) {
-		vdev = hdd_objmgr_get_vdev_by_user(adapter, WLAN_OSIF_P2P_ID);
+		vdev = hdd_objmgr_get_vdev(adapter);
 		if (vdev) {
 			if (ucfg_scan_get_vdev_status(vdev) !=
 							SCAN_NOT_IN_PROGRESS) {
@@ -761,7 +760,7 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 						adapter->vdev_id,
 						INVALID_SCAN_ID, false);
 			}
-			hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_P2P_ID);
+			hdd_objmgr_put_vdev(vdev);
 		} else {
 			hdd_err("vdev is NULL");
 		}
@@ -801,22 +800,17 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 		p2p_device_address.bytes[4] ^= 0x80;
 		adapter = hdd_open_adapter(hdd_ctx, mode, name,
 					   p2p_device_address.bytes,
-					   name_assign_type, true,
-					   &create_params);
+					   name_assign_type, true);
 	} else {
 		uint8_t *device_address;
-		if (strnstr(name, "p2p", 3) && mode == QDF_STA_MODE) {
-			hdd_debug("change mode to p2p device");
-			mode = QDF_P2P_DEVICE_MODE;
-		}
+
 		device_address = wlan_hdd_get_intf_addr(hdd_ctx, mode);
 		if (!device_address)
 			return ERR_PTR(-EINVAL);
 
 		adapter = hdd_open_adapter(hdd_ctx, mode, name,
 					   device_address,
-					   name_assign_type, true,
-					   &create_params);
+					   name_assign_type, true);
 		if (!adapter)
 			wlan_hdd_release_intf_addr(hdd_ctx, device_address);
 	}
@@ -1379,9 +1373,9 @@ static uint32_t set_second_connection_operating_channel(
 {
 	uint8_t operating_channel;
 
-	operating_channel = wlan_reg_freq_to_chan(hdd_ctx->pdev,
-						  policy_mgr_get_mcc_operating_channel(
-						  hdd_ctx->psoc, vdev_id));
+	operating_channel = wlan_freq_to_chan(
+				policy_mgr_get_mcc_operating_channel(
+				hdd_ctx->psoc, vdev_id));
 
 	if (operating_channel == 0) {
 		hdd_err("Second adapter operating channel is invalid");
@@ -1462,7 +1456,8 @@ int wlan_hdd_set_mcc_p2p_quota(struct hdd_adapter *adapter,
 		set_value = set_second_connection_operating_channel(
 			hdd_ctx, set_value, adapter->vdev_id);
 
-		ret = wlan_hdd_send_mcc_vdev_quota(adapter, set_value);
+
+		ret = wlan_hdd_send_p2p_quota(adapter, set_value);
 	} else {
 		hdd_info("MCC is not active. Exit w/o setting latency");
 	}

@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -46,81 +47,6 @@
 
 #include "wma_types.h"
 
-#ifdef WLAN_FEATURE_11BE_MLO
-#include "lim_mlo.h"
-#endif
-
-#ifdef WLAN_FEATURE_11BE_MLO
-/**
- * lim_notify_link_info() - notify partner link to update beacon template
- * @pe_session: pointer to pe session
- *
- * Return: void
- */
-static void lim_notify_link_info(struct pe_session *pe_session)
-{
-	struct wlan_objmgr_vdev *wlan_vdev_list[WLAN_UMAC_MLO_MAX_VDEVS];
-	uint16_t vdev_count = 0;
-	int link;
-
-	if (!pe_session->mlo_link_info.upt_bcn_mlo_ie &&
-	    pe_session->mlo_link_info.mlo_rnr_updated)
-		return;
-	pe_session->mlo_link_info.mlo_rnr_updated = true;
-	pe_debug("mlo notify beacon change info to partner link");
-	lim_get_mlo_vdev_list(pe_session, &vdev_count,
-			      wlan_vdev_list);
-	for (link = 0; link < vdev_count; link++) {
-		if (!wlan_vdev_list[link])
-			continue;
-		if (wlan_vdev_list[link] == pe_session->vdev) {
-			lim_mlo_release_vdev_ref(wlan_vdev_list[link]);
-			continue;
-		}
-		lim_partner_link_info_change(wlan_vdev_list[link]);
-		lim_mlo_release_vdev_ref(wlan_vdev_list[link]);
-	}
-}
-
-/**
- * lim_update_sch_mlo_partner() - update partner information needed in mlo IE
- * @mac: pointer to mac
- * @pe_session: pointer to pe session
- * @bcn_param: pointer to tpSendbeaconParams
- *
- * Return: void
- */
-static void lim_update_sch_mlo_partner(struct mac_context *mac,
-				       struct pe_session *pe_session,
-				       tpSendbeaconParams bcn_param)
-{
-	int link;
-	struct ml_sch_partner_info *sch_info;
-	struct ml_bcn_partner_info *bcn_info;
-
-	bcn_param->mlo_partner.num_links = mac->sch.sch_mlo_partner.num_links;
-	for (link = 0; link < mac->sch.sch_mlo_partner.num_links; link++) {
-		sch_info = &mac->sch.sch_mlo_partner.partner_info[link];
-		bcn_info = &bcn_param->mlo_partner.partner_info[link];
-		bcn_info->vdev_id = sch_info->vdev_id;
-		bcn_info->beacon_interval = sch_info->beacon_interval;
-		bcn_info->csa_switch_count_offset = sch_info->bcn_csa_cnt_ofst;
-		bcn_info->ext_csa_switch_count_offset =
-					sch_info->bcn_ext_csa_cnt_ofst;
-	}
-}
-#else
-static void lim_notify_link_info(struct pe_session *pe_session)
-{
-}
-
-static void lim_update_sch_mlo_partner(struct mac_context *mac,
-				       struct pe_session *pe_session,
-				       tpSendbeaconParams bcn_param)
-{
-}
-#endif
-
 QDF_STATUS sch_send_beacon_req(struct mac_context *mac, uint8_t *beaconPayload,
 			       uint16_t size, struct pe_session *pe_session,
 			       enum sir_bcn_update_reason reason)
@@ -161,7 +87,7 @@ QDF_STATUS sch_send_beacon_req(struct mac_context *mac, uint8_t *beaconPayload,
 		beaconParams->csa_count_offset = mac->sch.csa_count_offset;
 		beaconParams->ecsa_count_offset = mac->sch.ecsa_count_offset;
 	}
-	lim_update_sch_mlo_partner(mac, pe_session, beaconParams);
+
 	beaconParams->vdev_id = pe_session->smeSessionId;
 	beaconParams->reason = reason;
 
@@ -190,16 +116,27 @@ QDF_STATUS sch_send_beacon_req(struct mac_context *mac, uint8_t *beaconPayload,
 	msgQ.bodyptr = beaconParams;
 	msgQ.bodyval = 0;
 
+	/* Keep a copy of recent beacon frame sent */
+
+	/* free previous copy of the beacon */
+	if (pe_session->beacon) {
+		qdf_mem_free(pe_session->beacon);
+	}
+
+	pe_session->bcnLen = 0;
+	pe_session->beacon = NULL;
+
+	pe_session->beacon = qdf_mem_malloc(size);
+	if (pe_session->beacon) {
+		qdf_mem_copy(pe_session->beacon, beaconPayload, size);
+		pe_session->bcnLen = size;
+	}
+
 	MTRACE(mac_trace_msg_tx(mac, pe_session->peSessionId, msgQ.type));
 	retCode = wma_post_ctrl_msg(mac, &msgQ);
 	if (QDF_STATUS_SUCCESS != retCode)
 		pe_err("Posting SEND_BEACON_REQ to HAL failed, reason=%X",
 			retCode);
-
-	if (QDF_IS_STATUS_SUCCESS(retCode)) {
-		if (wlan_vdev_mlme_is_mlo_ap(pe_session->vdev))
-			lim_notify_link_info(pe_session);
-	}
 
 	return retCode;
 }
@@ -428,52 +365,51 @@ uint32_t lim_send_probe_rsp_template_to_hal(struct mac_context *mac,
  * @timestamp_offset: return for the offset of the timestamp field
  * @time_value_offset: return for the time_value field in the TA IE
  *
- * Return: the length of the buffer.
+ * Return: the length of the buffer on success and error code on failure.
  */
 int sch_gen_timing_advert_frame(struct mac_context *mac_ctx, tSirMacAddr self_addr,
 	uint8_t **buf, uint32_t *timestamp_offset, uint32_t *time_value_offset)
 {
-	tDot11fTimingAdvertisementFrame frame;
+	tDot11fTimingAdvertisementFrame frame = {};
 	uint32_t payload_size, buf_size;
-	int status;
+	QDF_STATUS status;
+	uint32_t ret;
 	struct qdf_mac_addr wildcard_bssid = {
 		{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
 	};
 
-	qdf_mem_zero((uint8_t *)&frame, sizeof(tDot11fTimingAdvertisementFrame));
-
 	/* Populate the TA fields */
 	status = populate_dot11f_timing_advert_frame(mac_ctx, &frame);
-	if (status) {
+	if (!QDF_IS_STATUS_SUCCESS(status)) {
 		pe_err("Error populating TA frame %x", status);
-		return status;
+		return qdf_status_to_os_return(status);
 	}
 
-	status = dot11f_get_packed_timing_advertisement_frame_size(mac_ctx,
+	ret = dot11f_get_packed_timing_advertisement_frame_size(mac_ctx,
 		&frame, &payload_size);
-	if (DOT11F_FAILED(status)) {
-		pe_err("Error getting packed frame size %x", status);
-		return status;
-	} else if (DOT11F_WARNED(status)) {
-		pe_warn("Warning getting packed frame size");
+	if (DOT11F_FAILED(ret)) {
+		pe_err("Error getting packed frame size %x", ret);
+		return -EINVAL;
 	}
+	if (DOT11F_WARNED(ret))
+		pe_warn("Warning getting packed frame size");
 
 	buf_size = sizeof(tSirMacMgmtHdr) + payload_size;
 	*buf = qdf_mem_malloc(buf_size);
 	if (!*buf)
-		return QDF_STATUS_E_FAILURE;
+		return -ENOMEM;
 
 	payload_size = 0;
-	status = dot11f_pack_timing_advertisement_frame(mac_ctx, &frame,
+	ret = dot11f_pack_timing_advertisement_frame(mac_ctx, &frame,
 		*buf + sizeof(tSirMacMgmtHdr), buf_size -
 		sizeof(tSirMacMgmtHdr), &payload_size);
-	pe_err("TA payload size2 = %d", payload_size);
-	if (DOT11F_FAILED(status)) {
-		pe_err("Error packing frame %x", status);
+	pe_debug("TA payload size2 = %d", payload_size);
+	if (DOT11F_FAILED(ret)) {
+		pe_err("Error packing frame %x", ret);
 		goto fail;
-	} else if (DOT11F_WARNED(status)) {
-		pe_warn("Warning packing frame");
 	}
+	if (DOT11F_WARNED(ret))
+		pe_warn("Warning packing frame");
 
 	lim_populate_mac_header(mac_ctx, *buf, SIR_MAC_MGMT_FRAME,
 		SIR_MAC_MGMT_TIME_ADVERT, wildcard_bssid.bytes, self_addr);
@@ -500,7 +436,7 @@ int sch_gen_timing_advert_frame(struct mac_context *mac_ctx, tSirMacAddr self_ad
 	return payload_size + sizeof(tSirMacMgmtHdr);
 
 fail:
-	if (*buf)
-		qdf_mem_free(*buf);
-	return status;
+	qdf_mem_free(*buf);
+	*buf = NULL;
+	return -EINVAL;
 }

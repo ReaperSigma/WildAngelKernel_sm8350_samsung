@@ -1,13 +1,3 @@
-# Android makefile for the WLAN Module
-
-# set WLAN_BUILD_DEBUG=y in your environment to enable debug logging
-define wlog
-$(if $(WLAN_BUILD_DEBUG),$(info $(1)))
-endef
-
-LOCAL_PATH := $(call my-dir)
-$(call wlog,LOCAL_PATH=$(LOCAL_PATH))
-
 ENABLE_QCACLD := true
 ifeq ($(TARGET_USES_QMAA), true)
 ifneq ($(TARGET_USES_QMAA_OVERRIDE_WLAN), true)
@@ -22,6 +12,8 @@ ifeq ($(BOARD_COMMON_DIR),)
 endif
 
 ifeq  ($(ENABLE_QCACLD), true)
+# Android makefile for the WLAN Module
+LOCAL_PATH := $(call my-dir)
 
 # Assume no targets will be supported
 WLAN_CHIPSET :=
@@ -48,18 +40,33 @@ endif # opensource
 LOCAL_DEV_NAME := $(patsubst .%,%,\
 	$(lastword $(strip $(subst /, ,$(LOCAL_PATH)))))
 
-$(call wlog,LOCAL_DEV_NAME=$(LOCAL_DEV_NAME))
-$(call wlog,TARGET_WLAN_CHIP=$(TARGET_WLAN_CHIP))
+ifeq (1, $(strip $(shell expr $(words $(strip $(TARGET_WLAN_CHIP))) \>= 2)))
 
-TARGET_WLAN_CHIP ?= wlan
-LOCAL_MULTI_KO := false
-ifneq ($(TARGET_WLAN_CHIP), wlan)
 ifeq ($(LOCAL_DEV_NAME), qcacld-3.0)
 LOCAL_MULTI_KO := true
+else
+LOCAL_MULTI_KO := false
 endif
+
 endif
 
 ifeq ($(LOCAL_MULTI_KO), true)
+LOCAL_ANDROID_ROOT := $(shell pwd)
+LOCAL_WLAN_BLD_DIR := $(LOCAL_ANDROID_ROOT)/$(WLAN_BLD_DIR)
+$(shell find $(LOCAL_WLAN_BLD_DIR)/qcacld-3.0/ -maxdepth 1 \
+	-name '.*' ! -name '.git' -exec rm -rf {} +)
+
+$(foreach chip, $(TARGET_WLAN_CHIP), \
+	$($(shell mkdir -p $(LOCAL_WLAN_BLD_DIR)/qcacld-3.0/.$(chip); \
+	ln -sf $(LOCAL_WLAN_BLD_DIR)/qca-wifi-host-cmn \
+		$(LOCAL_WLAN_BLD_DIR)/qcacld-3.0/.$(chip)/qca-wifi-host-cmn); \
+	$(foreach node, \
+	$(shell find $(LOCAL_WLAN_BLD_DIR)/qcacld-3.0/ -maxdepth 1 \
+		! -name '.*' ! -name '*~' \
+		! -name '.' ! -name 'qcacld-3.0'), \
+	$(shell ln -sf $(node) \
+	$(LOCAL_WLAN_BLD_DIR)/qcacld-3.0/.$(chip)/$(lastword $(strip $(subst /, ,$(node)))) \
+	))))
 
 include $(foreach chip, $(TARGET_WLAN_CHIP), $(LOCAL_PATH)/.$(chip)/Android.mk)
 
@@ -73,6 +80,7 @@ ifeq ($(LOCAL_DEV_NAME), qcacld-3.0)
 
 LOCAL_DEV_NAME := wlan
 LOCAL_MOD_NAME := wlan
+CMN_OFFSET := ..
 LOCAL_SRC_DIR :=
 TARGET_FW_DIR := firmware/wlan/qca_cld
 TARGET_CFG_PATH := /vendor/etc/wifi
@@ -81,6 +89,7 @@ TARGET_MAC_BIN_PATH := /mnt/vendor/persist
 else
 
 LOCAL_SRC_DIR := .$(LOCAL_DEV_NAME)
+CMN_OFFSET := .
 # Use default profile if WLAN_CFG_USE_DEFAULT defined.
 ifeq ($(WLAN_CFG_USE_DEFAULT),)
 WLAN_PROFILE := $(LOCAL_DEV_NAME)
@@ -109,8 +118,8 @@ endif # platform-sdk-version
 ###########################################################
 # This is set once per LOCAL_PATH, not per (kernel) module
 KBUILD_OPTIONS := WLAN_ROOT=$(WLAN_BLD_DIR)/qcacld-3.0/$(LOCAL_SRC_DIR)
-KBUILD_OPTIONS += WLAN_COMMON_ROOT=cmn
-KBUILD_OPTIONS += WLAN_COMMON_INC=$(WLAN_BLD_DIR)/qcacld-3.0/cmn
+KBUILD_OPTIONS += WLAN_COMMON_ROOT=$(CMN_OFFSET)/qca-wifi-host-cmn
+KBUILD_OPTIONS += WLAN_COMMON_INC=$(WLAN_BLD_DIR)/qca-wifi-host-cmn
 KBUILD_OPTIONS += WLAN_FW_API=$(WLAN_BLD_DIR)/fw-api
 KBUILD_OPTIONS += WLAN_PROFILE=$(WLAN_PROFILE)
 KBUILD_OPTIONS += DYNAMIC_SINGLE_CHIP=$(DYNAMIC_SINGLE_CHIP)
@@ -128,14 +137,6 @@ ifneq ($(WLAN_CFG_OVERRIDE_$(LOCAL_DEV_NAME)),)
 KBUILD_OPTIONS += WLAN_CFG_OVERRIDE="$(WLAN_CFG_OVERRIDE_$(LOCAL_DEV_NAME))"
 endif
 
-# driver expects "/dev/<name>" for WIFI_DRIVER_STATE_CTRL_PARAM
-$(call wlog,WIFI_DRIVER_STATE_CTRL_PARAM=$(WIFI_DRIVER_STATE_CTRL_PARAM))
-PARAM := $(patsubst "%",%,$(WIFI_DRIVER_STATE_CTRL_PARAM))
-$(call wlog,PARAM=$(PARAM))
-ifeq ($(dir $(PARAM)),/dev/)
-KBUILD_OPTIONS += WLAN_CTRL_NAME=$(notdir $(PARAM))
-endif
-
 # Pass build options per chip to Kbuild. This will be injected from upper layer
 # makefile.
 #
@@ -145,29 +146,7 @@ ifneq ($(WLAN_KBUILD_OPTIONS_$(LOCAL_DEV_NAME)),)
 KBUILD_OPTIONS += "$(WLAN_KBUILD_OPTIONS_$(LOCAL_DEV_NAME))"
 endif
 
-ifeq ($(PRODUCT_VENDOR_MOVE_ENABLED),true)
-TARGET_FW_PATH := $(TARGET_OUT_VENDOR)/$(TARGET_FW_DIR)
-else
-TARGET_FW_PATH := $(TARGET_OUT_ETC)/$(TARGET_FW_DIR)
-endif
-
-# WLAN_PLATFORM_KBUILD_OPTIONS should be passed from upper level Makefiles
-# like wlan.mk. It indicates sources of CNSS family drivers (cnss2, cnss_nl,
-# cnss_prealloc and cnss_utils etc.) are built out of kernel tree and it
-# should also include all necessary config flags (e.g. CONFIG_CNSS2) which
-# are originally defined from kernel Kconfig/defconfig. KBUILD_EXTRA_SYMBOLS
-# is also needed to indicate all the symbols from these drivers.
-ifneq ($(WLAN_PLATFORM_KBUILD_OPTIONS),)
-KBUILD_OPTIONS += $(foreach wlan_platform_kbuild_option, \
-		   $(WLAN_PLATFORM_KBUILD_OPTIONS), \
-		   $(wlan_platform_kbuild_option))
-
-KBUILD_OPTIONS += KBUILD_EXTRA_SYMBOLS=$(shell pwd)/$(call intermediates-dir-for,DLKM,wlan-platform-module-symvers)/Module.symvers
-endif
-
 include $(CLEAR_VARS)
-
-# Create the module
 LOCAL_MODULE              := $(WLAN_CHIPSET)_$(LOCAL_DEV_NAME).ko
 LOCAL_MODULE_KBUILD_NAME  := $(LOCAL_MOD_NAME).ko
 LOCAL_MODULE_DEBUG_ENABLE := true
@@ -181,49 +160,33 @@ else
     LOCAL_MODULE_PATH := $(TARGET_OUT)/lib/modules/$(WLAN_CHIPSET)
 endif
 
-# Create wlan_mac.bin symbolic link as part of the module
-$(call symlink-file,,$(TARGET_MAC_BIN_PATH)/wlan_mac.bin,$(TARGET_FW_PATH)/wlan_mac.bin)
-LOCAL_ADDITIONAL_DEPENDENCIES := $(TARGET_FW_PATH)/wlan_mac.bin
+include $(DLKM_DIR)/AndroidKernelModule.mk
+###########################################################
 
-# Conditionally create module symbolic link
+# Create Symbolic link
 ifneq ($(findstring $(WLAN_CHIPSET),$(WIFI_DRIVER_DEFAULT)),)
 ifeq ($(PRODUCT_VENDOR_MOVE_ENABLED),true)
-ifneq ($(WIFI_DRIVER_INSTALL_TO_KERNEL_OUT),true)
-$(call symlink-file,,$(TARGET_COPY_OUT_VENDOR)/lib/modules/$(WLAN_CHIPSET)/$(LOCAL_MODULE),$(TARGET_OUT_VENDOR)/lib/modules/$(LOCAL_MODULE))
-LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT_VENDOR)/lib/modules/$(LOCAL_MODULE)
+ifneq ($(WIFI_DRIVER_INSTALL_TO_KERNEL_OUT),)
+$(shell mkdir -p $(TARGET_OUT_VENDOR)/lib/modules; \
+	ln -sf /$(TARGET_COPY_OUT_VENDOR)/lib/modules/$(WLAN_CHIPSET)/$(LOCAL_MODULE) $(TARGET_OUT_VENDOR)/lib/modules/$(LOCAL_MODULE))
 endif
 else
-$(call symlink-file,,/system/lib/modules/$(WLAN_CHIPSET)/$(LOCAL_MODULE),$(TARGET_OUT)/lib/modules/$(LOCAL_MODULE))
-LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_OUT)/lib/modules/$(LOCAL_MODULE)
+$(shell mkdir -p $(TARGET_OUT)/lib/modules; \
+	ln -sf /system/lib/modules/$(WLAN_CHIPSET)/$(LOCAL_MODULE) $(TARGET_OUT)/lib/modules/$(LOCAL_MODULE))
 endif
 endif
 
-# Conditionally create ini symbolic link
-ifeq ($(TARGET_BOARD_AUTO),true)
-$(call symlink-file,,$(TARGET_CFG_PATH)/WCNSS_qcom_cfg.ini,$(TARGET_FW_PATH)/WCNSS_qcom_cfg.ini)
-LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_FW_PATH)/WCNSS_qcom_cfg.ini
-$(call wlog,"generate soft link because TARGET_BOARD_AUTO true")
+ifeq ($(PRODUCT_VENDOR_MOVE_ENABLED),true)
+TARGET_FW_PATH := $(TARGET_OUT_VENDOR)/$(TARGET_FW_DIR)
 else
+TARGET_FW_PATH := $(TARGET_OUT_ETC)/$(TARGET_FW_DIR)
+endif
+
+$(shell mkdir -p $(TARGET_FW_PATH); \
+	ln -sf $(TARGET_MAC_BIN_PATH)/wlan_mac.bin $(TARGET_FW_PATH)/wlan_mac.bin)
 ifneq ($(GENERIC_ODM_IMAGE),true)
-$(call symlink-file,,$(TARGET_CFG_PATH)/WCNSS_qcom_cfg.ini,$(TARGET_FW_PATH)/WCNSS_qcom_cfg.ini)
-LOCAL_ADDITIONAL_DEPENDENCIES += $(TARGET_FW_PATH)/WCNSS_qcom_cfg.ini
-$(call wlog,"generate soft link because GENERIC_ODM_IMAGE not true")
+$(shell ln -sf $(TARGET_CFG_PATH)/WCNSS_qcom_cfg.ini $(TARGET_FW_PATH)/WCNSS_qcom_cfg.ini)
 endif
-endif
-
-# Set dependencies so that CNSS family drivers can be compiled ahead.
-ifneq ($(WLAN_PLATFORM_KBUILD_OPTIONS),)
-LOCAL_REQUIRED_MODULES := wlan-platform-module-symvers
-LOCAL_ADDITIONAL_DEPENDENCIES += $(call intermediates-dir-for,DLKM,wlan-platform-module-symvers)/Module.symvers
-endif
-
-$(call wlog,TARGET_USES_KERNEL_PLATFORM=$(TARGET_USES_KERNEL_PLATFORM))
-ifeq ($(TARGET_USES_KERNEL_PLATFORM),true)
-    include $(DLKM_DIR)/Build_external_kernelmodule.mk
-else
-    include $(DLKM_DIR)/AndroidKernelModule.mk
-endif
-
 endif # Multi-ko check
 endif # DLKM check
 endif # supported target check

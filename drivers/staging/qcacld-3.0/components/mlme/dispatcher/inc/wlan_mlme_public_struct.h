@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -30,17 +31,11 @@
 #include "wlan_cm_roam_public_struct.h"
 #include "wlan_mlme_twt_public_struct.h"
 #include "cfg_mlme_generic.h"
-#include "host_diag_core_event.h"
 
 #define OWE_TRANSITION_OUI_TYPE "\x50\x6f\x9a\x1c"
 #define OWE_TRANSITION_OUI_SIZE 4
 
-/**
- * EID_VENDOR| IE_LEN | OUI |OUI_TYPE| OWE transition BSSID|SSID_LEN|   SSID   |
- *   (1)     |  (1)   | (3) |   (1)  |         (6)         |   (1)  |(SSID_LEN)|
-*/
-#define OWE_SSID_LEN_OFFSET 12
-#define OWE_SSID_OFFSET     13
+#define CFG_VALID_CHANNEL_LIST_LEN              100
 
 #define CFG_PMKID_MODES_OKC                        (0x1)
 #define CFG_PMKID_MODES_PMKSA_CACHING              (0x2)
@@ -102,23 +97,6 @@
 
 /* Default beacon interval of 100 ms */
 #define CUSTOM_CONC_GO_BI 100
-
-enum diagwlan_status_eventsubtype {
-	DIAG_WLAN_STATUS_CONNECT = 0,
-	DIAG_WLAN_STATUS_DISCONNECT
-};
-
-enum diagwlan_status_eventreason {
-	DIAG_REASON_UNSPECIFIED = 0,
-	DIAG_REASON_USER_REQUESTED,
-	DIAG_REASON_MIC_ERROR,
-	DIAG_REASON_DISASSOC,
-	DIAG_REASON_DEAUTH,
-	DIAG_REASON_HANDOFF,
-	DIAG_REASON_ROAM_SYNCH_IND,
-	DIAG_REASON_ROAM_SYNCH_CNF,
-	DIAG_REASON_ROAM_HO_FAIL,
-};
 
 /**
  * struct mlme_cfg_str - generic structure for all mlme CFG string items
@@ -226,8 +204,6 @@ struct mlme_edca_ac_vo {
  * MLME_DOT11_MODE_11AC_ONLY: vdev just supports 11AC mode
  * MLME_DOT11_MODE_11AX: vdev supports 11AX mode, and modes above it
  * MLME_DOT11_MODE_11AX_ONLY: vdev just supports 11AX mode
- * MLME_DOT11_MODE_11BE: vdev supports 11BE mode, and modes above it
- * MLME_DOT11_MODE_11BE_ONLY: vdev just supports 11BE mode
  */
 enum mlme_dot11_mode {
 	MLME_DOT11_MODE_ALL,
@@ -240,9 +216,7 @@ enum mlme_dot11_mode {
 	MLME_DOT11_MODE_11AC,
 	MLME_DOT11_MODE_11AC_ONLY,
 	MLME_DOT11_MODE_11AX,
-	MLME_DOT11_MODE_11AX_ONLY,
-	MLME_DOT11_MODE_11BE,
-	MLME_DOT11_MODE_11BE_ONLY
+	MLME_DOT11_MODE_11AX_ONLY
 };
 
 /**
@@ -257,7 +231,6 @@ enum mlme_vdev_dot11_mode {
 	MLME_VDEV_DOT11_MODE_11N,
 	MLME_VDEV_DOT11_MODE_11AC,
 	MLME_VDEV_DOT11_MODE_11AX,
-	MLME_VDEV_DOT11_MODE_11BE,
 };
 
 /**
@@ -269,6 +242,27 @@ enum mlme_vdev_dot11_mode {
 struct wlan_mlme_dot11_mode {
 	enum mlme_dot11_mode dot11_mode;
 	uint32_t vdev_type_dot11_mode;
+};
+
+/**
+ * enum roam_invoke_source_entity - Source of invoking roam invoke command.
+ * @USERSPACE_INITIATED: Userspace (supplicant)
+ * @CONNECTION_MGR_INITIATED: connection mgr initiated.
+ */
+enum roam_invoke_source_entity {
+	USERSPACE_INITIATED,
+	CONNECTION_MGR_INITIATED,
+};
+
+/**
+ * struct mlme_roam_after_data_stall - roam invoke entity params
+ * @roam_invoke_in_progress: is roaming already in progress.
+ * @source: source of the roam invoke command.
+ */
+struct mlme_roam_after_data_stall {
+	bool roam_invoke_in_progress;
+	enum roam_invoke_source_entity source;
+	struct qdf_mac_addr mac_addr;
 };
 
 /**
@@ -382,7 +376,6 @@ struct wlan_mlme_edca_params {
 	struct mlme_cfg_str etsi_acvo_b;
 
 	bool enable_edca_params;
-	bool enable_wmm_txop;
 	struct mlme_edca_ac_vo edca_ac_vo;
 	struct mlme_edca_ac_vi edca_ac_vi;
 	struct mlme_edca_ac_bk edca_ac_bk;
@@ -450,18 +443,6 @@ struct mlme_ht_capabilities_info {
 	uint16_t l_sig_tx_op_protection:1;
 } qdf_packed;
 #endif
-
-/**
- * struct wlan_ht_config - HT capabilities
- * @ht_info: ht caps in bitwise
- * @caps: uint32 caps
- */
-struct wlan_ht_config {
-	union {
-		struct mlme_ht_capabilities_info ht_caps;
-		uint32_t caps;
-	};
-};
 
 /**
  * struct mlme_ht_param_info - HT AMPDU Parameters Info
@@ -735,6 +716,8 @@ struct wlan_mlme_wps_params {
  * @is_6g_sap_fd_enabled: enable fils discovery on sap
  */
 struct wlan_mlme_cfg_sap {
+	uint8_t cfg_ssid[WLAN_SSID_MAX_LEN];
+	uint8_t cfg_ssid_len;
 	uint16_t beacon_interval;
 	uint16_t dtim_interval;
 	uint16_t listen_interval;
@@ -934,54 +917,6 @@ struct wlan_mlme_vht_caps {
 };
 
 /**
- * struct wlan_vht_config - VHT capabilities
- * @max_mpdu_len: MPDU length
- * @supported_channel_widthset: channel width set
- * @ldpc_coding: LDPC coding capability
- * @shortgi80: short GI 80 support
- * @shortgi160and80plus80: short Gi 160 & 80+80 support
- * @tx_stbc; Tx STBC cap
- * @tx_stbc: Rx STBC cap
- * @su_beam_former: SU beam former cap
- * @su_beam_formee: SU beam formee cap
- * @csnof_beamformer_antSup: Antenna support for beamforming
- * @num_soundingdim: Sound dimensions
- * @mu_beam_former: MU beam former cap
- * @mu_beam_formee: MU beam formee cap
- * @vht_txops: TXOP power save
- * @htc_vhtcap: HTC VHT capability
- * @max_ampdu_lenexp: AMPDU length
- * @vht_link_adapt: VHT link adapatation capable
- */
-struct wlan_vht_config {
-	union {
-		struct {
-			uint32_t           max_mpdu_len:2;
-			uint32_t supported_channel_widthset:2;
-			uint32_t        ldpc_coding:1;
-			uint32_t         shortgi80:1;
-			uint32_t shortgi160and80plus80:1;
-			uint32_t               tx_stbc:1;
-			uint32_t               rx_stbc:3;
-			uint32_t      su_beam_former:1;
-			uint32_t      su_beam_formee:1;
-			uint32_t csnof_beamformer_antSup:3;
-			uint32_t       num_soundingdim:3;
-			uint32_t      mu_beam_former:1;
-			uint32_t      mu_beam_formee:1;
-			uint32_t            vht_txops:1;
-			uint32_t            htc_vhtcap:1;
-			uint32_t       max_ampdu_lenexp:3;
-			uint32_t        vht_link_adapt:2;
-			uint32_t         rx_antpattern:1;
-			uint32_t         tx_antpattern:1;
-			uint32_t  extended_nss_bw_supp:2;
-		};
-		uint32_t caps;
-	};
-};
-
-/**
  * struct wlan_mlme_qos - QOS TX/RX aggregation related CFG items
  * @tx_aggregation_size: TX aggr size in number of MPDUs
  * @tx_aggregation_size_be: No. of MPDUs for BE queue for TX aggr
@@ -1043,17 +978,7 @@ struct wlan_mlme_he_caps {
 	uint32_t he_sta_obsspd;
 	uint16_t he_mcs_12_13_supp_2g;
 	uint16_t he_mcs_12_13_supp_5g;
-};
-#endif
-
-#ifdef WLAN_FEATURE_11BE
-/**
- * struct wlan_mlme_eht_caps - EHT Capabilities related config items
- */
-struct wlan_mlme_eht_caps {
-	tDot11fIEeht_cap dot11_eht_cap;
-	tDot11fIEeht_cap eht_cap_orig;
-	/* Add members to store INI configuration corresponding to 11be */
+	bool enable_6g_sec_check;
 };
 #endif
 
@@ -1263,16 +1188,19 @@ struct wlan_mlme_ratemask {
 };
 
 /**
- * struct dual_sta_policy - Concurrent STA policy configuration
- * @concurrent_sta_policy: Possible values are defined in enum
- * qca_wlan_concurrent_sta_policy_config
- * @primary_vdev_id: specified iface is the primary STA iface, say 0 means
- * vdev 0 is acting as primary interface
+ * enum mlme_cfg_frame_type  - frame type to configure mgmt hw tx retry count
+ * @CFG_GO_NEGOTIATION_REQ_FRAME_TYPE: p2p go negotiation request fame
+ * @CFG_P2P_INVITATION_REQ_FRAME_TYPE: p2p invitation request frame
+ * @CFG_PROVISION_DISCOVERY_REQ_FRAME_TYPE: p2p provision discovery request
  */
-struct dual_sta_policy {
-	uint8_t concurrent_sta_policy;
-	uint8_t primary_vdev_id;
+enum mlme_cfg_frame_type {
+	CFG_GO_NEGOTIATION_REQ_FRAME_TYPE = 0,
+	CFG_P2P_INVITATION_REQ_FRAME_TYPE = 1,
+	CFG_PROVISION_DISCOVERY_REQ_FRAME_TYPE = 2,
+	CFG_FRAME_TYPE_MAX,
 };
+
+#define MAX_MGMT_HW_TX_RETRY_COUNT 127
 
 /* struct wlan_mlme_generic - Generic CFG config items
  *
@@ -1321,8 +1249,8 @@ struct dual_sta_policy {
  * @enabled_rf_test_mode: Enable/disable the RF test mode config
  * @monitor_mode_concurrency: Monitor mode concurrency supported
  * @ocv_support: FW supports OCV or not
- * @wds_mode: wds mode supported
- * @dual_sta_policy_cfg: Dual STA policies configuration
+ * @tx_retry_multiplier: TX xretry extension parameter
+ * @mgmt_hw_tx_retry_count: MGMT HW tx retry count for frames
  */
 struct wlan_mlme_generic {
 	uint32_t band_capability;
@@ -1367,8 +1295,8 @@ struct wlan_mlme_generic {
 	bool enabled_rf_test_mode;
 	enum monitor_mode_concurrency monitor_mode_concurrency;
 	bool ocv_support;
-	enum wlan_wds_mode wds_mode;
-	struct dual_sta_policy dual_sta_policy;
+	uint32_t tx_retry_multiplier;
+	uint8_t mgmt_hw_tx_retry_count[CFG_FRAME_TYPE_MAX];
 };
 
 /*
@@ -1454,7 +1382,6 @@ struct wlan_mlme_acs {
  * @is_all_twt_tgt_cap_enabled: support for all twt enable/disable
  * @is_twt_statistics_tgt_cap_enabled: support for twt statistics
  * @twt_congestion_timeout: congestion timeout value
- * @disable_btwt_usr_cfg: User config param to enable/disable the BTWT support
  * @enable_twt_24ghz: Enable/disable host TWT when STA is connected in
  * 2.4Ghz
  * @req_flag: requestor flag enable/disable
@@ -1472,7 +1399,6 @@ struct wlan_mlme_cfg_twt {
 	bool is_all_twt_tgt_cap_enabled;
 	bool is_twt_statistics_tgt_cap_enabled;
 	uint32_t twt_congestion_timeout;
-	bool disable_btwt_usr_cfg;
 	bool enable_twt_24ghz;
 	bool req_flag;
 	bool res_flag;
@@ -1564,7 +1490,6 @@ enum station_keepalive_method {
 /**
  * struct wlan_mlme_sta_cfg - MLME STA configuration items
  * @sta_keep_alive_period:          Sends NULL frame to AP period
- * @bss_max_idle_period:            BSS max idle period
  * @tgt_gtx_usr_cfg:                Target gtx user config
  * @pmkid_modes:                    Enable PMKID modes
  * @wait_cnf_timeout:               Wait assoc cnf timeout
@@ -1583,11 +1508,9 @@ enum station_keepalive_method {
  * @single_tid:                     Set replay counter for all TID
  * @allow_tpc_from_ap:              Support for AP power constraint
  * @usr_disabled_roaming:           User config for roaming disable
- * @usr_scan_probe_unicast_ra:      User config unicast probe req in scan
  */
 struct wlan_mlme_sta_cfg {
 	uint32_t sta_keep_alive_period;
-	uint32_t bss_max_idle_period;
 	uint32_t tgt_gtx_usr_cfg;
 	uint32_t pmkid_modes;
 	uint32_t wait_cnf_timeout;
@@ -1606,10 +1529,6 @@ struct wlan_mlme_sta_cfg {
 	bool allow_tpc_from_ap;
 	enum station_keepalive_method sta_keepalive_method;
 	bool usr_disabled_roaming;
-	bool usr_scan_probe_unicast_ra;
-#ifdef FEATURE_WLAN_DIAG_SUPPORT_CSR
-	host_event_wlan_status_payload_type event_payload;
-#endif
 };
 
 /**
@@ -1688,6 +1607,7 @@ struct fw_scan_channels {
  * @mawc_roam_enabled:              Enable/Disable MAWC during roaming
  * @enable_fast_roam_in_concurrency:Enable LFR roaming on STA during concurrency
  * @vendor_btm_param:               Vendor WTC roam trigger parameters
+ * @roam_rt_stats:                  Roam event stats vendor command parameters
  * @lfr3_roaming_offload:           Enable/disable roam offload feature
  * @lfr3_dual_sta_roaming_enabled:  Enable/Disable dual sta roaming offload
  * feature
@@ -1800,13 +1720,14 @@ struct fw_scan_channels {
  * @saved_freq_list: Valid channel list
  * @sae_single_pmk_feature_enabled: Contains value of ini
  * sae_single_pmk_feature_enabled
- * @rso_user_config: RSO user config
+ * @enable_ft_over_ds: Flag to enable/disable FT-over-DS
  */
 struct wlan_mlme_lfr_cfg {
 	bool mawc_roam_enabled;
 	bool enable_fast_roam_in_concurrency;
 #ifdef WLAN_FEATURE_ROAM_OFFLOAD
 	struct wlan_cm_roam_vendor_btm_params vendor_btm_param;
+	struct wlan_cm_roam_rt_stats roam_rt_stats;
 	bool lfr3_roaming_offload;
 	bool lfr3_dual_sta_roaming_enabled;
 	bool enable_self_bss_roam;
@@ -1836,8 +1757,8 @@ struct wlan_mlme_lfr_cfg {
 	uint8_t mawc_roam_rssi_low_adjust;
 	uint32_t roam_rssi_abs_threshold;
 	uint8_t rssi_threshold_offset_5g;
-	uint8_t early_stop_scan_min_threshold;
-	uint8_t early_stop_scan_max_threshold;
+	int8_t early_stop_scan_min_threshold;
+	int8_t early_stop_scan_max_threshold;
 	uint32_t roam_dense_traffic_threshold;
 	uint32_t roam_dense_rssi_thre_offset;
 	uint32_t roam_dense_min_aps;
@@ -1917,7 +1838,6 @@ struct wlan_mlme_lfr_cfg {
 #if defined(WLAN_SAE_SINGLE_PMK) && defined(WLAN_FEATURE_ROAM_OFFLOAD)
 	bool sae_single_pmk_feature_enabled;
 #endif
-	struct rso_config_params rso_user_config;
 	bool enable_ft_over_ds;
 };
 
@@ -1926,11 +1846,13 @@ struct wlan_mlme_lfr_cfg {
  * @wmm_mode: Enable WMM feature
  * @b80211e_is_enabled: Enable 802.11e feature
  * @uapsd_mask: what ACs to setup U-APSD for at assoc
+ * @bimplicit_qos_enabled: Enable implicit QOS
  */
 struct wlan_mlme_wmm_config {
 	uint8_t wmm_mode;
 	bool b80211e_is_enabled;
 	uint8_t uapsd_mask;
+	bool bimplicit_qos_enabled;
 };
 
 /**
@@ -2221,8 +2143,7 @@ struct wlan_mlme_power {
 
 /*
  * struct wlan_mlme_timeout - mlme timeout related config items
- * @join_failure_timeout: join failure timeout (can be changed in connect req)
- * @join_failure_timeout_ori: original value of above join timeout
+ * @join_failure_timeout: join failure timeout
  * @auth_failure_timeout: authenticate failure timeout
  * @auth_rsp_timeout: authenticate response timeout
  * @assoc_failure_timeout: assoc failure timeout
@@ -2233,12 +2154,12 @@ struct wlan_mlme_power {
  * @heart_beat_threshold: Heart beat threshold
  * @ap_keep_alive_timeout: AP keep alive timeout value
  * @ap_link_monitor_timeout: AP link monitor timeout value
+ * @ps_data_inactivity_timeout: PS data inactivity timeout
  * @wmi_wq_watchdog_timeout: timeout period for wmi watchdog bite
  * @sae_auth_failure_timeout: SAE authentication failure timeout
  */
 struct wlan_mlme_timeout {
 	uint32_t join_failure_timeout;
-	uint32_t join_failure_timeout_ori;
 	uint32_t auth_failure_timeout;
 	uint32_t auth_rsp_timeout;
 	uint32_t assoc_failure_timeout;
@@ -2249,6 +2170,7 @@ struct wlan_mlme_timeout {
 	uint32_t heart_beat_threshold;
 	uint32_t ap_keep_alive_timeout;
 	uint32_t ap_link_monitor_timeout;
+	uint32_t ps_data_inactivity_timeout;
 	uint32_t wmi_wq_watchdog_timeout;
 	uint32_t sae_auth_failure_timeout;
 };
@@ -2291,6 +2213,10 @@ enum wep_key_id {
  * @is_auth_open_system:    Flag to check if the auth type is open
  * @auth_type:              Authentication type value
  * @wep_default_key_id:     Default WEP key id
+ * @wep_default_key_1:      WEP encryption key 1
+ * @wep_default_key_2:      WEP encryption key 2
+ * @wep_default_key_3:      WEP encryption key 3
+ * @wep_default_key_4:      WEP encryption key 4
  */
 struct wlan_mlme_wep_cfg {
 	bool is_privacy_enabled;
@@ -2298,6 +2224,10 @@ struct wlan_mlme_wep_cfg {
 	bool is_auth_open_system;
 	uint8_t auth_type;
 	uint8_t wep_default_key_id;
+	struct mlme_cfg_str wep_default_key_1;
+	struct mlme_cfg_str wep_default_key_2;
+	struct mlme_cfg_str wep_default_key_3;
+	struct mlme_cfg_str wep_default_key_4;
 };
 
 /**
@@ -2532,9 +2462,6 @@ struct wlan_mlme_cfg {
 #ifdef WLAN_FEATURE_11AX
 	struct wlan_mlme_he_caps he_caps;
 #endif
-#ifdef WLAN_FEATURE_11BE
-	struct wlan_mlme_eht_caps eht_caps;
-#endif
 	struct wlan_mlme_lfr_cfg lfr;
 	struct wlan_mlme_obss_ht40 obss_ht40;
 	struct wlan_mlme_mbo mbo_cfg;
@@ -2603,7 +2530,6 @@ struct wlan_mlme_sae_single_pmk {
 	struct mlme_pmk_info pmk_info;
 };
 
-#define ROAM_FRAME_INFO_FRAME_TYPE_EXT 3
 /**
  * struct mlme_roam_debug_info - Roam debug information storage structure.
  * @trigger:            Roam trigger related data
@@ -2613,8 +2539,7 @@ struct wlan_mlme_sae_single_pmk {
  * @btm_rsp:            BTM response information
  * @roam_init_info:     Roam initial info
  * @roam_msg_info:      roam related message information
- * @frame_info:         Information related to mgmt/eapol frames exchanged
- *                      during roaming.
+ * @roam_event_param:   Roam event notif params
  */
 struct mlme_roam_debug_info {
 	struct wmi_roam_trigger_info trigger;
@@ -2624,7 +2549,17 @@ struct mlme_roam_debug_info {
 	struct roam_btm_response_data btm_rsp;
 	struct roam_initial_data roam_init_info;
 	struct roam_msg_info roam_msg_info;
-	struct roam_frame_info frame_info[WLAN_ROAM_MAX_FRAME_INFO];
+	struct roam_event_rt_info roam_event_param;
+};
+
+/**
+ * struct wlan_ies - Generic WLAN Information Element(s) format
+ * @len: Total length of the IEs
+ * @data: IE data
+ */
+struct wlan_ies {
+	uint16_t len;
+	uint8_t *data;
 };
 
 /**
@@ -2643,31 +2578,4 @@ struct wlan_change_bi {
 	uint8_t session_id;
 };
 
-/**
- * struct mgmt_frame_data  - Management frame related info
- * @mac_hdr: 802.11 Frame MAC header
- * @status_code: Frame status code values as defined in
- * IEEE 802.11 - 2020 standard Table 9-41
- * @vdev_id: Vdev id
- * @frame_subtype: Frame subtype as defined in IEEE 802.11 - 2020
- * standard section 9.2.4.1.3
- * @auth_algo: Authentication algorithm number field as defined in
- * IEEE 802.11 - 2020 standard section 9.4.1.1
- * @auth_type: indicates SAE authentication frame type. Possible values are:
- * 1 - SAE commit frame
- * 2 - SAE confirm frame
- * @auth_seq: Authentication frame transaction sequence number as defined in
- * IEEE 802.11 - 2020 standard section 9.4.1.2
- * @rssi: RSSI in dBm
- */
-struct mgmt_frame_data {
-	struct wlan_frame_hdr mac_hdr;
-	uint16_t status_code;
-	uint8_t vdev_id;
-	uint8_t frame_subtype;
-	uint8_t auth_algo;
-	uint8_t auth_type;
-	uint8_t auth_seq;
-	int16_t rssi;
-};
 #endif

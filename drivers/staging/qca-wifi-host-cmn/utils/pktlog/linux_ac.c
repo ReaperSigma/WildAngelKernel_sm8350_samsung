@@ -125,7 +125,7 @@ int pktlog_alloc_buf(struct hif_opaque_softc *scn)
 	}
 	qdf_spin_unlock_bh(&pl_info->log_lock);
 
-	buffer = qdf_mem_valloc((page_cnt + 2) * PAGE_SIZE);
+	buffer = vmalloc((page_cnt + 2) * PAGE_SIZE);
 	if (!buffer) {
 		return -ENOMEM;
 	}
@@ -182,7 +182,7 @@ void pktlog_release_buf(struct hif_opaque_softc *scn)
 		ClearPageReserved(vpg);
 	}
 
-	qdf_mem_vfree(pl_info->buf);
+	vfree(pl_info->buf);
 	pl_info->buf = NULL;
 }
 

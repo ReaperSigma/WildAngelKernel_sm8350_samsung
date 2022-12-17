@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -28,6 +29,7 @@
 #include "wlan_p2p_ucfg_api.h"
 #include "wlan_tdls_ucfg_api.h"
 #include "wlan_tdls_api.h"
+#include "wlan_cm_roam_api.h"
 
 QDF_STATUS if_mgr_connect_start(struct wlan_objmgr_vdev *vdev,
 				struct if_mgr_event_data *event_data)
@@ -75,16 +77,16 @@ QDF_STATUS if_mgr_connect_start(struct wlan_objmgr_vdev *vdev,
 	if (!ucfg_nan_is_sta_nan_ndi_4_port_allowed(psoc))
 		ucfg_nan_check_and_disable_unsupported_ndi(psoc,
 							   false);
-	if (!wlan_vdev_mlme_is_mlo_link_vdev(vdev)) {
-		/*
-		 * In case of STA+STA concurrency, firmware might try to roam
-		 * to same AP where host is trying to do association on the other
-		 * STA iface. Roaming is disabled on all the ifaces to avoid
-		 * this scenario.
-		 */
-		if_mgr_disable_roaming(pdev, vdev, RSO_CONNECT_START);
-		wlan_tdls_teardown_links_sync(psoc);
-	}
+
+	/*
+	 * In case of STA+STA concurrency, firmware might try to roam
+	 * to same AP where host is trying to do association on the other
+	 * STA iface. Roaming is disabled on all the ifaces to avoid
+	 * this scenario.
+	 */
+	if_mgr_disable_roaming(pdev, vdev, RSO_CONNECT_START);
+
+	wlan_tdls_teardown_links_sync(psoc);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -140,7 +142,8 @@ QDF_STATUS if_mgr_connect_complete(struct wlan_objmgr_vdev *vdev,
 
 	policy_mgr_check_n_start_opportunistic_timer(psoc);
 
-	policy_mgr_check_concurrent_intf_and_restart_sap(psoc);
+	if (!wlan_cm_roaming_in_progress(pdev, vdev->vdev_objmgr.vdev_id))
+		policy_mgr_check_concurrent_intf_and_restart_sap(psoc);
 
 	return QDF_STATUS_SUCCESS;
 }

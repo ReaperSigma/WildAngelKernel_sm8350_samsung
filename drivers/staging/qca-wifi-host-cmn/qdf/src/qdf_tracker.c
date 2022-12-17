@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019, 2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -26,6 +27,7 @@
 #include "qdf_tracker.h"
 #include "qdf_types.h"
 
+#ifdef CONFIG_LEAK_DETECTION
 struct qdf_tracker_node {
 	struct qdf_ptr_hash_entry entry;
 	enum qdf_debug_domain domain;
@@ -65,6 +67,8 @@ static uint32_t qdf_tracker_leaks_print(struct qdf_tracker *tracker,
 	struct qdf_tracker_node *node;
 	bool print_header = true;
 	uint32_t count = 0;
+
+	QDF_BUG(qdf_spin_is_locked(&tracker->lock));
 
 	qdf_ptr_hash_for_each(tracker->ht, bucket, node, entry) {
 		if (node->domain != domain)
@@ -186,4 +190,4 @@ bool qdf_tracker_lookup(struct qdf_tracker *tracker, void *ptr,
 
 	return !!node;
 }
-
+#endif

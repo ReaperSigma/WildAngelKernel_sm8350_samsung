@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -38,8 +38,6 @@
 #include <wlan_scan_utils_api.h>
 #include <wlan_reg_services_api.h>
 #include <wlan_utility.h>
-#include <../../core/src/wlan_cm_vdev_api.h>
-#include "rrm_api.h"
 
 /* Roam score for a neighbor AP will be calculated based on the below
  * definitions. The calculated roam score will be used to select the
@@ -452,8 +450,9 @@ static QDF_STATUS sme_rrm_send_scan_result(struct mac_context *mac_ctx,
 	tpRrmSMEContext rrm_ctx =
 		&mac_ctx->rrm.rrmSmeContext[measurement_index];
 	uint32_t session_id;
+	struct csr_roam_info *roam_info = NULL;
 	tSirScanType scan_type;
-	struct qdf_mac_addr bss_peer_mac;
+	struct csr_roam_session *session;
 
 	filter = qdf_mem_malloc(sizeof(*filter));
 	if (!filter)
@@ -505,7 +504,7 @@ static QDF_STATUS sme_rrm_send_scan_result(struct mac_context *mac_ctx,
 	if (QDF_STATUS_E_FAILURE == csr_roam_get_session_id_from_bssid(mac_ctx,
 			&rrm_ctx->sessionBssId, &session_id)) {
 		sme_debug("BSSID mismatch, using current session_id");
-		session_id = mac_ctx->roam.roamSession->vdev_id;
+		session_id = mac_ctx->roam.roamSession->sessionId;
 	}
 	status = sme_scan_get_result(mac_handle, (uint8_t)session_id,
 				     filter, &result_handle);
@@ -573,19 +572,21 @@ static QDF_STATUS sme_rrm_send_scan_result(struct mac_context *mac_ctx,
 		goto rrm_send_scan_results_done;
 	}
 
-	status = wlan_mlme_get_bssid_vdev_id(mac_ctx->pdev, session_id,
-					     &bss_peer_mac);
-	if (QDF_IS_STATUS_ERROR(status)) {
-		sme_err("Invaild session %d", session_id);
-		status = QDF_STATUS_E_FAILURE;
+	roam_info = qdf_mem_malloc(sizeof(*roam_info));
+	if (!roam_info) {
+		status = QDF_STATUS_E_NOMEM;
 		goto rrm_send_scan_results_done;
 	}
 
-	if (!cm_is_vdevid_connected(mac_ctx->pdev, session_id)) {
+	session = CSR_GET_SESSION(mac_ctx, session_id);
+	if ((!session) ||  (!csr_is_conn_state_connected_infra(
+	    mac_ctx, session_id)) ||
+	    (!session->pConnectBssDesc)) {
 		sme_err("Invaild session");
 		status = QDF_STATUS_E_FAILURE;
 		goto rrm_send_scan_results_done;
 	}
+
 
 	while (scan_results) {
 		/*
@@ -600,7 +601,7 @@ static QDF_STATUS sme_rrm_send_scan_result(struct mac_context *mac_ctx,
 		uint8_t is_nontx_of_conn_bss = false;
 
 		if (!qdf_mem_cmp(scan_results->BssDescriptor.bssId,
-				 bss_peer_mac.bytes,
+				 session->pConnectBssDesc->bssId,
 		    sizeof(struct qdf_mac_addr))) {
 			is_conn_bss_found = true;
 			sme_debug("Connected BSS in scan results");
@@ -608,7 +609,7 @@ static QDF_STATUS sme_rrm_send_scan_result(struct mac_context *mac_ctx,
 		if (scan_results->BssDescriptor.mbssid_info.profile_num) {
 			if (!qdf_mem_cmp(scan_results->BssDescriptor.
 					 mbssid_info.trans_bssid,
-					 bss_peer_mac.bytes,
+					 session->pConnectBssDesc->bssId,
 					 QDF_MAC_ADDR_SIZE)) {
 				is_nontx_of_conn_bss = true;
 				sme_debug("Non Tx BSS of Conn AP in results");
@@ -619,8 +620,13 @@ static QDF_STATUS sme_rrm_send_scan_result(struct mac_context *mac_ctx,
 		sme_debug("Scan res timer:%lu, rrm scan timer:%llu",
 				scan_results->timer, rrm_scan_timer);
 		if ((scan_results->timer >= rrm_scan_timer) ||
-		    (is_conn_bss_found == true) || is_nontx_of_conn_bss)
+		    (is_conn_bss_found == true) || is_nontx_of_conn_bss) {
+			roam_info->bss_desc = &scan_results->BssDescriptor;
+			csr_roam_call_callback(mac_ctx, session_id, roam_info,
+						0, eCSR_ROAM_UPDATE_SCAN_RESULT,
+						eCSR_ROAM_RESULT_NONE);
 			scanresults_arr[counter++] = scan_results;
+		}
 		scan_results = next_result;
 		if (counter >= num_scan_results)
 			break;
@@ -653,6 +659,7 @@ static QDF_STATUS sme_rrm_send_scan_result(struct mac_context *mac_ctx,
 rrm_send_scan_results_done:
 	if (scanresults_arr)
 		qdf_mem_free(scanresults_arr);
+	qdf_mem_free(roam_info);
 	sme_scan_result_purge(result_handle);
 
 	return status;
@@ -1083,10 +1090,10 @@ QDF_STATUS sme_rrm_process_beacon_report_req_ind(struct mac_context *mac,
 	bool chan_valid;
 	uint32_t *rrm_freq_list, *local_rrm_freq_list;
 	uint32_t bcn_chan_freq, local_bcn_chan_freq;
-	tpRrmPEContext rrm_ctx;
+	tRrmPEContext rrm_context;
 
 	sme_rrm_ctx = &mac->rrm.rrmSmeContext[beacon_req->measurement_idx];
-	rrm_ctx = &mac->rrm.rrmPEContext;
+	rrm_context = mac->rrm.rrmPEContext;
 
 	status = csr_roam_get_session_id_from_bssid(mac, (struct qdf_mac_addr *)
 						    beacon_req->bssId,
@@ -1103,7 +1110,12 @@ QDF_STATUS sme_rrm_process_beacon_report_req_ind(struct mac_context *mac,
 		goto cleanup;
 	}
 
-	rrm_get_country_code_from_connected_profile(mac, session_id, country);
+	qdf_mem_zero(country, WNI_CFG_COUNTRY_CODE_LEN);
+	if (session->connectedProfile.country_code[0])
+		qdf_mem_copy(country, session->connectedProfile.country_code,
+			     WNI_CFG_COUNTRY_CODE_LEN);
+	else
+		country[2] = OP_CLASS_GLOBAL;
 
 	if (wlan_reg_is_6ghz_op_class(mac->pdev,
 				      beacon_req->channel_info.reg_class))
@@ -1184,8 +1196,7 @@ QDF_STATUS sme_rrm_process_beacon_report_req_ind(struct mac_context *mac,
 
 		if (beacon_req->channel_info.chan_num != 255) {
 			chan_valid =
-				wlan_roam_is_channel_valid(&mac->mlme_cfg->reg,
-							   bcn_chan_freq);
+				csr_roam_is_channel_valid(mac, bcn_chan_freq);
 
 			if (chan_valid) {
 				rrm_freq_list[num_chan] = bcn_chan_freq;
@@ -1200,8 +1211,7 @@ QDF_STATUS sme_rrm_process_beacon_report_req_ind(struct mac_context *mac,
 			bcn_chan_freq =
 				beacon_req->channel_list.chan_freq_lst[i];
 			chan_valid =
-				wlan_roam_is_channel_valid(&mac->mlme_cfg->reg,
-							   bcn_chan_freq);
+				csr_roam_is_channel_valid(mac, bcn_chan_freq);
 
 			if (chan_valid) {
 				rrm_freq_list[num_chan] = bcn_chan_freq;
@@ -1219,8 +1229,8 @@ QDF_STATUS sme_rrm_process_beacon_report_req_ind(struct mac_context *mac,
 		chan_valid = true;
 
 		if (beacon_req->measurement_idx > 0) {
-			for (j = 0; j < rrm_ctx->beacon_rpt_chan_num; j++) {
-				if (rrm_ctx->beacon_rpt_chan_list[j] ==
+			for (j = 0; j < rrm_context.beacon_rpt_chan_num; j ++) {
+				if (rrm_context.beacon_rpt_chan_list[j] ==
 				    local_bcn_chan_freq) {
 				/*
 				 * Ignore this channel, As this is already
@@ -1233,19 +1243,17 @@ QDF_STATUS sme_rrm_process_beacon_report_req_ind(struct mac_context *mac,
 		}
 
 		if (chan_valid) {
-			uint8_t beacon_rpt_chan_num;
+			rrm_context.
+			beacon_rpt_chan_list[rrm_context.beacon_rpt_chan_num] =
+							local_bcn_chan_freq;
+			rrm_context.beacon_rpt_chan_num++;
 
-			beacon_rpt_chan_num = rrm_ctx->beacon_rpt_chan_num;
-			rrm_ctx->beacon_rpt_chan_list[beacon_rpt_chan_num] =
-						local_bcn_chan_freq;
-			rrm_ctx->beacon_rpt_chan_num++;
-
-			if (rrm_ctx->beacon_rpt_chan_num >=
+			if (rrm_context.beacon_rpt_chan_num >=
 			    MAX_NUM_CHANNELS) {
 			    /* this should never happen */
 				sme_err("Reset beacon_rpt_chan_num : %d",
-					rrm_ctx->beacon_rpt_chan_num);
-				rrm_ctx->beacon_rpt_chan_num = 0;
+					rrm_context.beacon_rpt_chan_num);
+				rrm_context.beacon_rpt_chan_num = 0;
 			}
 			local_rrm_freq_list[local_num_channel] =
 							local_bcn_chan_freq;
@@ -1333,12 +1341,14 @@ QDF_STATUS sme_rrm_neighbor_report_request(struct mac_context *mac, uint8_t
 {
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	tpSirNeighborReportReqInd pMsg;
+	struct csr_roam_session *pSession;
 
 	sme_debug("Request to send Neighbor report request received ");
 	if (!CSR_IS_SESSION_VALID(mac, sessionId)) {
 		sme_err("Invalid session %d", sessionId);
 		return QDF_STATUS_E_INVAL;
 	}
+	pSession = CSR_GET_SESSION(mac, sessionId);
 
 	/* If already a report is pending, return failure */
 	if (true ==
@@ -1357,8 +1367,8 @@ QDF_STATUS sme_rrm_neighbor_report_request(struct mac_context *mac, uint8_t
 
 	pMsg->messageType = eWNI_SME_NEIGHBOR_REPORT_REQ_IND;
 	pMsg->length = sizeof(tSirNeighborReportReqInd);
-	wlan_mlme_get_bssid_vdev_id(mac->pdev, sessionId,
-				    (struct qdf_mac_addr *)&pMsg->bssId);
+	qdf_mem_copy(&pMsg->bssId, &pSession->connectedProfile.bssid,
+		     sizeof(tSirMacAddr));
 	pMsg->noSSID = pNeighborReq->no_ssid;
 	qdf_mem_copy(&pMsg->ucSSID, &pNeighborReq->ssid, sizeof(tSirMacSSid));
 
@@ -1405,9 +1415,7 @@ rrm_calculate_neighbor_ap_roam_score(struct mac_context *mac_ctx,
 	uint32_t roam_score = 0;
 #ifdef FEATURE_WLAN_ESE
 	uint8_t session_id;
-	struct cm_roam_values_copy config;
 #endif
-
 	if (!nbr_report_desc) {
 		QDF_ASSERT(0);
 		return;
@@ -1459,10 +1467,8 @@ rrm_calculate_neighbor_ap_roam_score(struct mac_context *mac_ctx,
 check_11r_assoc:
 #ifdef FEATURE_WLAN_ESE
 	session_id = nbr_report_desc->sessionId;
-	wlan_cm_roam_cfg_get_value(mac_ctx->psoc, session_id, IS_11R_CONNECTION,
-				   &config);
 	/* It has come in the report so its the best score */
-	if (!config.bool_value) {
+	if (csr_neighbor_roam_is11r_assoc(mac_ctx, session_id) == false) {
 		/* IAPP Route so lets make use of this info save all AP, as the
 		 * list does not come all the time. Save and reuse till the next
 		 * AP List comes to us. Even save our own MAC address. Will be

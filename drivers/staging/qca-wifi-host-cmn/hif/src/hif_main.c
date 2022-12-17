@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2015-2021 The Linux Foundation. All rights reserved.
- *
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all
@@ -40,7 +41,7 @@
 #include "hif_debug.h"
 #include "mp_dev.h"
 #if defined(QCA_WIFI_QCA8074) || defined(QCA_WIFI_QCA6018) || \
-	defined(QCA_WIFI_QCA5018) || defined(QCA_WIFI_QCA9574)
+	defined(QCA_WIFI_QCA5018)
 #include "hal_api.h"
 #endif
 #include "hif_napi.h"
@@ -127,10 +128,6 @@ void hif_vote_link_down(struct hif_opaque_softc *hif_ctx)
 	struct hif_softc *scn = HIF_GET_SOFTC(hif_ctx);
 
 	QDF_BUG(scn);
-	if (scn->linkstate_vote == 0)
-		QDF_DEBUG_PANIC("linkstate_vote(%d) has already been 0",
-				scn->linkstate_vote);
-
 	scn->linkstate_vote--;
 	hif_info("Down_linkstate_vote %d", scn->linkstate_vote);
 	if (scn->linkstate_vote == 0)
@@ -358,11 +355,6 @@ static const struct qwlan_hw qwlan_hw_list[] = {
 		.id = QCA9379_REV1_VERSION,
 		.subid = 0xD,
 		.name = "QCA9379_REV1_1",
-	},
-	{
-		.id = WCN7850_V1,
-		.subid = 0xE,
-		.name = "WCN7850_V1",
 	}
 };
 
@@ -497,7 +489,6 @@ int hif_recovery_notifier_cb(struct notifier_block *block, unsigned long state,
 	struct qdf_notifer_data *notif_data = data;
 	qdf_notif_block *notif_block;
 	struct hif_softc *hif_handle;
-	bool bus_id_invalid;
 
 	if (!data || !block)
 		return -EINVAL;
@@ -508,11 +499,8 @@ int hif_recovery_notifier_cb(struct notifier_block *block, unsigned long state,
 	if (!hif_handle)
 		return -EINVAL;
 
-	bus_id_invalid = hif_log_bus_info(hif_handle, notif_data->hang_data,
-					  &notif_data->offset);
-	if (bus_id_invalid)
-		return NOTIFY_STOP_MASK;
-
+	hif_log_bus_info(hif_handle, notif_data->hang_data,
+			 &notif_data->offset);
 	hif_log_ce_info(hif_handle, notif_data->hang_data,
 			&notif_data->offset);
 
@@ -655,24 +643,44 @@ static void hif_cpuhp_unregister(struct hif_softc *scn)
 #endif /* ifdef HIF_CPU_PERF_AFFINE_MASK */
 
 #ifdef HIF_DETECTION_LATENCY_ENABLE
-
-void hif_tasklet_latency(struct hif_softc *scn, bool from_timer)
+/**
+ * hif_check_detection_latency(): to check if latency for tasklet/credit
+ *
+ * @scn: hif context
+ * @from_timer: if called from timer handler
+ * @bitmap_type: indicate if check tasklet or credit
+ *
+ * Return: none
+ */
+void hif_check_detection_latency(struct hif_softc *scn,
+				 bool from_timer,
+				 uint32_t bitmap_type)
 {
 	qdf_time_t ce2_tasklet_sched_time =
 		scn->latency_detect.ce2_tasklet_sched_time;
 	qdf_time_t ce2_tasklet_exec_time =
 		scn->latency_detect.ce2_tasklet_exec_time;
+	qdf_time_t credit_request_time =
+		scn->latency_detect.credit_request_time;
+	qdf_time_t credit_report_time =
+		scn->latency_detect.credit_report_time;
 	qdf_time_t curr_jiffies = qdf_system_ticks();
 	uint32_t detect_latency_threshold =
 		scn->latency_detect.detect_latency_threshold;
 	int cpu_id = qdf_get_cpu();
 
-	/* 2 kinds of check here.
-	 * from_timer==true:  check if tasklet stall
-	 * from_timer==false: check tasklet execute comes late
-	 */
+	if (QDF_GLOBAL_MISSION_MODE != hif_get_conparam(scn))
+		return;
 
-	if ((from_timer ?
+	if (!scn->latency_detect.enable_detection)
+		return;
+
+	/* 2 kinds of check here.
+	 * from_timer==true:  check if tasklet or credit report stall
+	 * from_timer==false: check tasklet execute or credit report comes late
+	 */
+	if (bitmap_type & BIT(HIF_DETECT_TASKLET) &&
+	    (from_timer ?
 	    qdf_system_time_after(ce2_tasklet_sched_time,
 				  ce2_tasklet_exec_time) :
 	    qdf_system_time_after(ce2_tasklet_exec_time,
@@ -688,29 +696,9 @@ void hif_tasklet_latency(struct hif_softc *scn, bool from_timer)
 			cpu_id, (void *)_RET_IP_);
 		goto latency;
 	}
-	return;
 
-latency:
-	qdf_trigger_self_recovery(NULL, QDF_TASKLET_CREDIT_LATENCY_DETECT);
-}
-
-void hif_credit_latency(struct hif_softc *scn, bool from_timer)
-{
-	qdf_time_t credit_request_time =
-		scn->latency_detect.credit_request_time;
-	qdf_time_t credit_report_time =
-		scn->latency_detect.credit_report_time;
-	qdf_time_t curr_jiffies = qdf_system_ticks();
-	uint32_t detect_latency_threshold =
-		scn->latency_detect.detect_latency_threshold;
-	int cpu_id = qdf_get_cpu();
-
-	/* 2 kinds of check here.
-	 * from_timer==true:  check if credit report stall
-	 * from_timer==false: check credit report comes late
-	 */
-
-	if ((from_timer ?
+	if (bitmap_type & BIT(HIF_DETECT_CREDIT) &&
+	    (from_timer ?
 	    qdf_system_time_after(credit_request_time,
 				  credit_report_time) :
 	    qdf_system_time_after(credit_report_time,
@@ -726,36 +714,11 @@ void hif_credit_latency(struct hif_softc *scn, bool from_timer)
 			cpu_id, (void *)_RET_IP_);
 		goto latency;
 	}
+
 	return;
 
 latency:
 	qdf_trigger_self_recovery(NULL, QDF_TASKLET_CREDIT_LATENCY_DETECT);
-}
-
-/**
- * hif_check_detection_latency(): to check if latency for tasklet/credit
- *
- * @scn: hif context
- * @from_timer: if called from timer handler
- * @bitmap_type: indicate if check tasklet or credit
- *
- * Return: none
- */
-void hif_check_detection_latency(struct hif_softc *scn,
-				 bool from_timer,
-				 uint32_t bitmap_type)
-{
-	if (QDF_GLOBAL_MISSION_MODE != hif_get_conparam(scn))
-		return;
-
-	if (!scn->latency_detect.enable_detection)
-		return;
-
-	if (bitmap_type & BIT(HIF_DETECT_TASKLET))
-		hif_tasklet_latency(scn, from_timer);
-
-	if (bitmap_type & BIT(HIF_DETECT_CREDIT))
-		hif_credit_latency(scn, from_timer);
 }
 
 static void hif_latency_detect_timeout_handler(void *arg)
@@ -838,7 +801,7 @@ void hif_latency_detect_timer_start(struct hif_opaque_softc *hif_ctx)
 	if (QDF_GLOBAL_MISSION_MODE != hif_get_conparam(scn))
 		return;
 
-	hif_info_rl("start timer");
+	hif_debug_rl("start timer");
 	if (scn->latency_detect.is_timer_started) {
 		hif_info("timer has been started");
 		return;
@@ -856,7 +819,7 @@ void hif_latency_detect_timer_stop(struct hif_opaque_softc *hif_ctx)
 	if (QDF_GLOBAL_MISSION_MODE != hif_get_conparam(scn))
 		return;
 
-	hif_info_rl("stop timer");
+	hif_debug_rl("stop timer");
 
 	qdf_timer_sync_cancel(&scn->latency_detect.detect_latency_timer);
 	scn->latency_detect.is_timer_started = false;
@@ -1028,9 +991,7 @@ static inline int hif_get_num_active_grp_tasklets(struct hif_softc *scn)
 #if (defined(QCA_WIFI_QCA8074) || defined(QCA_WIFI_QCA6018) || \
 	defined(QCA_WIFI_QCA6290) || defined(QCA_WIFI_QCA6390) || \
 	defined(QCA_WIFI_QCN9000) || defined(QCA_WIFI_QCA6490) || \
-	defined(QCA_WIFI_QCA6750) || defined(QCA_WIFI_QCA5018) || \
-	defined(QCA_WIFI_WCN7850) || defined(QCA_WIFI_QCN9224) || \
-	defined(QCA_WIFI_QCA9574))
+	defined(QCA_WIFI_QCA6750) || defined(QCA_WIFI_QCA5018))
 /**
  * hif_get_num_pending_work() - get the number of entries in
  *		the workqueue pending to be completed.
@@ -1097,7 +1058,7 @@ QDF_STATUS hif_try_prevent_ep_vote_access(struct hif_opaque_softc *hif_ctx)
 	}
 
 	if (pld_is_pci_ep_awake(scn->qdf_dev->dev) == -ENOTSUPP)
-	return QDF_STATUS_SUCCESS;
+		return QDF_STATUS_SUCCESS;
 
 	while (pld_is_pci_ep_awake(scn->qdf_dev->dev)) {
 		if (++wait_cnt > HIF_EP_WAKE_RESET_WAIT_CNT) {
@@ -1164,9 +1125,7 @@ uint8_t hif_get_ep_vote_access(struct hif_opaque_softc *hif_ctx,
 #if (defined(QCA_WIFI_QCA8074) || defined(QCA_WIFI_QCA6018) || \
 	defined(QCA_WIFI_QCA6290) || defined(QCA_WIFI_QCA6390) || \
 	defined(QCA_WIFI_QCN9000) || defined(QCA_WIFI_QCA6490) || \
-	defined(QCA_WIFI_QCA6750) || defined(QCA_WIFI_QCA5018) || \
-	defined(QCA_WIFI_WCN7850) || defined(QCA_WIFI_QCN9224) || \
-	defined(QCA_WIFI_QCA9574))
+	defined(QCA_WIFI_QCA6750) || defined(QCA_WIFI_QCA5018))
 static QDF_STATUS hif_hal_attach(struct hif_softc *scn)
 {
 	if (ce_srng_based(scn)) {
@@ -1540,16 +1499,10 @@ int hif_get_device_type(uint32_t device_id,
 		hif_info(" *********** QCN9000 *************");
 		break;
 
-	case QCN9224_DEVICE_ID:
-		*hif_type = HIF_TYPE_QCN9224;
-		*target_type = TARGET_TYPE_QCN9224;
-		hif_info(" *********** QCN9224 *************");
-		break;
-
-	case QCN6122_DEVICE_ID:
-		*hif_type = HIF_TYPE_QCN6122;
-		*target_type = TARGET_TYPE_QCN6122;
-		hif_info(" *********** QCN6122 *************");
+	case QCN9100_DEVICE_ID:
+		*hif_type = HIF_TYPE_QCN9100;
+		*target_type = TARGET_TYPE_QCN9100;
+		hif_info(" *********** QCN9100 *************");
 		break;
 
 	case QCN7605_DEVICE_ID:
@@ -1583,12 +1536,6 @@ int hif_get_device_type(uint32_t device_id,
 		hif_info(" *********** QCA6750 *************");
 		break;
 
-	case WCN7850_DEVICE_ID:
-		*hif_type = HIF_TYPE_WCN7850;
-		*target_type = TARGET_TYPE_WCN7850;
-		hif_info(" *********** WCN7850 *************");
-		break;
-
 	case QCA8074V2_DEVICE_ID:
 		*hif_type = HIF_TYPE_QCA8074V2;
 		*target_type = TARGET_TYPE_QCA8074V2;
@@ -1611,12 +1558,6 @@ int hif_get_device_type(uint32_t device_id,
 		*hif_type = HIF_TYPE_QCA5018;
 		*target_type = TARGET_TYPE_QCA5018;
 		hif_info(" *********** qca5018 *************");
-		break;
-
-	case QCA9574_DEVICE_ID:
-		*hif_type = HIF_TYPE_QCA9574;
-		*target_type = TARGET_TYPE_QCA9574;
-		hif_info(" *********** QCA9574 *************");
 		break;
 
 	default:
@@ -1998,9 +1939,6 @@ qdf_nbuf_t hif_batch_send(struct hif_opaque_softc *osc, qdf_nbuf_t msdu,
 {
 	void *ce_tx_hdl = hif_get_ce_handle(osc, CE_HTT_TX_CE);
 
-	if (!ce_tx_hdl)
-		return NULL;
-
 	return ce_batch_send((struct CE_handle *)ce_tx_hdl, msdu, transfer_id,
 			len, sendhead);
 }
@@ -2109,8 +2047,10 @@ irqreturn_t hif_wake_interrupt_handler(int irq, void *context)
 
 	hif_info("wake interrupt received on irq %d", irq);
 
-	hif_pm_runtime_set_monitor_wake_intr(hif_ctx, 0);
-	hif_pm_runtime_request_resume(hif_ctx, RTPM_ID_WAKE_INTR_HANDLER);
+	if (hif_pm_runtime_get_monitor_wake_intr(hif_ctx)) {
+		hif_pm_runtime_set_monitor_wake_intr(hif_ctx, 0);
+		hif_pm_runtime_request_resume(hif_ctx);
+	}
 
 	if (scn->initial_wakeup_cb)
 		scn->initial_wakeup_cb(scn->initial_wakeup_priv);

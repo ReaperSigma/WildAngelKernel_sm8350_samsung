@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -152,6 +153,12 @@ QDF_STATUS ucfg_scan_deinit(void)
 }
 
 #ifdef FEATURE_WLAN_SCAN_PNO
+bool
+ucfg_is_6ghz_pno_scan_optimization_supported(struct wlan_objmgr_psoc *psoc)
+{
+	return wlan_psoc_nif_fw_ext_cap_get(psoc,
+					WLAN_SOC_PNO_SCAN_CONFIG_PER_CHANNEL);
+}
 
 QDF_STATUS ucfg_scan_pno_start(struct wlan_objmgr_vdev *vdev,
 	struct pno_scan_req_params *req)
@@ -176,6 +183,25 @@ QDF_STATUS ucfg_scan_pno_start(struct wlan_objmgr_vdev *vdev,
 		scan_vdev_obj->pno_in_progress = true;
 
 	return status;
+}
+
+void ucfg_scan_add_flags_to_pno_chan_list(struct wlan_objmgr_vdev *vdev,
+					  struct pno_scan_req_params *req,
+					  uint8_t *num_chan,
+					  uint32_t short_ssid,
+					  int list_idx)
+{
+	struct chan_list *pno_chan_list =
+				    &req->networks_list[list_idx].pno_chan_list;
+
+	/* Add RNR flags to channels based on scan_mode_6g ini */
+	scm_add_channel_flags(vdev, pno_chan_list, num_chan,
+			      req->scan_policy_colocated_6ghz, true);
+	/* Filter RNR flags in pno channel list based on short ssid entry in
+	 * RNR db cache.
+	 */
+	scm_filter_rnr_flag_pno(vdev, short_ssid,
+				&req->networks_list[0].pno_chan_list);
 }
 
 QDF_STATUS ucfg_scan_pno_stop(struct wlan_objmgr_vdev *vdev)
@@ -237,7 +263,6 @@ wlan_pno_global_init(struct wlan_objmgr_psoc *psoc,
 
 	pno_def = &scan_obj->pno_cfg;
 	qdf_wake_lock_create(&pno_def->pno_wake_lock, "wlan_pno_wl");
-	qdf_runtime_lock_init(&pno_def->pno_runtime_pm_lock);
 	mawc_cfg = &pno_def->mawc_params;
 	pno_def->channel_prediction = cfg_get(psoc, CFG_PNO_CHANNEL_PREDICTION);
 	pno_def->top_k_num_of_channels =
@@ -278,11 +303,48 @@ wlan_pno_global_init(struct wlan_objmgr_psoc *psoc,
 static QDF_STATUS
 wlan_pno_global_deinit(struct wlan_scan_obj *scan_obj)
 {
-	qdf_runtime_lock_deinit(&scan_obj->pno_cfg.pno_runtime_pm_lock);
 	qdf_wake_lock_destroy(&scan_obj->pno_cfg.pno_wake_lock);
 
 	return QDF_STATUS_SUCCESS;
 }
+
+#ifdef WLAN_POLICY_MGR_ENABLE
+/*
+ * ucfg_scan_update_pno_dwell_time() - update active and passive dwell time
+ * depending on active concurrency modes
+ * @vdev: vdev object pointer
+ * @req: scan request
+ *
+ * Return: void
+ */
+static void ucfg_scan_update_pno_dwell_time(struct wlan_objmgr_vdev *vdev,
+	struct pno_scan_req_params *req, struct scan_default_params *scan_def)
+{
+	bool sap_or_p2p_present;
+	struct wlan_objmgr_psoc *psoc;
+
+	psoc = wlan_vdev_get_psoc(vdev);
+
+	if (!psoc)
+		return;
+
+	sap_or_p2p_present = policy_mgr_mode_specific_connection_count(
+				psoc, PM_SAP_MODE, NULL) ||
+				policy_mgr_mode_specific_connection_count(
+				psoc, PM_P2P_GO_MODE, NULL) ||
+				policy_mgr_mode_specific_connection_count(
+				psoc, PM_P2P_CLIENT_MODE, NULL);
+
+	if (sap_or_p2p_present) {
+		req->active_dwell_time = scan_def->conc_active_dwell;
+		req->passive_dwell_time = scan_def->conc_passive_dwell;
+	}
+
+}
+#else
+static inline void ucfg_scan_update_pno_dwell_time(struct wlan_objmgr_vdev *vdev,
+	struct pno_scan_req_params *req, struct scan_default_params *scan_def){}
+#endif
 
 QDF_STATUS
 ucfg_scan_get_pno_def_params(struct wlan_objmgr_vdev *vdev,
@@ -318,7 +380,7 @@ ucfg_scan_get_pno_def_params(struct wlan_objmgr_vdev *vdev,
 	 *  Update active and passive dwell time depending
 	 *  upon the present active concurrency mode
 	 */
-	wlan_scan_update_pno_dwell_time(vdev, req, scan_def);
+	ucfg_scan_update_pno_dwell_time(vdev, req, scan_def);
 	req->adaptive_dwell_mode = pno_def->adaptive_dwell_mode;
 	req->pno_channel_prediction = pno_def->channel_prediction;
 	req->top_k_num_of_channels = pno_def->top_k_num_of_channels;
@@ -404,13 +466,36 @@ ucfg_scm_scan_free_scan_request_mem(struct scan_start_request *req)
 QDF_STATUS ucfg_scan_psoc_set_enable(struct wlan_objmgr_psoc *psoc,
 				     enum scan_disable_reason reason)
 {
-	return wlan_scan_psoc_set_enable(psoc, reason);
+	struct wlan_scan_obj *scan_obj;
+
+	scan_obj = wlan_psoc_get_scan_obj(psoc);
+	if (!scan_obj) {
+		scm_err("Failed to get scan object");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	scan_obj->scan_disabled &= ~reason;
+	scm_debug("Psoc scan_disabled %x", scan_obj->scan_disabled);
+
+	return QDF_STATUS_SUCCESS;
 }
 
 QDF_STATUS ucfg_scan_psoc_set_disable(struct wlan_objmgr_psoc *psoc,
 				      enum scan_disable_reason reason)
 {
-	return wlan_scan_psoc_set_disable(psoc, reason);
+	struct wlan_scan_obj *scan_obj;
+
+	scan_obj = wlan_psoc_get_scan_obj(psoc);
+	if (!scan_obj) {
+		scm_err("Failed to get scan object");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	scan_obj->scan_disabled |= reason;
+
+	scm_debug("Psoc scan_disabled %x", scan_obj->scan_disabled);
+
+	return QDF_STATUS_SUCCESS;
 }
 
 
@@ -558,20 +643,20 @@ ucfg_scan_cancel_sync(struct scan_cancel_request *req)
 		cancel_vdev = true;
 
 	vdev = req->vdev;
-	status = wlan_scan_cancel(req);
+	status = ucfg_scan_cancel(req);
 	if (QDF_IS_STATUS_ERROR(status))
 		return status;
 
 	if (cancel_pdev) {
 		pdev = wlan_vdev_get_pdev(vdev);
-		while ((wlan_get_pdev_status(pdev) !=
+		while ((ucfg_scan_get_pdev_status(pdev) !=
 		     SCAN_NOT_IN_PROGRESS) && max_wait_iterations) {
 			scm_debug("wait for all pdev scan to get complete");
 			qdf_sleep(SCM_CANCEL_SCAN_WAIT_TIME);
 			max_wait_iterations--;
 		}
 	} else if (cancel_vdev) {
-		while ((wlan_get_vdev_status(vdev) !=
+		while ((ucfg_scan_get_vdev_status(vdev) !=
 		     SCAN_NOT_IN_PROGRESS) && max_wait_iterations) {
 			scm_debug("wait for all vdev scan to get complete");
 			qdf_sleep(SCM_CANCEL_SCAN_WAIT_TIME);
@@ -585,6 +670,86 @@ ucfg_scan_cancel_sync(struct scan_cancel_request *req)
 	}
 
 	return status;
+}
+
+wlan_scan_requester
+ucfg_scan_register_requester(struct wlan_objmgr_psoc *psoc,
+	uint8_t *name, scan_event_handler event_cb, void *arg)
+{
+	int i, j;
+	struct wlan_scan_obj *scan;
+	struct scan_requester_info *requesters;
+	wlan_scan_requester requester = {0};
+
+	if (!psoc) {
+		scm_err("null psoc");
+		return 0;
+	}
+	scan = wlan_psoc_get_scan_obj(psoc);
+	if (!scan)
+		return 0;
+
+	requesters = scan->requesters;
+	qdf_spin_lock_bh(&scan->lock);
+	for (i = 0; i < WLAN_MAX_REQUESTORS; ++i) {
+		if (requesters[i].requester == 0) {
+			requesters[i].requester =
+				WLAN_SCAN_REQUESTER_ID_PREFIX | i;
+			j = 0;
+			while (name[j] && (j < (WLAN_MAX_MODULE_NAME - 1))) {
+				requesters[i].module[j] = name[j];
+				++j;
+			}
+			requesters[i].module[j] = 0;
+			requesters[i].ev_handler.func = event_cb;
+			requesters[i].ev_handler.arg = arg;
+			requester = requesters[i].requester;
+			break;
+		}
+	}
+	qdf_spin_unlock_bh(&scan->lock);
+	scm_debug("module: %s, event_cb: 0x%pK, arg: 0x%pK, reqid: %d",
+		  name, event_cb, arg, requester);
+
+	return requester;
+}
+
+void
+ucfg_scan_unregister_requester(struct wlan_objmgr_psoc *psoc,
+	wlan_scan_requester requester)
+{
+	int idx;
+	struct wlan_scan_obj *scan;
+	struct scan_requester_info *requesters;
+
+	idx = requester & WLAN_SCAN_REQUESTER_ID_PREFIX;
+	if (idx != WLAN_SCAN_REQUESTER_ID_PREFIX) {
+		scm_err("prefix didn't match for requester id %d", requester);
+		return;
+	}
+
+	idx = requester & WLAN_SCAN_REQUESTER_ID_MASK;
+	if (idx >= WLAN_MAX_REQUESTORS) {
+		scm_err("requester id %d greater than max value", requester);
+		return;
+	}
+
+	if (!psoc) {
+		scm_err("null psoc");
+		return;
+	}
+	scan = wlan_psoc_get_scan_obj(psoc);
+	if (!scan)
+		return;
+	requesters = scan->requesters;
+	scm_debug("reqid: %d", requester);
+
+	qdf_spin_lock_bh(&scan->lock);
+	requesters[idx].requester = 0;
+	requesters[idx].module[0] = 0;
+	requesters[idx].ev_handler.func = NULL;
+	requesters[idx].ev_handler.arg = NULL;
+	qdf_spin_unlock_bh(&scan->lock);
 }
 
 uint8_t*
@@ -611,6 +776,35 @@ ucfg_get_scan_requester_name(struct wlan_objmgr_psoc *psoc,
 	}
 
 	return (uint8_t *)"unknown";
+}
+
+wlan_scan_id
+ucfg_scan_get_scan_id(struct wlan_objmgr_psoc *psoc)
+{
+	wlan_scan_id id;
+	struct wlan_scan_obj *scan;
+
+	if (!psoc) {
+		QDF_ASSERT(0);
+		scm_err("null psoc");
+		return 0;
+	}
+
+	scan = wlan_psoc_get_scan_obj(psoc);
+	if (!scan) {
+		scm_err("scan object null");
+		return 0;
+	}
+
+	id = qdf_atomic_inc_return(&scan->scan_ids);
+	id =  id & WLAN_SCAN_ID_MASK;
+	/* Mark this scan request as triggered by host
+	 * by setting WLAN_HOST_SCAN_REQ_ID_PREFIX flag.
+	 */
+	id =  id | WLAN_HOST_SCAN_REQ_ID_PREFIX;
+	scm_debug("scan_id: 0x%x", id);
+
+	return id;
 }
 
 static QDF_STATUS
@@ -694,7 +888,6 @@ wlan_scan_global_init(struct wlan_objmgr_psoc *psoc,
 	scan_obj->drop_bcn_on_invalid_freq =
 			 cfg_get(psoc, CFG_DROP_BCN_ON_INVALID_FREQ);
 	scan_obj->disable_timeout = false;
-	scan_obj->obss_scan_offload = false;
 	scan_obj->scan_def.active_dwell =
 			 cfg_get(psoc, CFG_ACTIVE_MAX_CHANNEL_TIME);
 	/* the ini is disallow DFS channel scan if ini is 1, so negate that */
@@ -790,6 +983,10 @@ wlan_scan_global_init(struct wlan_objmgr_psoc *psoc,
 		cfg_get(psoc, CFG_6GHZ_SCAN_MODE_DUTY_CYCLE);
 	scan_obj->allow_bss_with_incomplete_ie =
 		cfg_get(psoc, CFG_SCAN_ALLOW_BSS_WITH_CORRUPTED_IE);
+
+	scan_obj->scan_def.skip_6g_and_indoor_freq =
+		cfg_get(psoc, CFG_SKIP_6GHZ_AND_INDOOR_FREQ_SCAN);
+
 	/* init scan id seed */
 	qdf_atomic_init(&scan_obj->scan_ids);
 
@@ -884,6 +1081,53 @@ ucfg_scan_unregister_event_handler(struct wlan_objmgr_pdev *pdev,
 
 	scm_debug("event handler %s, remaining handlers: %d",
 		  (found ? "removed" : "not found"), handler_cnt);
+}
+
+QDF_STATUS
+ucfg_scan_init_default_params(struct wlan_objmgr_vdev *vdev,
+	struct scan_start_request *req)
+{
+	struct scan_default_params *def;
+
+	if (!vdev | !req) {
+		scm_err("vdev: 0x%pK, req: 0x%pK", vdev, req);
+		return QDF_STATUS_E_INVAL;
+	}
+	def = wlan_vdev_get_def_scan_params(vdev);
+	if (!def) {
+		scm_err("wlan_vdev_get_def_scan_params returned NULL");
+		return QDF_STATUS_E_NULL_VALUE;
+	}
+
+	/* Zero out everything and explicitly set fields as required */
+	qdf_mem_zero(req, sizeof(*req));
+
+	req->vdev = vdev;
+	req->scan_req.vdev_id = wlan_vdev_get_id(vdev);
+	req->scan_req.scan_type = SCAN_TYPE_DEFAULT;
+	req->scan_req.scan_priority = def->scan_priority;
+	req->scan_req.dwell_time_active = def->active_dwell;
+	req->scan_req.dwell_time_active_2g = def->active_dwell_2g;
+	req->scan_req.min_dwell_time_6g = def->min_dwell_time_6g;
+	req->scan_req.dwell_time_active_6g = def->active_dwell_6g;
+	req->scan_req.dwell_time_passive_6g = def->passive_dwell_6g;
+	req->scan_req.dwell_time_passive = def->passive_dwell;
+	req->scan_req.min_rest_time = def->min_rest_time;
+	req->scan_req.max_rest_time = def->max_rest_time;
+	req->scan_req.repeat_probe_time = def->repeat_probe_time;
+	req->scan_req.probe_spacing_time = def->probe_spacing_time;
+	req->scan_req.idle_time = def->idle_time;
+	req->scan_req.max_scan_time = def->max_scan_time;
+	req->scan_req.probe_delay = def->probe_delay;
+	req->scan_req.burst_duration = def->burst_duration;
+	req->scan_req.n_probes = def->num_probes;
+	req->scan_req.adaptive_dwell_time_mode =
+		def->adaptive_dwell_time_mode;
+	req->scan_req.scan_flags = def->scan_flags;
+	req->scan_req.scan_events = def->scan_events;
+	req->scan_req.scan_random.randomize = def->enable_mac_spoofing;
+
+	return QDF_STATUS_SUCCESS;
 }
 
 QDF_STATUS
@@ -985,12 +1229,12 @@ is_chan_enabled_for_scan(struct regulatory_channel *reg_chan,
 	if (reg_chan->nol_chan)
 		return false;
 	/* 2 GHz channel */
-	if ((util_scan_scm_freq_to_band(reg_chan->center_freq) ==
+	if ((util_scan_scm_chan_to_band(reg_chan->chan_num) ==
 			WLAN_BAND_2_4_GHZ) &&
 			((reg_chan->center_freq < low_2g) ||
 			(reg_chan->center_freq > high_2g)))
 		return false;
-	else if ((util_scan_scm_freq_to_band(reg_chan->center_freq) ==
+	else if ((util_scan_scm_chan_to_band(reg_chan->chan_num) ==
 				WLAN_BAND_5_GHZ) &&
 		 ((reg_chan->center_freq < low_5g) ||
 		  (reg_chan->center_freq > high_5g)))
@@ -1040,7 +1284,7 @@ ucfg_scan_init_chanlist_params(struct scan_start_request *req,
 			status = QDF_STATUS_E_NOMEM;
 			goto end;
 		}
-		status = wlan_reg_get_current_chan_list(pdev, reg_chan_list);
+		status = ucfg_reg_get_current_chan_list(pdev, reg_chan_list);
 		if (QDF_IS_STATUS_ERROR(status))
 			goto end;
 
@@ -1051,19 +1295,8 @@ ucfg_scan_init_chanlist_params(struct scan_start_request *req,
 
 		for (idx = 0, num_chans = 0;
 			(idx < NUM_CHANNELS && num_chans < max_chans); idx++)
-			if ((is_chan_enabled_for_scan(&reg_chan_list[idx],
-						      low_2g, high_2g,
-						      low_5g, high_5g)) &&
-			    ((req->scan_req.scan_f_2ghz &&
-			     WLAN_REG_IS_24GHZ_CH_FREQ(
-					reg_chan_list[idx].center_freq)) ||
-			     (req->scan_req.scan_f_5ghz &&
-			      (WLAN_REG_IS_5GHZ_CH_FREQ(
-					reg_chan_list[idx].center_freq) ||
-			       WLAN_REG_IS_49GHZ_FREQ(
-					reg_chan_list[idx].center_freq) ||
-			       WLAN_REG_IS_6GHZ_CHAN_FREQ(
-					reg_chan_list[idx].center_freq)))))
+			if (is_chan_enabled_for_scan(&reg_chan_list[idx],
+					low_2g, high_2g, low_5g, high_5g))
 				scan_freqs[num_chans++] =
 				reg_chan_list[idx].center_freq;
 
@@ -1124,21 +1357,66 @@ end:
 	return QDF_STATUS_SUCCESS;
 }
 
+static inline enum scm_scan_status
+get_scan_status_from_serialization_status(
+	enum wlan_serialization_cmd_status status)
+{
+	enum scm_scan_status scan_status;
+
+	switch (status) {
+	case WLAN_SER_CMD_IN_PENDING_LIST:
+		scan_status = SCAN_IS_PENDING;
+		break;
+	case WLAN_SER_CMD_IN_ACTIVE_LIST:
+		scan_status = SCAN_IS_ACTIVE;
+		break;
+	case WLAN_SER_CMDS_IN_ALL_LISTS:
+		scan_status = SCAN_IS_ACTIVE_AND_PENDING;
+		break;
+	case WLAN_SER_CMD_NOT_FOUND:
+		scan_status = SCAN_NOT_IN_PROGRESS;
+		break;
+	default:
+		scm_warn("invalid serialization status %d", status);
+		QDF_ASSERT(0);
+		scan_status = SCAN_NOT_IN_PROGRESS;
+		break;
+	}
+
+	return scan_status;
+}
+
 enum scm_scan_status
 ucfg_scan_get_vdev_status(struct wlan_objmgr_vdev *vdev)
 {
-	return wlan_get_vdev_status(vdev);
+	enum wlan_serialization_cmd_status status;
+
+	if (!vdev) {
+		scm_err("null vdev");
+		return SCAN_NOT_IN_PROGRESS;
+	}
+	status = wlan_serialization_vdev_scan_status(vdev);
+
+	return get_scan_status_from_serialization_status(status);
 }
 
 enum scm_scan_status
 ucfg_scan_get_pdev_status(struct wlan_objmgr_pdev *pdev)
 {
-	return wlan_get_pdev_status(pdev);
+	enum wlan_serialization_cmd_status status;
+
+	if (!pdev) {
+		scm_err("null pdev");
+		return SCAN_NOT_IN_PROGRESS;
+	}
+	status = wlan_serialization_pdev_scan_status(pdev);
+
+	return get_scan_status_from_serialization_status(status);
 }
 
 static void
-scan_register_unregister_bcn_cb(struct wlan_objmgr_psoc *psoc,
-				bool enable)
+ucfg_scan_register_unregister_bcn_cb(struct wlan_objmgr_psoc *psoc,
+	bool enable)
 {
 	QDF_STATUS status;
 	struct mgmt_txrx_mgmt_frame_cb_info cb_info[2];
@@ -1185,7 +1463,7 @@ QDF_STATUS ucfg_scan_update_user_config(struct wlan_objmgr_psoc *psoc,
 
 #ifdef WLAN_POWER_MANAGEMENT_OFFLOAD
 static QDF_STATUS
-scan_cancel_pdev_scan(struct wlan_objmgr_pdev *pdev)
+ucfg_scan_cancel_pdev_scan(struct wlan_objmgr_pdev *pdev)
 {
 	struct scan_cancel_request *req;
 	QDF_STATUS status;
@@ -1222,18 +1500,16 @@ ucfg_scan_suspend_handler(struct wlan_objmgr_psoc *psoc, void *arg)
 	struct wlan_objmgr_pdev *pdev = NULL;
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	int i;
-	wlan_scan_psoc_set_disable(psoc, REASON_SUSPEND);
 
+	ucfg_scan_psoc_set_disable(psoc, REASON_SUSPEND);
 	/* Check all pdev */
 	for (i = 0; i < WLAN_UMAC_MAX_PDEVS; i++) {
 		pdev = wlan_objmgr_get_pdev_by_id(psoc, i, WLAN_SCAN_ID);
 		if (!pdev)
 			continue;
-		if (wlan_get_pdev_status(pdev) !=
-		    SCAN_NOT_IN_PROGRESS) {
-			status = scan_cancel_pdev_scan(pdev);
-			scm_disable_obss_pdev_scan(psoc, pdev);
-		}
+		if (ucfg_scan_get_pdev_status(pdev) !=
+		    SCAN_NOT_IN_PROGRESS)
+			status = ucfg_scan_cancel_pdev_scan(pdev);
 		wlan_objmgr_pdev_release_ref(pdev, WLAN_SCAN_ID);
 		if (QDF_IS_STATUS_ERROR(status)) {
 			scm_err("failed to cancel scan for pdev_id %d", i);
@@ -1247,12 +1523,12 @@ ucfg_scan_suspend_handler(struct wlan_objmgr_psoc *psoc, void *arg)
 static QDF_STATUS
 ucfg_scan_resume_handler(struct wlan_objmgr_psoc *psoc, void *arg)
 {
-	wlan_scan_psoc_set_enable(psoc, REASON_SUSPEND);
+	ucfg_scan_psoc_set_enable(psoc, REASON_SUSPEND);
 	return QDF_STATUS_SUCCESS;
 }
 
 static inline void
-scan_register_pmo_handler(void)
+ucfg_scan_register_pmo_handler(void)
 {
 	pmo_register_suspend_handler(WLAN_UMAC_COMP_SCAN,
 		ucfg_scan_suspend_handler, NULL);
@@ -1261,7 +1537,7 @@ scan_register_pmo_handler(void)
 }
 
 static inline void
-scan_unregister_pmo_handler(void)
+ucfg_scan_unregister_pmo_handler(void)
 {
 	pmo_unregister_suspend_handler(WLAN_UMAC_COMP_SCAN,
 		ucfg_scan_suspend_handler);
@@ -1271,12 +1547,12 @@ scan_unregister_pmo_handler(void)
 
 #else
 static inline void
-scan_register_pmo_handler(void)
+ucfg_scan_register_pmo_handler(void)
 {
 }
 
 static inline void
-scan_unregister_pmo_handler(void)
+ucfg_scan_unregister_pmo_handler(void)
 {
 }
 #endif
@@ -1299,7 +1575,7 @@ ucfg_scan_psoc_open(struct wlan_objmgr_psoc *psoc)
 	/* Initialize the scan Globals */
 	wlan_scan_global_init(psoc, scan_obj);
 	qdf_spinlock_create(&scan_obj->lock);
-	scan_register_pmo_handler();
+	ucfg_scan_register_pmo_handler();
 	scm_db_init(psoc);
 	scm_channel_list_db_init(psoc);
 
@@ -1322,7 +1598,7 @@ ucfg_scan_psoc_close(struct wlan_objmgr_psoc *psoc)
 		scm_err("Failed to get scan object");
 		return QDF_STATUS_E_FAILURE;
 	}
-	scan_unregister_pmo_handler();
+	ucfg_scan_unregister_pmo_handler();
 	qdf_spinlock_destroy(&scan_obj->lock);
 	wlan_scan_global_deinit(psoc);
 	scm_channel_list_db_deinit(psoc);
@@ -1381,7 +1657,7 @@ ucfg_scan_psoc_enable(struct wlan_objmgr_psoc *psoc)
 	QDF_ASSERT(status == QDF_STATUS_SUCCESS);
 	if (!wlan_reg_is_11d_offloaded(psoc))
 		scm_11d_cc_db_init(psoc);
-	scan_register_unregister_bcn_cb(psoc, true);
+	ucfg_scan_register_unregister_bcn_cb(psoc, true);
 	status = wlan_serialization_register_apply_rules_cb(psoc,
 				WLAN_SER_CMD_SCAN,
 				scm_serialization_scan_rules_cb);
@@ -1402,7 +1678,7 @@ ucfg_scan_psoc_disable(struct wlan_objmgr_psoc *psoc)
 	/* Unsubscribe for scan events from lmac layesr */
 	status = tgt_scan_unregister_ev_handler(psoc);
 	QDF_ASSERT(status == QDF_STATUS_SUCCESS);
-	scan_register_unregister_bcn_cb(psoc, false);
+	ucfg_scan_register_unregister_bcn_cb(psoc, false);
 	if (!wlan_reg_is_11d_offloaded(psoc))
 		scm_11d_cc_db_deinit(psoc);
 
@@ -1604,19 +1880,6 @@ ucfg_scan_get_global_config(struct wlan_objmgr_psoc *psoc,
 	}
 
 	return status;
-}
-
-void ucfg_scan_set_obss_scan_offload(struct wlan_objmgr_psoc *psoc, bool value)
-{
-	struct wlan_scan_obj *scan_obj;
-
-	scan_obj = wlan_psoc_get_scan_obj(psoc);
-	if (!scan_obj) {
-		scm_err("NULL scan obj");
-		return;
-	}
-
-	scan_obj->obss_scan_offload = value;
 }
 
 #ifdef FEATURE_WLAN_SCAN_PNO

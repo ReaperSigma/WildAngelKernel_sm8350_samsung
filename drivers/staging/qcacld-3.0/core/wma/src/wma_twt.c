@@ -33,9 +33,10 @@ void wma_send_twt_enable_cmd(uint32_t pdev_id,
 	struct wmi_twt_enable_param twt_enable_params = {0};
 	int32_t ret;
 
-	if (!wma)
+	if (!wma) {
+		wma_err("Invalid WMA context, enable TWT failed");
 		return;
-
+	}
 	twt_enable_params.pdev_id = pdev_id;
 	twt_enable_params.sta_cong_timer_ms = conf->congestion_timeout;
 	twt_enable_params.b_twt_enable = conf->bcast_en;
@@ -66,16 +67,19 @@ int wma_twt_en_complete_event_handler(void *handle,
 	struct mac_context *mac = cds_get_context(QDF_MODULE_ID_PE);
 	int status = -EINVAL;
 
-	if (wma_validate_handle(wma_handle))
+	if (!wma_handle) {
+		wma_err("Invalid wma handle for TWT complete");
 		return status;
-
-	wmi_handle = wma_handle->wmi_handle;
-	if (wmi_validate_handle(wmi_handle))
+	}
+	wmi_handle = (wmi_unified_t)wma_handle->wmi_handle;
+	if (!wmi_handle) {
+		wma_err("Invalid wmi handle for TWT complete");
 		return status;
-
-	if (!mac)
+	}
+	if (!mac) {
+		wma_err("Invalid MAC context");
 		return status;
-
+	}
 	if (wmi_handle->ops->extract_twt_enable_comp_event)
 		status = wmi_handle->ops->extract_twt_enable_comp_event(
 								wmi_handle,
@@ -96,9 +100,10 @@ void wma_send_twt_disable_cmd(uint32_t pdev_id,
 	struct wmi_twt_disable_param twt_disable_params = {0};
 	int32_t ret;
 
-	if (!wma)
+	if (!wma) {
+		wma_err("Invalid WMA context, Disable TWT failed");
 		return;
-
+	}
 	twt_disable_params.pdev_id = pdev_id;
 	twt_disable_params.ext_conf_present = conf->ext_conf_present;
 	twt_disable_params.twt_role = conf->role;
@@ -125,8 +130,10 @@ int wma_twt_disable_comp_event_handler(void *handle, uint8_t *event,
 	struct mac_context *mac;
 
 	mac = (struct mac_context *)cds_get_context(QDF_MODULE_ID_PE);
-	if (!mac)
+	if (!mac) {
+		wma_err("Invalid MAC context");
 		return -EINVAL;
+	}
 
 	wma_debug("TWT: Rcvd TWT disable comp event");
 
@@ -149,12 +156,16 @@ QDF_STATUS wma_twt_process_add_dialog(t_wma_handle *wma_handle,
 {
 	wmi_unified_t wmi_handle;
 
-	if (wma_validate_handle(wma_handle))
+	if (!wma_handle) {
+		wma_err("Invalid WMA context, twt add dialog failed");
 		return QDF_STATUS_E_INVAL;
+	}
 
-	wmi_handle = wma_handle->wmi_handle;
-	if (wmi_validate_handle(wmi_handle))
+	wmi_handle = (wmi_unified_t)wma_handle->wmi_handle;
+	if (!wmi_handle) {
+		wma_err("Invalid wmi handle, twt add dialog failed");
 		return QDF_STATUS_E_INVAL;
+	}
 
 	return wmi_unified_twt_add_dialog_cmd(wmi_handle, params);
 }
@@ -179,15 +190,21 @@ int wma_twt_add_dialog_complete_event_handler(void *handle,
 	struct mac_context *mac = cds_get_context(QDF_MODULE_ID_PE);
 	QDF_STATUS status;
 
-	if (wma_validate_handle(wma_handle))
+	if (!wma_handle) {
+		wma_err("Invalid wma handle for TWT add dialog complete");
 		return -EINVAL;
+	}
 
-	if (!mac)
+	if (!mac) {
+		wma_err("Invalid MAC context");
 		return -EINVAL;
+	}
 
-	wmi_handle = wma_handle->wmi_handle;
-	if (wmi_validate_handle(wmi_handle))
+	wmi_handle = (wmi_unified_t)wma_handle->wmi_handle;
+	if (!wmi_handle) {
+		wma_err("Invalid wma handle for TWT add dialog complete");
 		return -EINVAL;
+	}
 
 	add_dialog_event = qdf_mem_malloc(sizeof(*add_dialog_event));
 	if (!add_dialog_event)
@@ -232,12 +249,16 @@ wma_twt_process_del_dialog(t_wma_handle *wma_handle,
 {
 	wmi_unified_t wmi_handle;
 
-	if (wma_validate_handle(wma_handle))
+	if (!wma_handle) {
+		wma_err("Invalid WMA context, twt del dialog failed");
 		return QDF_STATUS_E_INVAL;
+	}
 
-	wmi_handle = wma_handle->wmi_handle;
-	if (wmi_validate_handle(wmi_handle))
+	wmi_handle = (wmi_unified_t)wma_handle->wmi_handle;
+	if (!wmi_handle) {
+		wma_err("Invalid wmi handle, twt del dialog failed");
 		return QDF_STATUS_E_INVAL;
+	}
 
 	return wmi_unified_twt_del_dialog_cmd(wmi_handle, params);
 }
@@ -262,15 +283,19 @@ int wma_twt_del_dialog_complete_event_handler(void *handle,
 	struct mac_context *mac = cds_get_context(QDF_MODULE_ID_PE);
 	int status = -EINVAL;
 
-	if (wma_validate_handle(wma_handle))
+	if (!wma_handle) {
+		wma_err("Invalid wma handle for TWT del dialog complete");
 		return status;
-
-	wmi_handle = wma_handle->wmi_handle;
-	if (wmi_validate_handle(wmi_handle))
+	}
+	wmi_handle = (wmi_unified_t)wma_handle->wmi_handle;
+	if (!wmi_handle) {
+		wma_err("Invalid wma handle for TWT del dialog complete");
 		return status;
-
-	if (!mac)
+	}
+	if (!mac) {
+		wma_err("Invalid MAC context");
 		return status;
+	}
 
 	param = qdf_mem_malloc(sizeof(*param));
 	if (!param)
@@ -298,12 +323,16 @@ wma_twt_process_pause_dialog(t_wma_handle *wma_handle,
 {
 	wmi_unified_t wmi_handle;
 
-	if (wma_validate_handle(wma_handle))
+	if (!wma_handle) {
+		wma_err("Invalid wma handle, twt pause dialog failed");
 		return QDF_STATUS_E_INVAL;
+	}
 
-	wmi_handle = wma_handle->wmi_handle;
-	if (wmi_validate_handle(wmi_handle))
+	wmi_handle = (wmi_unified_t)wma_handle->wmi_handle;
+	if (!wmi_handle) {
+		wma_err("Invalid wmi handle, twt pause dialog failed");
 		return QDF_STATUS_E_INVAL;
+	}
 
 	return wmi_unified_twt_pause_dialog_cmd(wmi_handle, params);
 }
@@ -346,15 +375,21 @@ int wma_twt_pause_dialog_complete_event_handler(void *handle, uint8_t *event,
 	struct mac_context *mac = cds_get_context(QDF_MODULE_ID_PE);
 	int status = -EINVAL;
 
-	if (!mac)
+	if (!mac) {
+		wma_err("Invalid MAC context");
 		return status;
+	}
 
-	if (wma_validate_handle(wma_handle))
+	if (!wma_handle) {
+		wma_err("Invalid wma handle for TWT pause dialog complete");
 		return status;
+	}
 
-	wmi_handle = wma_handle->wmi_handle;
-	if (wmi_validate_handle(wmi_handle))
+	wmi_handle = (wmi_unified_t)wma_handle->wmi_handle;
+	if (!wmi_handle) {
+		wma_err("Invalid wmi handle for TWT pause dialog complete");
 		return status;
+	}
 
 	param = qdf_mem_malloc(sizeof(*param));
 	if (!param)
@@ -437,12 +472,16 @@ wma_twt_process_resume_dialog(t_wma_handle *wma_handle,
 {
 	wmi_unified_t wmi_handle;
 
-	if (wma_validate_handle(wma_handle))
+	if (!wma_handle) {
+		wma_err("Invalid wma handle, twt resume dialog failed");
 		return QDF_STATUS_E_INVAL;
+	}
 
-	wmi_handle = wma_handle->wmi_handle;
-	if (wmi_validate_handle(wmi_handle))
+	wmi_handle = (wmi_unified_t)wma_handle->wmi_handle;
+	if (!wmi_handle) {
+		wma_err("Invalid wmi handle, twt resume dialog failed");
 		return QDF_STATUS_E_INVAL;
+	}
 
 	return wmi_unified_twt_resume_dialog_cmd(wmi_handle, params);
 }
@@ -519,15 +558,21 @@ int wma_twt_resume_dialog_complete_event_handler(void *handle, uint8_t *event,
 	struct mac_context *mac = cds_get_context(QDF_MODULE_ID_PE);
 	int status = -EINVAL;
 
-	if (!mac)
+	if (!mac) {
+		wma_err("Invalid MAC context");
 		return status;
+	}
 
-	if (wma_validate_handle(wma_handle))
+	if (!wma_handle) {
+		wma_err("Invalid wma handle for TWT resume dialog complete");
 		return status;
+	}
 
-	wmi_handle = wma_handle->wmi_handle;
-	if (wmi_validate_handle(wmi_handle))
+	wmi_handle = (wmi_unified_t)wma_handle->wmi_handle;
+	if (!wmi_handle) {
+		wma_err("Invalid wmi handle for TWT resume dialog complete");
 		return status;
+	}
 
 	param = qdf_mem_malloc(sizeof(*param));
 	if (!param)
@@ -567,9 +612,11 @@ int wma_twt_ack_complete_event_handler(void *handle, uint8_t *event,
 	if (wma_validate_handle(wma_handle))
 		return -EINVAL;
 
-	wmi_handle = wma_handle->wmi_handle;
-	if (wmi_validate_handle(wmi_handle))
+	wmi_handle = (wmi_unified_t)wma_handle->wmi_handle;
+	if (!wmi_handle) {
+		wma_err("Invalid wmi handle for TWT ack complete");
 		return -EINVAL;
+	}
 
 	param = qdf_mem_malloc(sizeof(*param));
 	if (!param)

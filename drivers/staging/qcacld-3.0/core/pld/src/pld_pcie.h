@@ -20,11 +20,7 @@
 #define __PLD_PCIE_H__
 
 #ifdef CONFIG_PLD_PCIE_CNSS
-#ifdef CONFIG_CNSS_OUT_OF_TREE
-#include "cnss2.h"
-#else
 #include <net/cnss2.h>
-#endif
 #endif
 #include <linux/pci.h>
 #include "pld_internal.h"
@@ -510,8 +506,7 @@ static inline void pld_pcie_link_down(struct device *dev)
 	cnss_pci_link_down(dev);
 }
 
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)) && \
-		(LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0))
 static inline int pld_pcie_get_reg_dump(struct device *dev, uint8_t *buf,
 					uint32_t len)
 {

@@ -51,9 +51,6 @@
 #define get_u16_lsb(value) (uint16_t)(value)
 #define get_u16_msb(value) (uint16_t)(((uint32_t)value) >> 16)
 #define get_gain_db(value) ((value) & 0xFF)
-#define get_gain_table_idx(value) (((value) >> 8) & 0x3)
-
-#define INVALID_PHASE_DELTA 0xFFFF
 
 /**
  * target_if_cfr_init_pdev() - Inits cfr pdev and registers necessary handlers.
@@ -62,9 +59,8 @@
  *
  * Return: Registration status for necessary handlers
  */
-QDF_STATUS
-target_if_cfr_init_pdev(struct wlan_objmgr_psoc *psoc,
-			struct wlan_objmgr_pdev *pdev);
+int target_if_cfr_init_pdev(struct wlan_objmgr_psoc *psoc,
+			    struct wlan_objmgr_pdev *pdev);
 
 /**
  * target_if_cfr_deinit_pdev() - De-inits corresponding pdev and handlers.
@@ -73,9 +69,8 @@ target_if_cfr_init_pdev(struct wlan_objmgr_psoc *psoc,
  *
  * Return: De-registration status for necessary handlers
  */
-QDF_STATUS
-target_if_cfr_deinit_pdev(struct wlan_objmgr_psoc *psoc,
-			  struct wlan_objmgr_pdev *pdev);
+int target_if_cfr_deinit_pdev(struct wlan_objmgr_psoc *psoc,
+			      struct wlan_objmgr_pdev *pdev);
 
 /**
  * target_if_cfr_tx_ops_register() - Registers tx ops for cfr module
@@ -96,12 +91,13 @@ int target_if_cfr_enable_cfr_timer(struct wlan_objmgr_pdev *pdev,
 /**
  * target_if_cfr_pdev_set_param() - Function to set params for cfr config
  * @pdev: pointer to pdev object
+ * @param_id: param id which has to be set
  * @param_value: value of param being set
  *
  * Return: success/failure of setting param
  */
-int target_if_cfr_periodic_peer_cfr_enable(struct wlan_objmgr_pdev *pdev,
-					   uint32_t param_value);
+int target_if_cfr_pdev_set_param(struct wlan_objmgr_pdev *pdev,
+				 uint32_t param_id, uint32_t param_value);
 /**
  * target_if_cfr_start_capture() - Function to start cfr capture for a peer
  * @pdev: pointer to pdev object
@@ -161,17 +157,6 @@ target_if_cfr_set_capture_count_support(struct wlan_objmgr_psoc *psoc,
 QDF_STATUS
 target_if_cfr_set_mo_marking_support(struct wlan_objmgr_psoc *psoc,
 				     uint8_t value);
-
-/**
- * target_if_cfr_set_aoa_for_rcc_support() - Function to set AoA for RCC
- * @psoc: pointer to psoc object
- * @value: value to be set
- *
- * Return: success/failure
- */
-QDF_STATUS
-target_if_cfr_set_aoa_for_rcc_support(struct wlan_objmgr_psoc *psoc,
-				      uint8_t value);
 
 /**
  * target_if_cfr_info_send() - Function to send cfr info to upper layers

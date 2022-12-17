@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -153,8 +154,10 @@ const struct nla_policy vendor_attr_policy[
 						.type = NLA_U32,
 						.len = sizeof(uint32_t)
 	},
-	[QCA_WLAN_VENDOR_ATTR_NDP_IPV6_ADDR] =
-				VENDOR_NLA_POLICY_IPV6_ADDR,
+	[QCA_WLAN_VENDOR_ATTR_NDP_IPV6_ADDR] = {
+						.type = NLA_EXACT_LEN,
+						.len = QDF_IPV6_ADDR_SIZE
+	},
 	[QCA_WLAN_VENDOR_ATTR_NDP_TRANSPORT_PORT] = {
 						.type = NLA_U16,
 						.len = sizeof(uint16_t)
@@ -1055,6 +1058,17 @@ int os_if_nan_process_ndp_cmd(struct wlan_objmgr_psoc *psoc,
 
 	switch (ndp_cmd_type) {
 	case QCA_WLAN_VENDOR_ATTR_NDP_INTERFACE_CREATE:
+		/**
+		 * NDI creation is not allowed if NAN discovery is not running.
+		 * Allowing NDI creation when NAN discovery is not enabled may
+		 * lead to issues if NDI has to be started in a
+		 * 2GHz channel and if the target is not operating in DBS mode.
+		 */
+		if ((ucfg_is_nan_conc_control_supported(psoc)) &&
+		    (!ucfg_is_nan_disc_active(psoc))) {
+			osif_err("NDI creation is not allowed when NAN discovery is not running");
+			return -EOPNOTSUPP;
+		}
 		return os_if_nan_process_ndi_create(psoc, tb);
 	case QCA_WLAN_VENDOR_ATTR_NDP_INTERFACE_DELETE:
 		return os_if_nan_process_ndi_delete(psoc, tb);

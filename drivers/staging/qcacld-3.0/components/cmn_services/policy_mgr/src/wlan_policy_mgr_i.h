@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -195,9 +195,9 @@ extern struct policy_mgr_conc_connection_info
 extern const enum policy_mgr_pcl_type
 	first_connection_pcl_table[PM_MAX_NUM_OF_MODE]
 			[PM_MAX_CONC_PRIORITY_MODE];
-extern  pm_dbs_pcl_second_connection_table_type
-	*second_connection_pcl_dbs_table;
-
+extern enum policy_mgr_pcl_type
+	(*second_connection_pcl_dbs_table)[PM_MAX_ONE_CONNECTION_MODE]
+			[PM_MAX_NUM_OF_MODE][PM_MAX_CONC_PRIORITY_MODE];
 extern enum policy_mgr_pcl_type const
 	(*second_connection_pcl_non_dbs_table)[PM_MAX_ONE_CONNECTION_MODE]
 			[PM_MAX_NUM_OF_MODE][PM_MAX_CONC_PRIORITY_MODE];
@@ -236,6 +236,7 @@ extern enum policy_mgr_conc_next_action
  * @conc_rule1: concurrency rule1
  * @conc_rule2: concurrency rule2
  * @allow_mcc_go_diff_bi: Allow GO and STA diff beacon interval in MCC
+ * @enable_overlap_chnl: Enable overlap channels for SAP's channel selection
  * @dual_mac_feature: To enable/disable dual mac features
  * @is_force_1x1_enable: Is 1x1 forced for connection
  * @sta_sap_scc_on_dfs_chnl: STA-SAP SCC on DFS channel
@@ -250,6 +251,7 @@ extern enum policy_mgr_conc_next_action
  * @enable_sta_cxn_5g_band: Enable/Disable STA connection in 5G band
  * @go_force_scc: Enable/Disable P2P GO force SCC
  * @pcl_band_priority: PCL channel order between 5G and 6G.
+ * @prefer_5g_scc_to_dbs: Prefer to work in 5G SCC mode.
  */
 struct policy_mgr_cfg {
 	uint8_t mcc_to_scc_switch;
@@ -259,6 +261,7 @@ struct policy_mgr_cfg {
 	uint8_t conc_rule2;
 	bool enable_mcc_adaptive_sch;
 	uint8_t allow_mcc_go_diff_bi;
+	uint8_t enable_overlap_chnl;
 	uint8_t dual_mac_feature;
 	enum force_1x1_type is_force_1x1_enable;
 	uint8_t sta_sap_scc_on_dfs_chnl;
@@ -272,6 +275,7 @@ struct policy_mgr_cfg {
 	uint32_t chnl_select_plcy;
 	uint8_t go_force_scc;
 	enum policy_mgr_pcl_band_priority pcl_band_priority;
+	uint32_t prefer_5g_scc_to_dbs;
 };
 
 /**
@@ -538,9 +542,7 @@ void policy_mgr_restore_deleted_conn_info(struct wlan_objmgr_psoc *psoc,
 void policy_mgr_update_hw_mode_conn_info(struct wlan_objmgr_psoc *psoc,
 				uint32_t num_vdev_mac_entries,
 				struct policy_mgr_vdev_mac_map *vdev_mac_map,
-				struct policy_mgr_hw_mode_params hw_mode,
-				uint32_t num_mac_freq,
-				struct policy_mgr_pdev_mac_freq_map *freq_info);
+				struct policy_mgr_hw_mode_params hw_mode);
 void policy_mgr_pdev_set_hw_mode_cb(uint32_t status,
 				uint32_t cfgd_hw_mode_index,
 				uint32_t num_vdev_mac_entries,
@@ -576,24 +578,11 @@ enum policy_mgr_con_mode policy_mgr_get_mode(uint8_t type,
  */
 enum hw_mode_bandwidth policy_mgr_get_bw(enum phy_ch_width chan_width);
 
-/**
- * policy_mgr_get_channel_list() - Get channel list based on PCL and mode
- * @psoc: psoc object
- * @pcl: pcl type
- * @mode: interface mode
- * @pcl_channels: pcl channel list buffer
- * @pcl_weights: pcl weight buffer
- * @pcl_sz: pcl channel list buffer size
- * @len: pcl channel number returned from API
- *
- * Return: QDF_STATUS
- */
 QDF_STATUS policy_mgr_get_channel_list(struct wlan_objmgr_psoc *psoc,
-				       enum policy_mgr_pcl_type pcl,
-				       enum policy_mgr_con_mode mode,
-				       uint32_t *pcl_channels,
-				       uint8_t *pcl_weights,
-				       uint32_t pcl_sz, uint32_t *len);
+			enum policy_mgr_pcl_type pcl,
+			uint32_t *pcl_channels, uint32_t *len,
+			enum policy_mgr_con_mode mode,
+			uint8_t *pcl_weights, uint32_t weight_len);
 
 /**
  * policy_mgr_allow_new_home_channel() - Check for allowed number of
@@ -632,27 +621,10 @@ bool policy_mgr_is_5g_channel_allowed(struct wlan_objmgr_psoc *psoc,
 				uint32_t ch_freq, uint32_t *list,
 				enum policy_mgr_con_mode mode);
 
-/**
- * policy_mgr_complete_action() - initiates actions needed on
- * current connections once channel has been decided for the new
- * connection
- * @new_nss: the new nss value
- * @next_action: next action to happen at policy mgr after
- *		beacon update
- * @reason: Reason for connection update
- * @session_id: Session id
- * @request_id: connection manager req id
- *
- * This function initiates actions
- * needed on current connections once channel has been decided
- * for the new connection. Notifies UMAC & FW as well
- *
- * Return: QDF_STATUS enum
- */
 QDF_STATUS policy_mgr_complete_action(struct wlan_objmgr_psoc *psoc,
 				uint8_t  new_nss, uint8_t next_action,
 				enum policy_mgr_conn_update_reason reason,
-				uint32_t session_id, uint32_t request_id);
+				uint32_t session_id);
 enum policy_mgr_con_mode policy_mgr_get_mode_by_vdev_id(
 		struct wlan_objmgr_psoc *psoc,
 		uint8_t vdev_id);
@@ -682,68 +654,6 @@ QDF_STATUS policy_mgr_reset_sap_mandatory_channels(
 		struct policy_mgr_psoc_priv_obj *pm_ctx);
 
 /**
- * policy_mgr_update_hw_mode_list() - Function to print frequency range
- * for both MAC 0 and MAC1 for given Hw mode
- *
- * @freq_range: Policy Mgr context
- * @hw_mode: HW mode
- *
- * This Function will print frequency range for both MAC 0 and MAC1 for given
- * Hw mode
- *
- * Return: void
- *
- */
-void
-policy_mgr_dump_freq_range_per_mac(struct policy_mgr_freq_range *freq_range,
-				   enum policy_mgr_mode hw_mode);
-
-/**
- * policy_mgr_fill_curr_mac_freq_by_hwmode() - Fill Current Mac frequency with
- * the frequency range of the given Hw Mode
- *
- * @pm_ctx: Policy Mgr context
- * @mode_hw: Policy Mgr Hw mode
- *
- * Fill Current Mac frequency with the frequency range of the given Hw Mode
- *
- * Return: None
- */
-void
-policy_mgr_fill_curr_mac_freq_by_hwmode(struct policy_mgr_psoc_priv_obj *pm_ctx,
-					enum policy_mgr_mode mode_hw);
-
-/**
- * policy_mgr_update_hw_mode_list() - Function to print every frequency range
- * for both MAC 0 and MAC1 for every Hw mode
- *
- * @pm_ctx: Policy Mgr context
- *
- * This function will print every frequency range
- * for both MAC 0 and MAC1 for every Hw mode
- *
- * Return: void
- *
- */
-void
-policy_mgr_dump_freq_range(struct policy_mgr_psoc_priv_obj *pm_ctx);
-
-/**
- * policy_mgr_dump_curr_freq_range() - Function to print current frequency range
- * for both MAC 0 and MAC1
- *
- * @pm_ctx: Policy Mgr context
- *
- * This function will print current frequency range
- * for both MAC 0 and MAC1 for every Hw mode
- *
- * Return: void
- *
- */
-void
-policy_mgr_dump_curr_freq_range(struct policy_mgr_psoc_priv_obj *pm_ctx);
-
-/**
  * policy_mgr_reg_chan_change_callback() - Callback to be
  * invoked by regulatory module when valid channel list changes
  * @psoc: PSOC object information
@@ -770,7 +680,6 @@ void policy_mgr_reg_chan_change_callback(struct wlan_objmgr_psoc *psoc,
  * @band: update AP vdev on the Band.
  * @reason: action reason
  * @original_vdev_id: original request hwmode change vdev id
- * @request_id: request id
  *
  * The function will update AP vdevs on specific band.
  *  eg. band = POLICY_MGR_ANY will request to update all band (2g and 5g)
@@ -781,7 +690,7 @@ QDF_STATUS policy_mgr_nss_update(struct wlan_objmgr_psoc *psoc,
 		uint8_t  new_nss, uint8_t next_action,
 		enum policy_mgr_band band,
 		enum policy_mgr_conn_update_reason reason,
-		uint32_t original_vdev_id, uint32_t request_id);
+		uint32_t original_vdev_id);
 
 /**
  * policy_mgr_is_concurrency_allowed() - Check for allowed

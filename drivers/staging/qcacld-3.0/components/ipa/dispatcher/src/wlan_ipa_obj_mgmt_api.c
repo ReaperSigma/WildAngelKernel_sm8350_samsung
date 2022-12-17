@@ -119,7 +119,6 @@ ipa_pdev_obj_create_notification(struct wlan_objmgr_pdev *pdev,
 
 	ipa_obj->pdev = pdev;
 	target_if_ipa_register_tx_ops(&ipa_obj->ipa_tx_op);
-	target_if_ipa_register_intrabss_ops(&ipa_obj->ipa_intrabss_op);
 
 	ipa_debug("ipa pdev attached");
 
@@ -175,7 +174,6 @@ static void ipa_register_ready_cb(void *user_data)
 						      WLAN_UMAC_COMP_IPA,
 						      ipa_obj);
 		qdf_mem_free(ipa_obj);
-		ipa_disable_register_cb();
 		goto out;
 	}
 	if (ucfg_ipa_uc_ol_init(pdev, qdf_dev)) {

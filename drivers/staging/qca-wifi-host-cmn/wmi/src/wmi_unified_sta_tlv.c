@@ -130,8 +130,6 @@ send_set_sta_keep_alive_cmd_tlv(wmi_unified_t wmi_handle,
 			     QDF_IPV4_ADDR_SIZE);
 		WMI_CHAR_ARRAY_TO_MAC_ADDR(params->destmac,
 					   &arp_rsp->dest_mac_addr);
-	} else if (WMI_KEEP_ALIVE_MGMT_FRAME == params->method) {
-		cmd->method = WMI_STA_KEEPALIVE_METHOD_MGMT_VENDOR_ACTION;
 	} else {
 		cmd->method = WMI_STA_KEEPALIVE_METHOD_NULL_FRAME;
 	}
@@ -1358,7 +1356,7 @@ static QDF_STATUS get_sar_limit_cmd_tlv(wmi_unified_t wmi_handle)
  * Return: string conversion of sar 2 result, if match found;
  *	   "Unknown response" otherwise.
  */
-static const char *wmi_sar2_result_string(uint32_t result)
+__maybe_unused static const char *wmi_sar2_result_string(uint32_t result)
 {
 	switch (result) {
 	CASE_RETURN_STRING(WMI_SAR2_SUCCESS);

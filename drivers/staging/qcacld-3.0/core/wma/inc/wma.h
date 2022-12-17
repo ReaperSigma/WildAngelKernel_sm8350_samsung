@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -97,7 +98,7 @@
 			wma_info(params); \
 		else \
 			wma_debug(params); \
-	} while(0); \
+	} while (0)
 
 #define WMA_WILDCARD_PDEV_ID 0x0
 
@@ -628,6 +629,16 @@ struct wma_version_info {
 	u_int32_t revision;
 };
 
+struct roam_synch_frame_ind {
+	uint32_t bcn_probe_rsp_len;
+	uint8_t *bcn_probe_rsp;
+	uint8_t is_beacon;
+	uint32_t reassoc_req_len;
+	uint8_t *reassoc_req;
+	uint32_t reassoc_rsp_len;
+	uint8_t *reassoc_rsp;
+};
+
 /* Max number of invalid peer entries */
 #define INVALID_PEER_MAX_NUM 5
 
@@ -670,6 +681,7 @@ struct wma_invalid_peer_params {
  * @nwType: network type (802.11a/b/g/n/ac)
  * @ps_enabled: is powersave enable/disable
  * @peer_count: peer count
+ * @roam_synch_in_progress: flag is in progress or not
  * @plink_status_req: link status request
  * @psnr_req: snr request
  * @tx_streams: number of tx streams can be used by the vdev
@@ -678,8 +690,6 @@ struct wma_invalid_peer_params {
  * @ns_offload_req: cached ns offload request
  * @rcpi_req: rcpi request
  * @in_bmps: Whether bmps for this interface has been enabled
- * @vdev_set_key_wakelock: wakelock to protect vdev set key op with firmware
- * @vdev_set_key_runtime_wakelock: runtime pm wakelock for set key
  * @ch_freq: channel frequency
  * @roam_scan_stats_req: cached roam scan stats request
  * @wma_invalid_peer_params: structure storing invalid peer params
@@ -721,13 +731,12 @@ struct wma_txrx_node {
 #endif
 	uint32_t tx_streams;
 	uint32_t mac_id;
+	bool roaming_in_progress;
 	int32_t roam_synch_delay;
 	struct sme_rcpi_req *rcpi_req;
 	bool in_bmps;
 	struct beacon_filter_param beacon_filter;
 	bool beacon_filter_enabled;
-	qdf_wake_lock_t vdev_set_key_wakelock;
-	qdf_runtime_lock_t vdev_set_key_runtime_wakelock;
 	struct roam_synch_frame_ind roam_synch_frame_ind;
 	bool is_waiting_for_key;
 	uint32_t ch_freq;
@@ -735,7 +744,6 @@ struct wma_txrx_node {
 	struct sir_roam_scan_stats *roam_scan_stats_req;
 	struct wma_invalid_peer_params invalid_peers[INVALID_PEER_MAX_NUM];
 	uint8_t invalid_peer_idx;
-	uint16_t bss_max_idle_period;
 };
 
 /**
@@ -810,8 +818,6 @@ struct wma_wlm_stats_data {
  *   set this and wait will timeout, and code will poll the pending tx
  *   descriptors number to be zero.
  * @umac_ota_ack_cb: Ack Complete Callback registered by umac
- * @is_mgmt_data_valid: Is management frame data valid
- * @mgmt_data: Management frame related data
  * @umac_data_ota_ack_cb: ack complete callback
  * @last_umac_data_ota_timestamp: timestamp when OTA of last umac data
  *   was done
@@ -904,7 +910,6 @@ struct wma_wlm_stats_data {
  * @ito_repeat_count: Indicates ito repeated count
  * @wma_fw_time_sync_timer: timer used for firmware time sync
  * * @fw_therm_throt_support: FW Supports thermal throttling?
- * @eht_cap: 802.11be capabilities
  *
  * This structure is the global wma context.  It contains global wma
  * module parameters and handles of other modules.
@@ -936,8 +941,6 @@ typedef struct {
 	qdf_event_t tx_frm_download_comp_event;
 	qdf_event_t tx_queue_empty_event;
 	wma_tx_ota_comp_callback umac_data_ota_ack_cb;
-	bool is_mgmt_data_valid;
-	struct mgmt_frame_data mgmt_data;
 	unsigned long last_umac_data_ota_timestamp;
 	qdf_nbuf_t last_umac_data_nbuf;
 	wma_tgt_cfg_cb tgt_cfg_update_cb;
@@ -991,22 +994,30 @@ typedef struct {
 	bool tx_chain_mask_cck;
 	qdf_mc_timer_t service_ready_ext_timer;
 
+	QDF_STATUS (*csr_roam_synch_cb)(struct mac_context *mac,
+		struct roam_offload_synch_ind *roam_synch_data,
+		struct bss_description *bss_desc_ptr,
+		enum sir_roam_op_code reason);
 	QDF_STATUS (*csr_roam_auth_event_handle_cb)(struct mac_context *mac,
 						    uint8_t vdev_id,
 						    struct qdf_mac_addr bssid);
 	QDF_STATUS (*pe_roam_synch_cb)(struct mac_context *mac,
 		struct roam_offload_synch_ind *roam_synch_data,
-		uint16_t ie_len,
+		struct bss_description *bss_desc_ptr,
 		enum sir_roam_op_code reason);
 	QDF_STATUS (*pe_disconnect_cb) (struct mac_context *mac,
 					uint8_t vdev_id,
 					uint8_t *deauth_disassoc_frame,
 					uint16_t deauth_disassoc_frame_len,
 					uint16_t reason_code);
+	QDF_STATUS (*csr_roam_pmkid_req_cb)(uint8_t vdev_id,
+		struct roam_pmkid_req_event *bss_list);
+	QDF_STATUS (*csr_roam_candidate_event_cb)(struct mac_context *mac,
+						  uint8_t *frame,
+						  uint32_t len);
 	qdf_wake_lock_t wmi_cmd_rsp_wake_lock;
 	qdf_runtime_lock_t wmi_cmd_rsp_runtime_lock;
 	qdf_runtime_lock_t sap_prevent_runtime_pm_lock;
-	qdf_runtime_lock_t ndp_prevent_runtime_pm_lock;
 	enum active_apf_mode active_uc_apf_mode;
 	enum active_apf_mode active_mc_bc_apf_mode;
 	struct wma_ini_config ini_config;
@@ -1019,7 +1030,6 @@ typedef struct {
 	ol_txrx_pktdump_cb wma_mgmt_rx_packetdump_cb;
 	bool rcpi_enabled;
 	tSirLLStatsResults *link_stats_results;
-	qdf_mutex_t radio_stats_lock;
 	uint64_t tx_fail_cnt;
 #ifdef FEATURE_WLM_STATS
 	struct wma_wlm_stats_data wlm_data;
@@ -1035,20 +1045,11 @@ typedef struct {
 	qdf_mc_timer_t wma_fw_time_sync_timer;
 	bool fw_therm_throt_support;
 	bool enable_tx_compl_tsf64;
-#ifdef WLAN_FEATURE_11BE
-	struct eht_capability eht_cap;
-#endif
-	qdf_atomic_t sap_num_clients_connected;
-	qdf_atomic_t go_num_clients_connected;
-	qdf_wake_lock_t sap_d3_wow_wake_lock;
-	qdf_wake_lock_t go_d3_wow_wake_lock;
 } t_wma_handle, *tp_wma_handle;
 
 /**
  * wma_validate_handle() - Validate WMA handle
  * @wma_handle: wma handle
- *
- * This function will log on error and hence caller should not log on error
  *
  * Return: errno if WMA handle is NULL; 0 otherwise
  */
@@ -1416,6 +1417,30 @@ enum uapsd_up {
 };
 
 /**
+ * struct wma_roam_invoke_cmd - roam invoke command
+ * @vdev_id: vdev id
+ * @bssid: mac address
+ * @ch_freq: channel frequency
+ * @frame_len: frame length, includs mac header, fixed params and ies
+ * @frame_buf: buffer contaning probe response or beacon
+ * @is_same_bssid: flag to indicate if roaming is requested for same bssid
+ * @forced_roaming: Roaming to be done without giving bssid, and channel.
+ */
+struct wma_roam_invoke_cmd {
+	uint32_t vdev_id;
+	uint8_t bssid[QDF_MAC_ADDR_SIZE];
+	uint32_t ch_freq;
+	uint32_t frame_len;
+	uint8_t *frame_buf;
+	uint8_t is_same_bssid;
+	bool forced_roaming;
+};
+
+A_UINT32 e_csr_auth_type_to_rsn_authmode(enum csr_akm_type authtype,
+					 eCsrEncryptionType encr);
+A_UINT32 e_csr_encryption_type_to_rsn_cipherset(eCsrEncryptionType encr);
+
+/**
  * wma_trigger_uapsd_params() - set trigger uapsd parameter
  * @wmi_handle: wma handle
  * @vdev_id: vdev id
@@ -1488,16 +1513,6 @@ int wma_mgmt_tx_completion_handler(void *handle, uint8_t *cmpl_event_params,
 int wma_mgmt_tx_bundle_completion_handler(void *handle,
 	uint8_t *cmpl_event_params, uint32_t len);
 uint32_t wma_get_vht_ch_width(void);
-
-#ifdef WLAN_FEATURE_11BE
-uint32_t wma_get_eht_ch_width(void);
-#else
-static inline uint32_t wma_get_eht_ch_width(void)
-{
-	return 0;
-}
-#endif
-
 QDF_STATUS
 wma_config_debug_module_cmd(wmi_unified_t wmi_handle, A_UINT32 param,
 		A_UINT32 val, A_UINT32 *module_id_bitmap,
@@ -1651,16 +1666,12 @@ QDF_STATUS wma_remove_peer(tp_wma_handle wma, uint8_t *mac_addr,
  * @peer_addr: peer mac address
  * @peer_type: peer type
  * @vdev_id: vdev id
- * @peer_mld_addr: peer mld address
- * @is_assoc_peer: is assoc peer or not
  *
  * Return: QDF_STATUS
  */
 QDF_STATUS wma_create_peer(tp_wma_handle wma,
 			   uint8_t peer_addr[QDF_MAC_ADDR_SIZE],
-			   u_int32_t peer_type, u_int8_t vdev_id,
-			   uint8_t peer_mld_addr[QDF_MAC_ADDR_SIZE],
-			   bool is_assoc_peer);
+			   u_int32_t peer_type, u_int8_t vdev_id);
 
 QDF_STATUS wma_peer_unmap_conf_cb(uint8_t vdev_id,
 				  uint32_t peer_id_cnt,
@@ -1834,8 +1845,10 @@ void wma_vdev_update_pause_bitmap(uint8_t vdev_id, uint16_t value)
 	tp_wma_handle wma = (tp_wma_handle)cds_get_context(QDF_MODULE_ID_WMA);
 	struct wma_txrx_node *iface;
 
-	if (!wma)
+	if (!wma) {
+		wma_err("WMA context is invald!");
 		return;
+	}
 
 	if (vdev_id >= wma->max_bssid) {
 		wma_err("Invalid vdev_id: %d", vdev_id);
@@ -1864,8 +1877,10 @@ uint16_t wma_vdev_get_pause_bitmap(uint8_t vdev_id)
 	tp_wma_handle wma = (tp_wma_handle)cds_get_context(QDF_MODULE_ID_WMA);
 	struct wma_txrx_node *iface;
 
-	if (!wma)
+	if (!wma) {
+		wma_err("WMA context is invald!");
 		return 0;
+	}
 
 	iface = &wma->interfaces[vdev_id];
 
@@ -1888,8 +1903,10 @@ static inline bool wma_vdev_is_device_in_low_pwr_mode(uint8_t vdev_id)
 	tp_wma_handle wma = (tp_wma_handle)cds_get_context(QDF_MODULE_ID_WMA);
 	struct wma_txrx_node *iface;
 
-	if (!wma)
+	if (!wma) {
+		wma_err("WMA context is invalid!");
 		return 0;
+	}
 
 	iface = &wma->interfaces[vdev_id];
 
@@ -2004,8 +2021,10 @@ void wma_vdev_set_pause_bit(uint8_t vdev_id, wmi_tx_pause_type bit_pos)
 	tp_wma_handle wma = (tp_wma_handle)cds_get_context(QDF_MODULE_ID_WMA);
 	struct wma_txrx_node *iface;
 
-	if (!wma)
+	if (!wma) {
+		wma_err("WMA context is invalid!");
 		return;
+	}
 
 	iface = &wma->interfaces[vdev_id];
 
@@ -2030,8 +2049,10 @@ void wma_vdev_clear_pause_bit(uint8_t vdev_id, wmi_tx_pause_type bit_pos)
 	tp_wma_handle wma = (tp_wma_handle)cds_get_context(QDF_MODULE_ID_WMA);
 	struct wma_txrx_node *iface;
 
-	if (!wma)
+	if (!wma) {
+		wma_err("WMA context is invalid!");
 		return;
+	}
 
 	iface = &wma->interfaces[vdev_id];
 
@@ -2054,6 +2075,13 @@ void wma_vdev_clear_pause_bit(uint8_t vdev_id, wmi_tx_pause_type bit_pos)
 void
 wma_send_roam_preauth_status(tp_wma_handle wma_handle,
 			     struct wmi_roam_auth_status_params *params);
+#else
+static inline void
+wma_send_roam_preauth_status(tp_wma_handle wma_handle,
+			     struct wmi_roam_auth_status_params *params)
+{}
+#endif
+
 /**
  * wma_handle_roam_sync_timeout() - Update roaming status at wma layer
  * @wma_handle: wma handle
@@ -2065,17 +2093,6 @@ wma_send_roam_preauth_status(tp_wma_handle wma_handle,
  */
 void wma_handle_roam_sync_timeout(tp_wma_handle wma_handle,
 				  struct roam_sync_timeout_timer_info *info);
-#else
-static inline void
-wma_send_roam_preauth_status(tp_wma_handle wma_handle,
-			     struct wmi_roam_auth_status_params *params)
-{}
-
-static inline void
-wma_handle_roam_sync_timeout(tp_wma_handle wma_handle,
-			     struct roam_sync_timeout_timer_info *info)
-{}
-#endif
 
 #ifdef WMI_INTERFACE_EVENT_LOGGING
 static inline void wma_print_wmi_cmd_log(uint32_t count,
@@ -2345,13 +2362,12 @@ struct wlan_objmgr_psoc *wma_get_psoc_from_scn_handle(void *scn_handle);
 /**
  * wma_set_peer_ucast_cipher() - Update unicast cipher fof the peer
  * @mac_addr: peer mac address
- * @cipher: peer cipher bits
- * @cipher_cap: cipher cap
+ * @cipher: peer cipher type
  *
  * Return: None
  */
-void wma_set_peer_ucast_cipher(uint8_t *mac_addr, int32_t cipher,
-			       int32_t cipher_cap);
+void wma_set_peer_ucast_cipher(uint8_t *mac_addr,
+			       enum wlan_crypto_cipher_type cipher);
 
 /**
  * wma_update_set_key() - Update WMA layer for set key
@@ -2401,14 +2417,11 @@ int wma_motion_det_base_line_host_event_handler(void *handle, u_int8_t *event,
  * @is_resp_required: Peer create response is expected from firmware.
  * This flag will be set to true for initial connection and false for
  * LFR2 case.
- * @mld_mac: peer mld mac address
- * @is_assoc_peer: is assoc peer or not
  *
  * Return: 0 on success, else error on failure
  */
 QDF_STATUS wma_add_bss_peer_sta(uint8_t vdev_id, uint8_t *bssid,
-				bool is_resp_required, uint8_t *mld_mac,
-				bool is_assoc_peer);
+				bool is_resp_required);
 
 /**
  * wma_send_vdev_stop() - WMA api to send vdev stop to fw
@@ -2503,8 +2516,8 @@ QDF_STATUS wma_post_chan_switch_setup(uint8_t vdev_id);
 QDF_STATUS wma_vdev_pre_start(uint8_t vdev_id, bool restart);
 
 /**
- * wma_remove_bss_peer_on_failure() - remove the bss peers in case of
- * failure
+ * wma_remove_bss_peer_on_vdev_start_failure() - remove the bss peers in case of
+ * vdev start request failure
  * @wma: wma handle.
  * @vdev_id: vdev id
  *
@@ -2513,7 +2526,8 @@ QDF_STATUS wma_vdev_pre_start(uint8_t vdev_id, bool restart);
  *
  * Return: None;
  */
-void wma_remove_bss_peer_on_failure(tp_wma_handle wma, uint8_t vdev_id);
+void wma_remove_bss_peer_on_vdev_start_failure(tp_wma_handle wma,
+					       uint8_t vdev_id);
 
 /**
  * wma_send_add_bss_resp() - send add bss failure

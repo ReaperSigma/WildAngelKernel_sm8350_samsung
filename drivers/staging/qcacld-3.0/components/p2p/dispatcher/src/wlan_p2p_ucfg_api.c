@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -26,7 +26,6 @@
 #include <scheduler_api.h>
 #include "wlan_p2p_public_struct.h"
 #include "wlan_p2p_ucfg_api.h"
-#include "wlan_p2p_api.h"
 #include "../../core/src/wlan_p2p_main.h"
 #include "../../core/src/wlan_p2p_roc.h"
 #include "../../core/src/wlan_p2p_off_chan_tx.h"
@@ -119,9 +118,9 @@ QDF_STATUS ucfg_p2p_roc_req(struct wlan_objmgr_psoc *soc,
 	QDF_STATUS status;
 	int32_t id;
 
-	p2p_debug("soc:%pK, vdev_id:%d, chanfreq:%d, phy_mode:%d, duration:%d",
-		  soc, roc_req->vdev_id, roc_req->chan_freq,
-		  roc_req->phy_mode, roc_req->duration);
+	p2p_debug("soc:%pK, vdev_id:%d, chan:%d, phy_mode:%d, duration:%d",
+		soc, roc_req->vdev_id, roc_req->chan,
+		roc_req->phy_mode, roc_req->duration);
 
 	if (!soc) {
 		p2p_err("psoc context passed is NULL");
@@ -149,7 +148,7 @@ QDF_STATUS ucfg_p2p_roc_req(struct wlan_objmgr_psoc *soc,
 	*cookie = (uint64_t)id;
 	roc_ctx->p2p_soc_obj = p2p_soc_obj;
 	roc_ctx->vdev_id = roc_req->vdev_id;
-	roc_ctx->chan_freq = roc_req->chan_freq;
+	roc_ctx->chan = roc_req->chan;
 	roc_ctx->phy_mode = roc_req->phy_mode;
 	roc_ctx->duration = roc_req->duration;
 	roc_ctx->roc_state = ROC_STATE_IDLE;
@@ -227,7 +226,30 @@ QDF_STATUS ucfg_p2p_roc_cancel_req(struct wlan_objmgr_psoc *soc,
 
 QDF_STATUS ucfg_p2p_cleanup_roc_by_vdev(struct wlan_objmgr_vdev *vdev)
 {
-	return wlan_p2p_cleanup_roc_by_vdev(vdev);
+	struct p2p_soc_priv_obj *p2p_soc_obj;
+	struct wlan_objmgr_psoc *psoc;
+
+	p2p_debug("vdev:%pK", vdev);
+
+	if (!vdev) {
+		p2p_debug("null vdev");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	psoc = wlan_vdev_get_psoc(vdev);
+	if (!psoc) {
+		p2p_err("null psoc");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	p2p_soc_obj = wlan_objmgr_psoc_get_comp_private_obj(psoc,
+			WLAN_UMAC_COMP_P2P);
+	if (!p2p_soc_obj) {
+		p2p_err("p2p soc context is NULL");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	return p2p_cleanup_roc_sync(p2p_soc_obj, vdev);
 }
 
 QDF_STATUS ucfg_p2p_cleanup_roc_by_psoc(struct wlan_objmgr_psoc *psoc)
@@ -294,8 +316,7 @@ QDF_STATUS ucfg_p2p_cleanup_tx_by_psoc(struct wlan_objmgr_psoc *psoc)
 }
 
 QDF_STATUS ucfg_p2p_mgmt_tx(struct wlan_objmgr_psoc *soc,
-			    struct p2p_mgmt_tx *mgmt_frm, uint64_t *cookie,
-			    struct wlan_objmgr_pdev *pdev)
+	struct p2p_mgmt_tx *mgmt_frm, uint64_t *cookie)
 {
 	struct scheduler_msg msg = {0};
 	struct p2p_soc_priv_obj *p2p_soc_obj;
@@ -303,11 +324,10 @@ QDF_STATUS ucfg_p2p_mgmt_tx(struct wlan_objmgr_psoc *soc,
 	QDF_STATUS status;
 	int32_t id;
 
-	p2p_debug("soc:%pK, vdev_id:%d, freq:%d, wait:%d, buf_len:%d,"
-		  " cck:%d, no ack:%d, off chan:%d",
-		  soc, mgmt_frm->vdev_id, mgmt_frm->chan_freq,
-		  mgmt_frm->wait, mgmt_frm->len, mgmt_frm->no_cck,
-		  mgmt_frm->dont_wait_for_ack, mgmt_frm->off_chan);
+	p2p_debug("soc:%pK, vdev_id:%d, chan:%d, wait:%d, buf_len:%d, cck:%d, no ack:%d, off chan:%d",
+		soc, mgmt_frm->vdev_id, mgmt_frm->chan,
+		mgmt_frm->wait, mgmt_frm->len, mgmt_frm->no_cck,
+		mgmt_frm->dont_wait_for_ack, mgmt_frm->off_chan);
 
 	if (!soc) {
 		p2p_err("psoc context passed is NULL");
@@ -341,7 +361,7 @@ QDF_STATUS ucfg_p2p_mgmt_tx(struct wlan_objmgr_psoc *soc,
 	*cookie = (uint64_t)id;
 	tx_action->p2p_soc_obj = p2p_soc_obj;
 	tx_action->vdev_id = mgmt_frm->vdev_id;
-	tx_action->chan_freq = mgmt_frm->chan_freq;
+	tx_action->chan = mgmt_frm->chan;
 	tx_action->duration = mgmt_frm->wait;
 	tx_action->buf_len = mgmt_frm->len;
 	tx_action->no_cck = mgmt_frm->no_cck;
@@ -356,7 +376,7 @@ QDF_STATUS ucfg_p2p_mgmt_tx(struct wlan_objmgr_psoc *soc,
 	tx_action->nbuf = NULL;
 	tx_action->id = id;
 
-	p2p_rand_mac_tx(pdev, tx_action);
+	p2p_rand_mac_tx(tx_action);
 
 	msg.type = P2P_MGMT_TX;
 	msg.bodyptr = tx_action;
@@ -587,7 +607,12 @@ QDF_STATUS ucfg_p2p_status_scan(struct wlan_objmgr_vdev *vdev)
 
 QDF_STATUS ucfg_p2p_status_connect(struct wlan_objmgr_vdev *vdev)
 {
-	return wlan_p2p_status_connect(vdev);
+	if (!vdev) {
+		p2p_err("vdev is NULL");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	return p2p_status_connect(vdev);
 }
 
 QDF_STATUS ucfg_p2p_status_disconnect(struct wlan_objmgr_vdev *vdev)

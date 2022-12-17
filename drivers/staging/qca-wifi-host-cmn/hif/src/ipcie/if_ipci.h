@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -52,11 +53,10 @@ struct hif_ipci_stats {
 	uint32_t soc_force_wake_release_success;
 };
 
-/* Register offset to wake the UMAC from power collapse */
-#define PCIE_REG_WAKE_UMAC_OFFSET 0x3004
 /* Register to wake the UMAC from power collapse */
 #define PCIE_SOC_PCIE_REG_PCIE_SCRATCH_0_SOC_PCIE_REG (0x01E04000 + 0x40)
-
+/* Register used for handshake mechanism to validate UMAC is awake */
+#define PCIE_PCIE_LOCAL_REG_PCIE_SOC_WAKE_PCIE_LOCAL_REG (0x01E00000 + 0x3004)
 /* Timeout duration to validate UMAC wake status */
 #define FORCE_WAKE_DELAY_TIMEOUT_MS 500
 
@@ -69,11 +69,10 @@ struct hif_ipci_stats {
 #define EP_VOTE_POLL_TIME_CNT 2
 #ifdef HAL_CONFIG_SLUB_DEBUG_ON
 #define EP_WAKE_RESET_DELAY_TIMEOUT_MS 3
-#define EP_WAKE_DELAY_TIMEOUT_MS 7
 #else
 #define EP_WAKE_RESET_DELAY_TIMEOUT_MS 10
-#define EP_WAKE_DELAY_TIMEOUT_MS 10
 #endif
+#define EP_WAKE_DELAY_TIMEOUT_MS 10
 #define EP_WAKE_RESET_DELAY_US 50
 #define EP_WAKE_DELAY_US 200
 #endif

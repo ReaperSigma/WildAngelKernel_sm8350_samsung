@@ -357,10 +357,9 @@ void sch_qos_update_local(struct mac_context *mac, struct pe_session *pe_session
 	}
 
 	set_sch_edca_params(mac, params, pe_session);
-	lim_set_active_edca_params(mac, pe_session->gLimEdcaParams, pe_session);
 
 	/* For AP, the bssID is stored in LIM Global context. */
-	lim_send_edca_params(mac, pe_session->gLimEdcaParamsActive,
+	lim_send_edca_params(mac, pe_session->gLimEdcaParams,
 			     pe_session->vdev_id, false);
 }
 

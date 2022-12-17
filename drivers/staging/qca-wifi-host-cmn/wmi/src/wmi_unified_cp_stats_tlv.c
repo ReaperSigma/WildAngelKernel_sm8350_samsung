@@ -375,15 +375,6 @@ send_infra_cp_stats_request_cmd_tlv(wmi_unified_t wmi_handle,
 }
 #endif
 
-#ifdef QCA_WIFI_EMULATION
-static QDF_STATUS
-send_stats_request_cmd_tlv(wmi_unified_t wmi_handle,
-			   uint8_t macaddr[QDF_MAC_ADDR_SIZE],
-			   struct stats_request_params *param)
-{
-	return QDF_STATUS_SUCCESS;
-}
-#else
 /**
  * send_stats_request_cmd_tlv() - WMI request stats function
  * @param wmi_handle: handle to WMI.
@@ -401,6 +392,7 @@ send_stats_request_cmd_tlv(wmi_unified_t wmi_handle,
 	wmi_request_stats_cmd_fixed_param *cmd;
 	wmi_buf_t buf;
 	uint16_t len = sizeof(wmi_request_stats_cmd_fixed_param);
+	bool is_qmi_send_support;
 
 	buf = wmi_buf_alloc(wmi_handle, len);
 	if (!buf)
@@ -416,15 +408,18 @@ send_stats_request_cmd_tlv(wmi_unified_t wmi_handle,
 	cmd->pdev_id = wmi_handle->ops->convert_pdev_id_host_to_target(
 							wmi_handle,
 							param->pdev_id);
+	is_qmi_send_support = param->is_qmi_send_support;
 
 	WMI_CHAR_ARRAY_TO_MAC_ADDR(macaddr, &cmd->peer_macaddr);
 
-	wmi_debug("STATS REQ STATS_ID:%d VDEV_ID:%d PDEV_ID:%d-->",
-		 cmd->stats_id, cmd->vdev_id, cmd->pdev_id);
+	wmi_debug("STATS REQ STATS_ID:%d VDEV_ID:%d PDEV_ID:%d, is_qmi_send_support %d",
+		  cmd->stats_id, cmd->vdev_id, cmd->pdev_id,
+		  is_qmi_send_support);
 
 	wmi_mtrace(WMI_REQUEST_STATS_CMDID, cmd->vdev_id, 0);
 	ret = wmi_unified_cmd_send_pm_chk(wmi_handle, buf, len,
-					  WMI_REQUEST_STATS_CMDID);
+					  WMI_REQUEST_STATS_CMDID,
+					  is_qmi_send_support);
 
 	if (ret) {
 		wmi_err("Failed to send stats request to fw =%d", ret);
@@ -433,7 +428,6 @@ send_stats_request_cmd_tlv(wmi_unified_t wmi_handle,
 
 	return qdf_status_from_os_return(ret);
 }
-#endif
 
 #ifdef WLAN_FEATURE_BIG_DATA_STATS
 /**
@@ -711,9 +705,6 @@ extract_pdev_stats_tlv(wmi_unified_t wmi_handle, void *evt_buf, uint32_t index,
 
 	param_buf = (WMI_UPDATE_STATS_EVENTID_param_tlvs *) evt_buf;
 	ev_param = (wmi_stats_event_fixed_param *) param_buf->fixed_param;
-	pdev_stats->pdev_id =
-	     wmi_handle->ops->convert_pdev_id_target_to_host(wmi_handle,
-							     ev_param->pdev_id);
 
 	data = param_buf->data;
 

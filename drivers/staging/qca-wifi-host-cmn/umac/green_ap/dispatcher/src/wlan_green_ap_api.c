@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -414,7 +415,7 @@ QDF_STATUS wlan_green_ap_del_sta(struct wlan_objmgr_pdev *pdev)
 	qdf_spin_lock_bh(&green_ap_ctx->lock);
 	if (wlan_is_egap_enabled(green_ap_ctx)) {
 		qdf_spin_unlock_bh(&green_ap_ctx->lock);
-		green_ap_info("enhanced green ap support is enabled");
+		green_ap_debug("enhanced green ap support is enabled");
 		return QDF_STATUS_SUCCESS;
 	}
 	qdf_spin_unlock_bh(&green_ap_ctx->lock);
@@ -497,28 +498,4 @@ void wlan_green_ap_suspend_handle(struct wlan_objmgr_pdev *pdev)
 	wlan_green_ap_stop(pdev);
 
 	green_ap_ctx->ps_enable = WLAN_GREEN_AP_PS_SUSPEND;
-}
-
-bool wlan_green_ap_is_ps_waiting(struct wlan_objmgr_pdev *pdev)
-{
-	struct wlan_pdev_green_ap_ctx *green_ap_ctx;
-
-	if (!pdev) {
-		green_ap_err("pdev context passed is NULL");
-		return QDF_STATUS_E_INVAL;
-	}
-
-	green_ap_ctx = wlan_objmgr_pdev_get_comp_private_obj(
-			pdev, WLAN_UMAC_COMP_GREEN_AP);
-	if (!green_ap_ctx) {
-		green_ap_err("green ap context obtained is NULL");
-		return QDF_STATUS_E_FAILURE;
-	}
-
-	if ((green_ap_ctx->ps_state == WLAN_GREEN_AP_PS_WAIT_STATE) &&
-	    (green_ap_ctx->ps_enable)) {
-		return true;
-	}
-
-	return false;
 }

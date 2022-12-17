@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -31,24 +31,12 @@
 #include "target_if_cm_roam_offload.h"
 #include "wlan_crypto_global_api.h"
 #include "target_if_wfa_testcmd.h"
-#include <../../core/src/wlan_cm_vdev_api.h>
 #include "csr_api.h"
-#include <cm_utf.h>
-#include "target_if_cm_roam_event.h"
-#include "wlan_cm_roam_api.h"
-#ifdef WLAN_FEATURE_11BE_MLO
-#include <wlan_mlo_mgr_public_structs.h>
-#include <wlan_mlo_mgr_cmn.h>
-#include <lim_mlo.h>
-#endif
 
 static struct vdev_mlme_ops sta_mlme_ops;
 static struct vdev_mlme_ops ap_mlme_ops;
 static struct vdev_mlme_ops mon_mlme_ops;
 static struct mlme_ext_ops ext_ops;
-#ifdef WLAN_FEATURE_11BE_MLO
-static struct mlo_mlme_ext_ops mlo_ext_ops;
-#endif
 
 bool mlme_is_vdev_in_beaconning_mode(enum QDF_OPMODE vdev_opmode)
 {
@@ -76,43 +64,9 @@ static struct mlme_ext_ops *mlme_get_global_ops(void)
 QDF_STATUS mlme_register_mlme_ext_ops(void)
 {
 	mlme_set_ops_register_cb(mlme_get_global_ops);
-
-	/* Overwrite with UTF cb if UTF enabled */
-	cm_utf_set_mlme_ops(mlme_get_global_ops());
 	return QDF_STATUS_SUCCESS;
 }
 
-#ifdef WLAN_FEATURE_11BE_MLO
-QDF_STATUS mlme_register_mlo_ext_ops(void)
-{
-	struct mlo_mgr_context *mlo_ctx = wlan_objmgr_get_mlo_ctx();
-
-	if (mlo_ctx)
-		mlo_reg_mlme_ext_cb(mlo_ctx, &mlo_ext_ops);
-
-	return QDF_STATUS_SUCCESS;
-}
-
-QDF_STATUS mlme_unregister_mlo_ext_ops(void)
-{
-	struct mlo_mgr_context *mlo_ctx = wlan_objmgr_get_mlo_ctx();
-
-	if (mlo_ctx)
-		mlo_unreg_mlme_ext_cb(mlo_ctx);
-
-	return QDF_STATUS_SUCCESS;
-}
-#else
-QDF_STATUS mlme_register_mlo_ext_ops(void)
-{
-	return QDF_STATUS_SUCCESS;
-}
-
-QDF_STATUS mlme_unregister_mlo_ext_ops(void)
-{
-	return QDF_STATUS_SUCCESS;
-}
-#endif
 /**
  * mlme_register_vdev_mgr_ops() - Register vdev mgr ops
  * @vdev_mlme: vdev mlme object
@@ -303,8 +257,8 @@ QDF_STATUS sta_mlme_vdev_notify_roam_start(struct vdev_mlme_obj *vdev_mlme,
 {
 	mlme_legacy_debug("vdev id = %d ",
 			  vdev_mlme->vdev->vdev_objmgr.vdev_id);
-	return wlan_cm_sta_mlme_vdev_roam_notify(vdev_mlme, event_data_len,
-						 event_data);
+	return wma_sta_mlme_vdev_roam_notify(vdev_mlme, event_data_len,
+					     event_data);
 }
 
 /**
@@ -737,66 +691,6 @@ bool mlme_get_bigtk_support(struct wlan_objmgr_vdev *vdev)
 	return mlme_priv->bigtk_vdev_support;
 }
 
-#ifdef FEATURE_WLAN_TDLS
-QDF_STATUS
-mlme_set_tdls_chan_switch_prohibited(struct wlan_objmgr_vdev *vdev, bool val)
-{
-	struct mlme_legacy_priv *mlme_priv;
-
-	mlme_priv = wlan_vdev_mlme_get_ext_hdl(vdev);
-	if (!mlme_priv) {
-		mlme_legacy_err("vdev legacy private object is NULL");
-		return QDF_STATUS_E_FAILURE;
-	}
-
-	mlme_priv->connect_info.tdls_chan_swit_prohibited = val;
-
-	return QDF_STATUS_SUCCESS;
-}
-
-bool mlme_get_tdls_chan_switch_prohibited(struct wlan_objmgr_vdev *vdev)
-{
-	struct mlme_legacy_priv *mlme_priv;
-
-	mlme_priv = wlan_vdev_mlme_get_ext_hdl(vdev);
-	if (!mlme_priv) {
-		mlme_legacy_err("vdev legacy private object is NULL");
-		return false;
-	}
-
-	return mlme_priv->connect_info.tdls_chan_swit_prohibited;
-}
-
-QDF_STATUS
-mlme_set_tdls_prohibited(struct wlan_objmgr_vdev *vdev, bool val)
-{
-	struct mlme_legacy_priv *mlme_priv;
-
-	mlme_priv = wlan_vdev_mlme_get_ext_hdl(vdev);
-	if (!mlme_priv) {
-		mlme_legacy_err("vdev legacy private object is NULL");
-		return QDF_STATUS_E_FAILURE;
-	}
-
-	mlme_priv->connect_info.tdls_prohibited = val;
-
-	return QDF_STATUS_SUCCESS;
-}
-
-bool mlme_get_tdls_prohibited(struct wlan_objmgr_vdev *vdev)
-{
-	struct mlme_legacy_priv *mlme_priv;
-
-	mlme_priv = wlan_vdev_mlme_get_ext_hdl(vdev);
-	if (!mlme_priv) {
-		mlme_legacy_err("vdev legacy private object is NULL");
-		return false;
-	}
-
-	return mlme_priv->connect_info.tdls_prohibited;
-}
-#endif
-
 QDF_STATUS
 mlme_set_roam_reason_better_ap(struct wlan_objmgr_vdev *vdev, bool val)
 {
@@ -940,6 +834,32 @@ QDF_STATUS mlme_set_assoc_type(struct wlan_objmgr_vdev *vdev,
 	}
 
 	mlme_priv->assoc_type = assoc_type;
+
+	return QDF_STATUS_SUCCESS;
+}
+
+QDF_STATUS mlme_get_vdev_bss_peer_mac_addr(
+				struct wlan_objmgr_vdev *vdev,
+				struct qdf_mac_addr *bss_peer_mac_address)
+{
+	struct wlan_objmgr_peer *peer;
+
+	if (!vdev) {
+		mlme_legacy_err("vdev is null");
+		return QDF_STATUS_E_INVAL;
+	}
+
+	peer = wlan_objmgr_vdev_try_get_bsspeer(vdev, WLAN_MLME_OBJMGR_ID);
+	if (!peer) {
+		mlme_legacy_err("peer is null");
+		return QDF_STATUS_E_INVAL;
+	}
+	wlan_peer_obj_lock(peer);
+	qdf_mem_copy(bss_peer_mac_address->bytes, wlan_peer_get_macaddr(peer),
+		     QDF_MAC_ADDR_SIZE);
+	wlan_peer_obj_unlock(peer);
+
+	wlan_objmgr_peer_release_ref(peer, WLAN_MLME_OBJMGR_ID);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -1209,58 +1129,6 @@ static QDF_STATUS mlme_get_vdev_types(enum QDF_OPMODE mode, uint8_t *type,
 	return status;
 }
 
-#ifdef WLAN_FEATURE_FILS_SK
-static inline void mlme_free_fils_info(struct mlme_connect_info *connect_info)
-{
-	qdf_mem_free(connect_info->fils_con_info);
-	qdf_mem_free(connect_info->hlp_ie);
-	connect_info->hlp_ie = NULL;
-	connect_info->hlp_ie_len = 0;
-	connect_info->fils_con_info = NULL;
-}
-#else
-static inline void mlme_free_fils_info(struct mlme_connect_info *connect_info)
-{}
-#endif
-
-static
-void mlme_init_wait_for_key_timer(struct wlan_objmgr_vdev *vdev,
-				  struct wait_for_key_timer *wait_key_timer)
-{
-	QDF_STATUS status;
-
-	if (!vdev || !wait_key_timer) {
-		mlme_err("vdev or wait for key is NULL");
-		return;
-	}
-
-	wait_key_timer->vdev = vdev;
-	status = qdf_mc_timer_init(&wait_key_timer->timer, QDF_TIMER_TYPE_SW,
-				   cm_wait_for_key_time_out_handler,
-				   wait_key_timer);
-	if (QDF_IS_STATUS_ERROR(status))
-		mlme_err("cannot allocate memory for WaitForKey time out timer");
-}
-
-static
-void mlme_deinit_wait_for_key_timer(struct wait_for_key_timer *wait_key_timer)
-{
-	qdf_mc_timer_stop(&wait_key_timer->timer);
-	qdf_mc_timer_destroy(&wait_key_timer->timer);
-}
-
-static void mlme_ext_handler_destroy(struct vdev_mlme_obj *vdev_mlme)
-{
-	if (!vdev_mlme || !vdev_mlme->ext_vdev_ptr)
-		return;
-	mlme_free_self_disconnect_ies(vdev_mlme->vdev);
-	mlme_free_peer_disconnect_ies(vdev_mlme->vdev);
-	mlme_free_sae_auth_retry(vdev_mlme->vdev);
-	mlme_deinit_wait_for_key_timer(&vdev_mlme->ext_vdev_ptr->wait_key_timer);
-	mlme_free_fils_info(&vdev_mlme->ext_vdev_ptr->connect_info);
-	qdf_mem_free(vdev_mlme->ext_vdev_ptr);
-	vdev_mlme->ext_vdev_ptr = NULL;
-}
 /**
  * vdevmgr_mlme_ext_hdl_create () - Create mlme legacy priv object
  * @vdev_mlme: vdev mlme object
@@ -1280,9 +1148,7 @@ QDF_STATUS vdevmgr_mlme_ext_hdl_create(struct vdev_mlme_obj *vdev_mlme)
 		return QDF_STATUS_E_NOMEM;
 
 	mlme_init_rate_config(vdev_mlme);
-	vdev_mlme->ext_vdev_ptr->connect_info.fils_con_info = NULL;
-	mlme_init_wait_for_key_timer(vdev_mlme->vdev,
-				     &vdev_mlme->ext_vdev_ptr->wait_key_timer);
+	vdev_mlme->ext_vdev_ptr->fils_con_info = NULL;
 
 	sme_get_vdev_type_nss(wlan_vdev_mlme_get_opmode(vdev_mlme->vdev),
 			      &vdev_mlme->proto.generic.nss_2g,
@@ -1293,7 +1159,7 @@ QDF_STATUS vdevmgr_mlme_ext_hdl_create(struct vdev_mlme_obj *vdev_mlme)
 				     &vdev_mlme->mgmt.generic.subtype);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		mlme_err("Get vdev type failed; status:%d", status);
-		mlme_ext_handler_destroy(vdev_mlme);
+		qdf_mem_free(vdev_mlme->ext_vdev_ptr);
 		return status;
 	}
 
@@ -1301,7 +1167,7 @@ QDF_STATUS vdevmgr_mlme_ext_hdl_create(struct vdev_mlme_obj *vdev_mlme)
 	if (QDF_IS_STATUS_ERROR(status)) {
 		mlme_err("Failed to create vdev for vdev id %d",
 			 wlan_vdev_get_id(vdev_mlme->vdev));
-		mlme_ext_handler_destroy(vdev_mlme);
+		qdf_mem_free(vdev_mlme->ext_vdev_ptr);
 		return status;
 	}
 
@@ -1335,7 +1201,15 @@ QDF_STATUS vdevmgr_mlme_ext_hdl_destroy(struct vdev_mlme_obj *vdev_mlme)
 		wma_vdev_detach_callback(&rsp);
 	}
 
-	mlme_ext_handler_destroy(vdev_mlme);
+	mlme_free_self_disconnect_ies(vdev_mlme->vdev);
+	mlme_free_peer_disconnect_ies(vdev_mlme->vdev);
+	mlme_free_sae_auth_retry(vdev_mlme->vdev);
+
+	qdf_mem_free(vdev_mlme->ext_vdev_ptr->fils_con_info);
+	vdev_mlme->ext_vdev_ptr->fils_con_info = NULL;
+
+	qdf_mem_free(vdev_mlme->ext_vdev_ptr);
+	vdev_mlme->ext_vdev_ptr = NULL;
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -1528,8 +1402,6 @@ QDF_STATUS psoc_mlme_ext_hdl_create(struct psoc_mlme_obj *psoc_mlme)
 
 	target_if_wfatestcmd_register_tx_ops(
 			&psoc_mlme->ext_psoc_ptr->wfa_testcmd.tx_ops);
-	target_if_cm_roam_register_rx_ops(
-			&psoc_mlme->ext_psoc_ptr->rso_rx_ops);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -1557,11 +1429,12 @@ QDF_STATUS psoc_mlme_ext_hdl_destroy(struct psoc_mlme_obj *psoc_mlme)
 }
 
 /**
- * vdevmgr_vdev_start_rsp_handle() - callback to handle vdev start response
+ * vdevmgr_vdev_delete_rsp_handle() - callback to handle vdev delete response
  * @vdev_mlme: vdev mlme object
- * @rsp: pointer to vdev start response
+ * @rsp: pointer to vdev delete response
  *
- * This function is called to handle vdev start response
+ * This function is called to handle vdev delete response and send result to
+ * upper layer
  *
  * Return: QDF_STATUS
  */
@@ -1578,16 +1451,6 @@ vdevmgr_vdev_start_rsp_handle(struct vdev_mlme_obj *vdev_mlme,
 	return status;
 }
 
-/**
- * vdevmgr_vdev_delete_rsp_handle() - callback to handle vdev delete response
- * @vdev_mlme: vdev mlme object
- * @rsp: pointer to vdev delete response
- *
- * This function is called to handle vdev delete response and send result to
- * upper layer
- *
- * Return: QDF_STATUS
- */
 static QDF_STATUS
 vdevmgr_vdev_peer_delete_all_rsp_handle(struct vdev_mlme_obj *vdev_mlme,
 					struct peer_delete_all_response *rsp)
@@ -1845,26 +1708,4 @@ static struct mlme_ext_ops ext_ops = {
 	.mlme_vdev_ext_hdl_destroy = vdevmgr_mlme_ext_hdl_destroy,
 	.mlme_vdev_ext_hdl_post_create = vdevmgr_mlme_ext_post_hdl_create,
 	.mlme_vdev_ext_delete_rsp = vdevmgr_vdev_delete_rsp_handle,
-	.mlme_cm_ext_hdl_create_cb = cm_ext_hdl_create,
-	.mlme_cm_ext_hdl_destroy_cb = cm_ext_hdl_destroy,
-	.mlme_cm_ext_connect_start_ind_cb = cm_connect_start_ind,
-	.mlme_cm_ext_connect_req_cb = cm_handle_connect_req,
-	.mlme_cm_ext_bss_peer_create_req_cb = cm_send_bss_peer_create_req,
-	.mlme_cm_ext_connect_complete_ind_cb = cm_connect_complete_ind,
-	.mlme_cm_ext_disconnect_start_ind_cb = cm_disconnect_start_ind,
-	.mlme_cm_ext_disconnect_req_cb = cm_handle_disconnect_req,
-	.mlme_cm_ext_bss_peer_delete_req_cb = cm_send_bss_peer_delete_req,
-	.mlme_cm_ext_disconnect_complete_ind_cb = cm_disconnect_complete_ind,
-	.mlme_cm_ext_vdev_down_req_cb = cm_send_vdev_down_req,
-	.mlme_cm_ext_reassoc_req_cb = cm_handle_reassoc_req,
-	.mlme_cm_ext_roam_start_ind_cb = cm_handle_roam_start,
 };
-
-#ifdef WLAN_FEATURE_11BE_MLO
-static struct mlo_mlme_ext_ops mlo_ext_ops = {
-	.mlo_mlme_ext_peer_create = lim_mlo_proc_assoc_req_frm,
-	.mlo_mlme_ext_peer_delete = lim_mlo_cleanup_partner_peer,
-	.mlo_mlme_ext_peer_assoc_fail = lim_mlo_ap_sta_assoc_fail,
-	.mlo_mlme_ext_assoc_resp = lim_mlo_ap_sta_assoc_suc,
-};
-#endif

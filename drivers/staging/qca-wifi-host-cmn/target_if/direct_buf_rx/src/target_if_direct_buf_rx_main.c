@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1002,7 +1003,7 @@ static QDF_STATUS target_if_dbr_replenish_ring(struct wlan_objmgr_pdev *pdev,
 			struct direct_buf_rx_module_param *mod_param,
 			void *aligned_vaddr, uint32_t cookie)
 {
-	uint32_t *ring_entry;
+	uint64_t *ring_entry;
 	uint32_t dw_lo, dw_hi = 0, map_status;
 	void *hal_soc, *srng;
 	qdf_dma_addr_t paddr;
@@ -1021,6 +1022,11 @@ static QDF_STATUS target_if_dbr_replenish_ring(struct wlan_objmgr_pdev *pdev,
 	if (!psoc) {
 		direct_buf_rx_err("psoc is null");
 		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (cookie >= mod_param->dbr_ring_cfg->num_ptr) {
+		direct_buf_rx_err("invalid cookie %d", cookie);
+		return QDF_STATUS_E_INVAL;
 	}
 
 	dbr_psoc_obj = wlan_objmgr_psoc_get_comp_private_obj(psoc,
@@ -1055,7 +1061,7 @@ static QDF_STATUS target_if_dbr_replenish_ring(struct wlan_objmgr_pdev *pdev,
 	QDF_ASSERT(!((uint64_t)paddr % dbr_ring_cap->min_buf_align));
 	dbr_buf_pool[cookie].paddr = paddr;
 
-	hal_le_srng_access_start_in_cpu_order(hal_soc, srng);
+	hal_srng_access_start(hal_soc, srng);
 	ring_entry = hal_srng_src_get_next(hal_soc, srng);
 
 	if (!ring_entry) {
@@ -1067,10 +1073,8 @@ static QDF_STATUS target_if_dbr_replenish_ring(struct wlan_objmgr_pdev *pdev,
 	dw_lo = (uint64_t)paddr & 0xFFFFFFFF;
 	WMI_HOST_DBR_RING_ADDR_HI_SET(dw_hi, (uint64_t)paddr >> 32);
 	WMI_HOST_DBR_DATA_ADDR_HI_HOST_DATA_SET(dw_hi, cookie);
-	*ring_entry = qdf_cpu_to_le32(dw_lo);
-	ring_entry++;
-	*ring_entry = qdf_cpu_to_le32(dw_hi);
-	hal_le_srng_access_end_in_cpu_order(hal_soc, srng);
+	*ring_entry = (uint64_t)dw_hi << 32 | dw_lo;
+	hal_srng_access_end(hal_soc, srng);
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -1116,8 +1120,6 @@ static QDF_STATUS target_if_dbr_fill_ring(struct wlan_objmgr_pdev *pdev,
 			return QDF_STATUS_E_FAILURE;
 		}
 	}
-
-	direct_buf_rx_exit();
 
 	return QDF_STATUS_SUCCESS;
 }
@@ -1508,6 +1510,11 @@ static void *target_if_dbr_vaddr_lookup(
 
 	dbr_buf_pool = mod_param->dbr_buf_pool;
 
+	if (cookie >= mod_param->dbr_ring_cfg->num_ptr) {
+		direct_buf_rx_err("invalid cookie %d", cookie);
+		return NULL;
+	}
+
 	if (dbr_buf_pool[cookie].paddr == paddr) {
 		return dbr_buf_pool[cookie].vaddr +
 				dbr_buf_pool[cookie].offset;
@@ -1743,14 +1750,13 @@ static void target_if_dbr_add_ring_debug_entry(
 	ring_debug = &mod_debug->dbr_ring_debug[srng_id];
 
 	if (ring_debug->entries) {
-		if (hal_le_srng_access_start_in_cpu_order(hal_soc, srng)) {
+		if (hal_srng_access_start(hal_soc, srng)) {
 			direct_buf_rx_err("module %d - HAL srng access failed",
 					  mod_id);
 			return;
 		}
 		hal_get_sw_hptp(hal_soc, srng, &tp, &hp);
-		hal_le_srng_access_end_in_cpu_order(hal_soc, srng);
-		tp = qdf_le32_to_cpu(tp);
+		hal_srng_access_end(hal_soc, srng);
 		entry = &ring_debug->entries[ring_debug->ring_debug_idx];
 
 		entry->head_idx = hp;
@@ -2096,16 +2102,8 @@ QDF_STATUS target_if_direct_buf_rx_print_ring_stat(
 			mod_param =
 				&dbr_pdev_obj->dbr_mod_param[mod_idx][srng_id];
 			dbr_ring_cfg = mod_param->dbr_ring_cfg;
-			if (!dbr_ring_cfg) {
-				direct_buf_rx_info("dbr_ring_cfg is NULL");
-				direct_buf_rx_info("mod id %d mod %s", mod_idx,
-						   g_dbr_module_name[mod_idx].
-						   module_name_str);
-				continue;
-			}
 			srng = dbr_ring_cfg->srng;
 			hal_get_sw_hptp(hal_soc, srng, &tp, &hp);
-			tp = qdf_le32_to_cpu(tp);
 			direct_buf_rx_debug("|%11d|%14s|%10x|%10x|",
 					    mod_idx, g_dbr_module_name[mod_idx].
 					    module_name_str,

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -53,25 +54,22 @@ struct wlan_op_mode_peer_count {
 };
 
 /**
+ * wlan_construct_shortssid() - construct the short ssid with the help of
+ * shortssid table
+ * @ssid: pointer to ssid
+ * @ssid_len: ssid length
+ *
+ * return: short ssid length
+ */
+uint32_t wlan_construct_shortssid(uint8_t *ssid, uint8_t ssid_len);
+
+/**
  * wlan_chan_to_freq() - converts channel to frequency
  * @chan: channel number
  *
  * @return frequency of the channel
  */
 uint32_t wlan_chan_to_freq(uint8_t chan);
-
-/**
-  * wlan_get_320_center_freq() - find center frequencies for 320Mhz channel
-  * @freq: Primary frequency
-  * @center_freq1: possible 1st center frequency
-  * @center_freq2: possible 2nd center frequency
-  *
-  * return: void
-  **/
-void
-wlan_get_320_center_freq(qdf_freq_t freq,
-			 qdf_freq_t *center_freq1,
-			 qdf_freq_t *center_freq2);
 
 /**
  * wlan_freq_to_chan() - converts frequency to channel
@@ -422,9 +420,6 @@ uint16_t wlan_util_get_peer_count_for_mode(struct wlan_objmgr_pdev *pdev,
  * @WLAN_MD_OBJMGR_VDEV - wlan_objmgr_vdev
  * @WLAN_MD_OBJMGR_VDEV_MLME -vdev mlme
  * @WLAN_MD_OBJMGR_VDEV_SM - wlan_sm
- * @WLAN_MD_DP_SRNG_REO2PPE- dp_srng type PPE rx ring
- * @WLAN_MD_DP_SRNG_PPE2TCL - dp_srng type for PPE tx ring
- * @WLAN_MD_DP_SRNG_PPE_RELEASE - dp_srng type for PPE tx com ring
  * @WLAN_MD_MAX - Max value
  */
 enum wlan_minidump_host_data {
@@ -462,36 +457,14 @@ enum wlan_minidump_host_data {
 	WLAN_MD_OBJMGR_VDEV,
 	WLAN_MD_OBJMGR_VDEV_MLME,
 	WLAN_MD_OBJMGR_VDEV_SM,
-	WLAN_MD_DP_SRNG_REO2PPE,
-	WLAN_MD_DP_SRNG_PPE2TCL,
-	WLAN_MD_DP_SRNG_PPE_RELEASE,
 	WLAN_MD_MAX
 };
 
-/**
- * wlan_minidump_log() - Log memory address to be included in minidump
- * @start_addr: Start address of the memory to be dumped
- * @size: Size in bytes
- * @psoc_obj: Psoc Object
- * @type: Type of data structure
- * @name: String to identify this entry
- */
-void wlan_minidump_log(void *start_addr, const size_t size,
-		       void *psoc_obj,
+void wlan_minidump_log(void *start_addr, size_t size,
+		       void *psoc,
 		       enum wlan_minidump_host_data type,
 		       const char *name);
 
-/**
- * wlan_minidump_remove() - Remove memory address from  minidump
- * @start_addr: Start address of the memory previously added
- * @size: Size in bytes
- * @psoc_obj: Psoc Object
- * @type: Type of data structure
- * @name: String to identify this entry
- */
-void wlan_minidump_remove(void *start_addr, const size_t size,
-			  void *psoc_obj,
-			  enum wlan_minidump_host_data type,
-			  const char *name);
+void wlan_minidump_remove(void *addr);
 
 #endif /* _WLAN_UTILITY_H_ */

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -38,7 +39,7 @@
 #include "lim_ser_des_utils.h"
 #include "sch_api.h"
 #include "lim_send_messages.h"
-#include "wlan_connectivity_logging.h"
+#include "cds_ieee80211_common.h"
 
 /**
  * lim_process_deauth_frame
@@ -67,22 +68,28 @@ lim_process_deauth_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 	tpSirMacMgmtHdr pHdr;
 	struct pe_session *pRoamSessionEntry = NULL;
 	uint8_t roamSessionId;
+#ifdef WLAN_FEATURE_11W
 	uint32_t frameLen;
+#endif
 	int32_t frame_rssi;
 
 	pHdr = WMA_GET_RX_MAC_HEADER(pRxPacketInfo);
 
 	pBody = WMA_GET_RX_MPDU_DATA(pRxPacketInfo);
 	frame_rssi = (int32_t)WMA_GET_RX_RSSI_NORMALIZED(pRxPacketInfo);
+#ifdef WLAN_FEATURE_11W
 	frameLen = WMA_GET_RX_PAYLOAD_LEN(pRxPacketInfo);
 	if (frameLen < sizeof(reasonCode)) {
 		pe_err("Deauth Frame length invalid %d", frameLen);
 		return ;
 	}
+#endif
 
 	if (LIM_IS_STA_ROLE(pe_session) &&
 	    ((eLIM_SME_WT_DISASSOC_STATE == pe_session->limSmeState) ||
-	     (eLIM_SME_WT_DEAUTH_STATE == pe_session->limSmeState))) {
+	     (eLIM_SME_WT_DEAUTH_STATE == pe_session->limSmeState) ||
+	     (pe_session->limMlmState == eLIM_MLM_WT_SAE_AUTH_STATE &&
+	      pe_session->limSmeState == eLIM_SME_WT_AUTH_STATE))) {
 		/*Every 15th deauth frame will be logged in kmsg */
 		if (!(mac->lim.deauthMsgCnt & 0xF)) {
 			pe_debug("received Deauth frame in DEAUTH_WT_STATE"
@@ -114,9 +121,10 @@ lim_process_deauth_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 		pe_err("rx frame doesn't have valid a1 address, drop it");
 		return;
 	}
+
+#ifdef WLAN_FEATURE_11W
 	/* PMF: If this session is a PMF session, then ensure that this frame was protected */
-	if (pe_session->limRmfEnabled &&
-	    pe_session->is_key_installed &&
+	if (is_mgmt_protected(pe_session->vdev_id, (const uint8_t *)pHdr->sa) &&
 	    (WMA_GET_RX_DPU_FEEDBACK(pRxPacketInfo) &
 		DPU_FEEDBACK_UNPROTECTED_ERROR)) {
 		pe_debug("received an unprotected deauth from AP");
@@ -141,6 +149,7 @@ lim_process_deauth_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 							pe_session);
 		return;
 	}
+#endif
 
 	/* Get reasonCode from Deauthentication frame body */
 	reasonCode = sir_read_u16(pBody);
@@ -152,10 +161,6 @@ lim_process_deauth_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 			pe_session->limSmeState,
 			GET_LIM_SYSTEM_ROLE(pe_session));
 
-	wlan_connectivity_mgmt_event((struct wlan_frame_hdr *)pHdr,
-				     pe_session->vdev_id, reasonCode,
-				     0, frame_rssi, 0, 0, 0,
-				     WLAN_DEAUTH_RX);
 	lim_diag_event_report(mac, WLAN_PE_DIAG_DEAUTH_FRAME_EVENT,
 		pe_session, 0, reasonCode);
 
@@ -319,6 +324,40 @@ lim_process_deauth_frame(struct mac_context *mac, uint8_t *pRxPacketInfo,
 
 } /*** end lim_process_deauth_frame() ***/
 
+#ifdef WLAN_FEATURE_SAE
+/*
+ * lim_process_sae_auth_msg() - Process auth msg after recieving deauth
+ * @mac_ctx: Global MAC context
+ * @pe_session: PE session entry pointer
+ * @addr: peer address/ source address
+ *
+ * Return: None
+ */
+static void lim_process_sae_auth_msg(struct mac_context *mac_ctx,
+				     struct pe_session *pe_session,
+				     tSirMacAddr addr)
+{
+	struct sir_sae_msg *sae_msg;
+
+	sae_msg = qdf_mem_malloc(sizeof(*sae_msg));
+	if (!sae_msg)
+		return;
+
+	sae_msg->vdev_id = pe_session->vdev_id;
+	sae_msg->sae_status = IEEE80211_STATUS_UNSPECIFIED;
+	sae_msg->result_code = eSIR_SME_AUTH_REFUSED;
+	qdf_mem_copy(sae_msg->peer_mac_addr, addr, QDF_MAC_ADDR_SIZE);
+	lim_process_sae_msg(mac_ctx, sae_msg);
+
+	qdf_mem_free(sae_msg);
+}
+#else
+static inline void lim_process_sae_auth_msg(struct mac_context *mac_ctx,
+					    struct pe_session *pe_session,
+					    tSirMacAddr addr)
+{}
+#endif
+
 void lim_perform_deauth(struct mac_context *mac_ctx, struct pe_session *pe_session,
 			uint16_t rc, tSirMacAddr addr, int32_t frame_rssi)
 {
@@ -475,6 +514,18 @@ void lim_perform_deauth(struct mac_context *mac_ctx, struct pe_session *pe_sessi
 				pe_session->limMlmState, rc,
 				QDF_MAC_ADDR_REF(addr));
 			break;
+
+		case eLIM_MLM_WT_SAE_AUTH_STATE:
+			pe_debug("received Deauth frame state %X with "
+				 "reasonCode=%d from " QDF_MAC_ADDR_FMT,
+				 pe_session->limMlmState, rc,
+				 QDF_MAC_ADDR_REF(addr));
+
+			/* this will be treated as SAE authenticaton failure
+			 * and connect failure to userspace.
+			 */
+			lim_process_sae_auth_msg(mac_ctx, pe_session, addr);
+			return;
 
 		default:
 			pe_err("received Deauth frame in state %X with "

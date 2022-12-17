@@ -68,12 +68,6 @@ enum ce_id_type {
 	CE_ID_9,
 	CE_ID_10,
 	CE_ID_11,
-#ifdef QCA_WIFI_QCN9224
-	CE_ID_12,
-	CE_ID_13,
-	CE_ID_14,
-	CE_ID_15,
-#endif
 	CE_ID_MAX
 };
 
@@ -228,8 +222,6 @@ struct HIF_CE_state {
 	struct CE_handle *ce_diag;
 	struct ce_stats stats;
 	struct ce_ops *ce_services;
-	struct service_to_pipe *tgt_svc_map;
-	int sz_tgt_svc_map;
 };
 
 /*
@@ -351,16 +343,14 @@ void hif_get_target_ce_config(struct hif_softc *scn,
 		uint32_t *shadow_cfg_v1_sz_ret);
 
 #ifdef WLAN_FEATURE_EPPING
-void hif_ce_prepare_epping_config(struct hif_softc *scn,
-				  struct HIF_CE_state *hif_state);
+void hif_ce_prepare_epping_config(struct HIF_CE_state *hif_state);
 void hif_select_epping_service_to_pipe_map(struct service_to_pipe
 					   **tgt_svc_map_to_use,
 					   uint32_t *sz_tgt_svc_map_to_use);
 
 #else
 static inline
-void hif_ce_prepare_epping_config(struct hif_softc *scn,
-				  struct HIF_CE_state *hif_state)
+void hif_ce_prepare_epping_config(struct HIF_CE_state *hif_state)
 { }
 static inline
 void hif_select_epping_service_to_pipe_map(struct service_to_pipe

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -23,8 +24,13 @@
 #ifndef __CFG_MLME_GENERIC_H
 #define __CFG_MLME_GENERIC_H
 
+#ifdef WLAN_FEATURE_11W
 #define CFG_PMF_SA_QUERY_MAX_RETRIES_TYPE	CFG_INI_UINT
 #define CFG_PMF_SA_QUERY_RETRY_INTERVAL_TYPE	CFG_INI_UINT
+#else
+#define CFG_PMF_SA_QUERY_MAX_RETRIES_TYPE	CFG_UINT
+#define CFG_PMF_SA_QUERY_RETRY_INTERVAL_TYPE	CFG_UINT
+#endif /*WLAN_FEATURE_11W*/
 
 /**
  * enum monitor_mode_concurrency - Monitor mode concurrency
@@ -37,22 +43,6 @@ enum monitor_mode_concurrency {
 	MONITOR_MODE_CONC_AFTER_LAST,
 	MONITOR_MODE_CONC_MAX = MONITOR_MODE_CONC_AFTER_LAST - 1,
 };
-
-/**
- * enum wds_mode_type: wds mode
- * @WLAN_WDS_MODE_DISABLED: WDS is disabled
- * @WLAN_WDS_MODE_REPEATER: WDS repeater mode
- *
- * This is used for 'type' values in wds_mode
- */
-enum wlan_wds_mode {
-	WLAN_WDS_MODE_DISABLED  =  0,
-	WLAN_WDS_MODE_REPEATER  =  1,
-	/* keep this last */
-	WLAN_WDS_MODE_LAST,
-	WLAN_WDS_MODE_MAX = WLAN_WDS_MODE_LAST - 1,
-};
-
 /*
  * pmfSaQueryMaxRetries - Control PMF SA query retries for SAP
  * @Min: 0
@@ -100,7 +90,7 @@ enum wlan_wds_mode {
  * enable_rtt_mac_randomization - Enable/Disable rtt mac randomization
  * @Min: 0
  * @Max: 1
- * @Default: 1
+ * @Default: 0
  *
  * Usage: External
  *
@@ -108,7 +98,7 @@ enum wlan_wds_mode {
  */
 #define CFG_ENABLE_RTT_MAC_RANDOMIZATION CFG_INI_BOOL( \
 	"enable_rtt_mac_randomization", \
-	1, \
+	0, \
 	"Enable RTT MAC randomization")
 
 #define CFG_RTT3_ENABLE CFG_BOOL( \
@@ -164,7 +154,7 @@ enum wlan_wds_mode {
  * rf_test_mode_enabled - Enable rf test mode support
  * @Min: 0
  * @Max: 1
- * @Default: 0
+ * @Default: 1
  *
  * This cfg is used to set rf test mode support flag
  *
@@ -174,7 +164,7 @@ enum wlan_wds_mode {
  */
 #define CFG_RF_TEST_MODE_SUPP_ENABLED CFG_BOOL( \
 		"rf_test_mode_enabled", \
-		0, \
+		1, \
 		"rf test mode Enable Flag")
 
 /*
@@ -229,7 +219,7 @@ enum wlan_wds_mode {
  *
  * </ini>
  */
-#if defined(QCA_WIFI_EMULATION) || defined(QCA_WIFI_QCA6290)
+#if defined(QCA_WIFI_NAPIER_EMULATION) || defined(QCA_WIFI_QCA6290)
 #define CFG_PREVENT_LINK_DOWN CFG_INI_BOOL( \
 	"gPreventLinkDown", \
 	1, \
@@ -239,7 +229,7 @@ enum wlan_wds_mode {
 	"gPreventLinkDown", \
 	0, \
 	"Prevent Bus Link Down")
-#endif /* QCA_WIFI_EMULATION */
+#endif /* QCA_WIFI_NAPIER_EMULATION */
 
 /*
  * <ini>
@@ -344,7 +334,7 @@ enum wlan_wds_mode {
  * gEnableLpassSupport - Enable/disable LPASS Support
  * @Min: 0 (disabled)
  * @Max: 1 (enabled)
- * @Default: 1 (disabled) if WLAN_FEATURE_LPSS is defined, 0 otherwise
+ * @Default: 0 (disabled)
  *
  * Related: None
  *
@@ -357,7 +347,7 @@ enum wlan_wds_mode {
 #ifdef WLAN_FEATURE_LPSS
 #define CFG_ENABLE_LPASS_SUPPORT CFG_INI_BOOL( \
 	"gEnableLpassSupport", \
-	1, \
+	0, \
 	"Enable LPASS Support")
 #else
 #define CFG_ENABLE_LPASS_SUPPORT CFG_BOOL( \
@@ -629,7 +619,7 @@ enum wlan_wds_mode {
  * gRemoveTimeStampSyncCmd - Enable/Disable to remove time stamp sync cmd
  * @Min: 0
  * @Max: 1
- * @Default: 1
+ * @Default: 0
  *
  * This ini is used to enable/disable the removal of time stamp sync cmd.
  * If we disable this periodic time sync update to firmware then roaming
@@ -644,7 +634,7 @@ enum wlan_wds_mode {
  */
 #define CFG_REMOVE_TIME_STAMP_SYNC_CMD CFG_INI_BOOL( \
 	"gRemoveTimeStampSyncCmd", \
-	1, \
+	0, \
 	"Enable to remove time stamp sync cmd")
 
 /*
@@ -864,39 +854,64 @@ enum wlan_wds_mode {
 	CFG_VALUE_OR_DEFAULT, \
 	"Monitor mode concurrency supported")
 
-#ifdef FEATURE_WDS
 /*
  * <ini>
- *
- * wds_mode - wds mode supported
+ * tx_retry_multiplier - TX retry multiplier
  * @Min: 0
- * @Max: 1
+ * @Max: 500
  * @Default: 0
  *
- * Related: None
+ * This ini is used to indicate percentage to max retry limit to fw
+ * which can further be used by fw to multiply counter by
+ * tx_retry_multiplier percent.
  *
- * wds mode supported
- * 0 - wds mode disabled
- * 1 - wds repeater mode
- *
- * Supported Feature: General
+ * Supported Feature: STA/SAP
  *
  * Usage: External
  *
  * </ini>
  */
-#define CFG_WDS_MODE CFG_INI_UINT( \
-	"wds_mode", \
-	WLAN_WDS_MODE_DISABLED, \
-	WLAN_WDS_MODE_MAX, \
-	WLAN_WDS_MODE_DISABLED, \
+#define CFG_TX_RETRY_MULTIPLIER CFG_INI_UINT( \
+	"tx_retry_multiplier", \
+	0, \
+	500, \
+	0, \
 	CFG_VALUE_OR_DEFAULT, \
-	"wds mode supported")
+	"percentage of max retry limit")
 
-#define CFG_WDS_MODE_ALL CFG(CFG_WDS_MODE)
-#else
-#define CFG_WDS_MODE_ALL
-#endif
+/*
+ * <ini>
+ * mgmt_frame_hw_tx_retry_count - Set hw tx retry count for mgmt action
+ * frame
+ * @Min: N/A
+ * @Max: N/A
+ * @Default: N/A
+ *
+ * Set mgmt action frame hw tx retry count, string format looks like below:
+ * frame_hw_tx_retry_count="<frame type>,<retry count>,..."
+ * frame type is enum value of mlme_cfg_frame_type.
+ * Retry count max value is 127.
+ * For example:
+ * frame_hw_tx_retry_count="0,64,2,32"
+ * The above input string means:
+ * For p2p go negotiation request fame, hw retry count 64
+ * For p2p provision discovery request, hw retry count 32
+ *
+ * Related: None.
+ *
+ * Supported Feature: STA/P2P
+ *
+ * Usage: External
+ *
+ * </ini>
+ */
+#define MGMT_FRM_HW_TX_RETRY_COUNT_STR_LEN  (64)
+#define CFG_MGMT_FRAME_HW_TX_RETRY_COUNT CFG_INI_STRING( \
+		"mgmt_frame_hw_tx_retry_count", \
+		0, \
+		MGMT_FRM_HW_TX_RETRY_COUNT_STR_LEN, \
+		"", \
+		"Set mgmt action frame hw tx retry count")
 
 #define CFG_GENERIC_ALL \
 	CFG(CFG_ENABLE_DEBUG_PACKET_LOG) \
@@ -926,12 +941,13 @@ enum wlan_wds_mode {
 	CFG(CFG_ENABLE_BEACON_RECEPTION_STATS) \
 	CFG(CFG_REMOVE_TIME_STAMP_SYNC_CMD) \
 	CFG(CFG_MGMT_RETRY_MAX) \
+	CFG(CFG_RF_TEST_MODE_SUPP_ENABLED) \
 	CFG(CFG_BMISS_SKIP_FULL_SCAN) \
 	CFG(CFG_ENABLE_RING_BUFFER) \
 	CFG(CFG_DFS_CHAN_AGEOUT_TIME) \
 	CFG(CFG_SAE_CONNECION_RETRIES) \
 	CFG(CFG_WLS_6GHZ_CAPABLE) \
-	CFG(CFG_MONITOR_MODE_CONCURRENCY) \
-	CFG(CFG_RF_TEST_MODE_SUPP_ENABLED) \
-	CFG_WDS_MODE_ALL
+	CFG(CFG_MONITOR_MODE_CONCURRENCY)\
+	CFG(CFG_TX_RETRY_MULTIPLIER) \
+	CFG(CFG_MGMT_FRAME_HW_TX_RETRY_COUNT)
 #endif /* __CFG_MLME_GENERIC_H */

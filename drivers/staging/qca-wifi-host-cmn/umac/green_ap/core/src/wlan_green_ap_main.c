@@ -388,12 +388,9 @@ void wlan_green_ap_check_mode(struct wlan_objmgr_pdev *pdev,
 {
 	struct wlan_objmgr_vdev *vdev = (struct wlan_objmgr_vdev *)object;
 	uint8_t *flag = (uint8_t *)arg;
-	enum QDF_OPMODE mode = QDF_MAX_NO_OF_MODE;
 
 	wlan_vdev_obj_lock(vdev);
-	mode = wlan_vdev_mlme_get_opmode(vdev);
-
-	if (mode != QDF_SAP_MODE && mode != QDF_STA_MODE)
+	if (wlan_vdev_mlme_get_opmode(vdev) != QDF_SAP_MODE)
 		*flag = 1;
 
 	wlan_vdev_obj_unlock(vdev);

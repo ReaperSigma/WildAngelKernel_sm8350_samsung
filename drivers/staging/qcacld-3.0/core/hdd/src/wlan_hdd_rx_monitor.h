@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -21,7 +21,8 @@
 
 struct ol_txrx_ops;
 
-#ifdef FEATURE_MONITOR_MODE_SUPPORT
+#if defined(QCA_WIFI_QCA6290) || defined(QCA_WIFI_QCA6390) || \
+    defined(QCA_WIFI_QCA6490) || defined(QCA_WIFI_QCA6750)
 /**
  * hdd_rx_monitor_callback(): Callback function for receive monitor mode
  * @vdev: Handle to vdev object
@@ -81,7 +82,7 @@ static inline int hdd_disable_monitor_mode(void)
 	return 0;
 }
 
-#endif /* FEATURE_MONITOR_MODE_SUPPORT */
+#endif /* CONFIG_LITHIUM */
 
 #endif /* __WLAN_HDD_RX_MONITOR_H */
 

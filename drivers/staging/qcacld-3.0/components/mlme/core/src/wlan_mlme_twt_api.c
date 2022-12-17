@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -55,7 +56,7 @@ bool mlme_is_max_twt_sessions_reached(struct wlan_objmgr_psoc *psoc,
 		uint8_t existing_session_dialog_id =
 				peer_priv->twt_ctx.session_info[i].dialog_id;
 
-		if (existing_session_dialog_id != TWT_ALL_SESSIONS_DIALOG_ID &&
+		if (existing_session_dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID &&
 		    existing_session_dialog_id != dialog_id)
 			num_twt_sessions++;
 	}
@@ -95,7 +96,7 @@ bool mlme_is_twt_setup_in_progress(struct wlan_objmgr_psoc *psoc,
 		existing_session_dialog_id =
 			peer_priv->twt_ctx.session_info[i].dialog_id;
 		if (existing_session_dialog_id == dialog_id &&
-		    existing_session_dialog_id != TWT_ALL_SESSIONS_DIALOG_ID &&
+		    existing_session_dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID &&
 		    !setup_done) {
 			wlan_objmgr_peer_release_ref(peer, WLAN_MLME_NB_ID);
 			return true;
@@ -131,7 +132,7 @@ void mlme_add_twt_session(struct wlan_objmgr_psoc *psoc,
 
 	for (i = 0; i < peer_priv->twt_ctx.num_twt_sessions; i++) {
 		if (peer_priv->twt_ctx.session_info[i].dialog_id ==
-		    TWT_ALL_SESSIONS_DIALOG_ID) {
+		    WLAN_ALL_SESSIONS_DIALOG_ID) {
 			peer_priv->twt_ctx.session_info[i].dialog_id =
 							dialog_id;
 			break;
@@ -187,7 +188,7 @@ QDF_STATUS mlme_init_twt_context(struct wlan_objmgr_psoc *psoc,
 	peer = wlan_objmgr_get_peer_by_mac(psoc, peer_mac->bytes,
 					   WLAN_MLME_NB_ID);
 	if (!peer) {
-		mlme_legacy_err("Peer object not found");
+		mlme_legacy_debug("Peer object not found");
 		return QDF_STATUS_E_FAILURE;
 	}
 
@@ -195,17 +196,17 @@ QDF_STATUS mlme_init_twt_context(struct wlan_objmgr_psoc *psoc,
 							  WLAN_UMAC_COMP_MLME);
 	if (!peer_priv) {
 		wlan_objmgr_peer_release_ref(peer, WLAN_MLME_NB_ID);
-		mlme_legacy_err("peer mlme component object is NULL");
+		mlme_legacy_debug("peer mlme component object is NULL");
 		return QDF_STATUS_E_FAILURE;
 	}
 
 	peer_priv->twt_ctx.num_twt_sessions = WLAN_MAX_TWT_SESSIONS_PER_PEER;
 	for (i = 0; i < peer_priv->twt_ctx.num_twt_sessions; i++) {
 		if (peer_priv->twt_ctx.session_info[i].dialog_id == dialog_id ||
-		    dialog_id == TWT_ALL_SESSIONS_DIALOG_ID) {
+		    dialog_id == WLAN_ALL_SESSIONS_DIALOG_ID) {
 			peer_priv->twt_ctx.session_info[i].setup_done = false;
 			peer_priv->twt_ctx.session_info[i].dialog_id =
-					TWT_ALL_SESSIONS_DIALOG_ID;
+					WLAN_ALL_SESSIONS_DIALOG_ID;
 			mlme_set_twt_command_in_progress(
 				psoc, peer_mac,
 				peer_priv->twt_ctx.session_info[i].dialog_id,
@@ -267,10 +268,10 @@ mlme_init_all_peers_twt_context(struct wlan_objmgr_psoc *psoc,
 				peer_priv->twt_ctx.session_info[i].dialog_id;
 
 				if (existing_dialog_id == dialog_id ||
-				    dialog_id == TWT_ALL_SESSIONS_DIALOG_ID) {
+				    dialog_id == WLAN_ALL_SESSIONS_DIALOG_ID) {
 					peer_priv->twt_ctx.session_info[i].setup_done = false;
 					peer_priv->twt_ctx.session_info[i].dialog_id =
-							TWT_ALL_SESSIONS_DIALOG_ID;
+							WLAN_ALL_SESSIONS_DIALOG_ID;
 				}
 			}
 		}
@@ -316,11 +317,11 @@ bool mlme_is_twt_setup_done(struct wlan_objmgr_psoc *psoc,
 
 	for (i = 0; i < peer_priv->twt_ctx.num_twt_sessions; i++) {
 		if (peer_priv->twt_ctx.session_info[i].dialog_id == dialog_id ||
-		    dialog_id == TWT_ALL_SESSIONS_DIALOG_ID) {
+		    dialog_id == WLAN_ALL_SESSIONS_DIALOG_ID) {
 			is_setup_done =
 				peer_priv->twt_ctx.session_info[i].setup_done;
 
-			if (dialog_id != TWT_ALL_SESSIONS_DIALOG_ID ||
+			if (dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID ||
 			    is_setup_done)
 				break;
 		}
@@ -382,7 +383,7 @@ void mlme_set_twt_session_state(struct wlan_objmgr_psoc *psoc,
 	mlme_debug("set_state:%d for dialog_id:%d", state, dialog_id);
 	for (i = 0; i < peer_priv->twt_ctx.num_twt_sessions; i++) {
 		if (peer_priv->twt_ctx.session_info[i].dialog_id == dialog_id ||
-		    dialog_id == TWT_ALL_SESSIONS_DIALOG_ID) {
+		    dialog_id == WLAN_ALL_SESSIONS_DIALOG_ID) {
 			peer_priv->twt_ctx.session_info[i].state = state;
 			break;
 		}
@@ -416,7 +417,7 @@ mlme_get_twt_session_state(struct wlan_objmgr_psoc *psoc,
 
 	for (i = 0; i < peer_priv->twt_ctx.num_twt_sessions; i++) {
 		if (peer_priv->twt_ctx.session_info[i].dialog_id == dialog_id &&
-		    dialog_id != TWT_ALL_SESSIONS_DIALOG_ID) {
+		    dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID) {
 			wlan_objmgr_peer_release_ref(peer, WLAN_MLME_NB_ID);
 			return peer_priv->twt_ctx.session_info[i].state;
 		}
@@ -463,7 +464,7 @@ void mlme_set_twt_peer_capabilities(struct wlan_objmgr_psoc *psoc,
 	peer = wlan_objmgr_get_peer_by_mac(psoc, peer_mac->bytes,
 					   WLAN_MLME_NB_ID);
 	if (!peer) {
-		mlme_legacy_err("Peer object not found");
+		mlme_legacy_debug("Peer object not found");
 		return;
 	}
 
@@ -471,7 +472,7 @@ void mlme_set_twt_peer_capabilities(struct wlan_objmgr_psoc *psoc,
 							  WLAN_UMAC_COMP_MLME);
 	if (!peer_priv) {
 		wlan_objmgr_peer_release_ref(peer, WLAN_MLME_NB_ID);
-		mlme_legacy_err("peer mlme object is NULL");
+		mlme_legacy_debug("peer mlme object is NULL");
 		return;
 	}
 
@@ -564,11 +565,11 @@ mlme_sap_set_twt_all_peers_cmd_in_progress(struct wlan_objmgr_psoc *psoc,
 				peer_priv->twt_ctx.session_info[i].dialog_id;
 
 				if (existing_dialog_id == dialog_id ||
-				    dialog_id == TWT_ALL_SESSIONS_DIALOG_ID) {
+				    dialog_id == WLAN_ALL_SESSIONS_DIALOG_ID) {
 					peer_priv->twt_ctx.session_info[i].active_cmd = cmd;
 
 					if (dialog_id !=
-					    TWT_ALL_SESSIONS_DIALOG_ID) {
+					    WLAN_ALL_SESSIONS_DIALOG_ID) {
 						break;
 					}
 				}
@@ -641,11 +642,11 @@ mlme_twt_any_peer_cmd_in_progress(struct wlan_objmgr_psoc *psoc,
 				 peer_priv->twt_ctx.session_info[i].dialog_id;
 
 				if (existing_dialog_id == dialog_id ||
-				    dialog_id == TWT_ALL_SESSIONS_DIALOG_ID) {
+				    dialog_id == WLAN_ALL_SESSIONS_DIALOG_ID) {
 					cmd_in_progress = (active_cmd == cmd);
 
 					if (dialog_id !=
-						TWT_ALL_SESSIONS_DIALOG_ID ||
+						WLAN_ALL_SESSIONS_DIALOG_ID ||
 					    cmd_in_progress) {
 						wlan_objmgr_peer_release_ref(
 							peer,
@@ -708,11 +709,11 @@ bool mlme_sap_twt_peer_is_cmd_in_progress(struct wlan_objmgr_psoc *psoc,
 			peer_priv->twt_ctx.session_info[i].dialog_id;
 
 		if (existing_dialog_id == dialog_id ||
-		    dialog_id == TWT_ALL_SESSIONS_DIALOG_ID ||
-		    existing_dialog_id == TWT_ALL_SESSIONS_DIALOG_ID) {
+		    dialog_id == WLAN_ALL_SESSIONS_DIALOG_ID ||
+		    existing_dialog_id == WLAN_ALL_SESSIONS_DIALOG_ID) {
 			cmd_in_progress = (active_cmd == cmd);
 
-			if (dialog_id != TWT_ALL_SESSIONS_DIALOG_ID ||
+			if (dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID ||
 			    cmd_in_progress) {
 				break;
 			}
@@ -749,9 +750,9 @@ QDF_STATUS mlme_set_twt_command_in_progress(struct wlan_objmgr_psoc *psoc,
 
 	for (i = 0; i < peer_priv->twt_ctx.num_twt_sessions; i++) {
 		if (peer_priv->twt_ctx.session_info[i].dialog_id == dialog_id ||
-		    dialog_id == TWT_ALL_SESSIONS_DIALOG_ID) {
+		    dialog_id == WLAN_ALL_SESSIONS_DIALOG_ID) {
 			peer_priv->twt_ctx.session_info[i].active_cmd = cmd;
-			if (dialog_id != TWT_ALL_SESSIONS_DIALOG_ID)
+			if (dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID)
 				break;
 		}
 	}
@@ -823,18 +824,18 @@ bool mlme_twt_is_command_in_progress(struct wlan_objmgr_psoc *psoc,
 			*pactive_cmd = active_cmd;
 
 		if (peer_priv->twt_ctx.session_info[i].dialog_id == dialog_id ||
-		    dialog_id == TWT_ALL_SESSIONS_DIALOG_ID) {
+		    dialog_id == WLAN_ALL_SESSIONS_DIALOG_ID) {
 			if (cmd == WLAN_TWT_ANY) {
 				is_command_in_progress =
 					(active_cmd != WLAN_TWT_NONE);
 
-				if (dialog_id != TWT_ALL_SESSIONS_DIALOG_ID ||
+				if (dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID ||
 				    is_command_in_progress)
 					break;
 			} else {
 				is_command_in_progress = (active_cmd == cmd);
 
-				if (dialog_id != TWT_ALL_SESSIONS_DIALOG_ID ||
+				if (dialog_id != WLAN_ALL_SESSIONS_DIALOG_ID ||
 				    is_command_in_progress)
 					break;
 			}

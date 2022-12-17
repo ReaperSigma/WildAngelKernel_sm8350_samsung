@@ -62,8 +62,6 @@ QDF_STATUS hif_initialize_ipci_ops(struct hif_softc *hif_sc)
 	bus_ops->hif_irq_enable = &hif_dummy_irq_enable;
 	bus_ops->hif_dump_registers = &hif_ipci_dump_registers;
 	bus_ops->hif_dump_target_memory = &hif_ce_dump_target_memory;
-	bus_ops->hif_reg_read32 = &hif_dummy_bus_reg_read32;
-	bus_ops->hif_reg_write32 = &hif_dummy_bus_reg_write32;
 	bus_ops->hif_ipa_get_ce_resource = &hif_ce_ipa_get_ce_resource;
 	bus_ops->hif_mask_interrupt_call = &hif_dummy_mask_interrupt_call;
 	bus_ops->hif_enable_power_management =
@@ -85,9 +83,6 @@ QDF_STATUS hif_initialize_ipci_ops(struct hif_softc *hif_sc)
 	bus_ops->hif_config_irq_affinity =
 		&hif_dummy_config_irq_affinity;
 #endif
-	bus_ops->hif_config_irq_by_ceid = &hif_dummy_config_irq_by_ceid;
-	bus_ops->hif_config_irq_clear_cpu_affinity =
-		&hif_ipci_config_irq_clear_cpu_affinity;
 	bus_ops->hif_log_bus_info = &hif_dummy_log_bus_info;
 	bus_ops->hif_enable_grp_irqs = hif_ipci_enable_grp_irqs;
 	bus_ops->hif_disable_grp_irqs = hif_ipci_disable_grp_irqs;

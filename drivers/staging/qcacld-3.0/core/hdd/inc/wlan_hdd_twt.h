@@ -263,7 +263,9 @@ void hdd_send_twt_del_all_sessions_to_userspace(struct hdd_adapter *adapter);
 /**
  * hdd_twt_concurrency_update_on_scc_mcc() - Send TWT disable command to fw if
  * SCC/MCC exists in two vdevs
- * @hdd_ctx: hdd context pointer
+ * @pdev: pdev pointer
+ * @object: object pointer
+ * @arg: arg pointer
  *
  * Return: None
  */
@@ -273,7 +275,9 @@ void hdd_twt_concurrency_update_on_scc_mcc(struct wlan_objmgr_pdev *pdev,
 /**
  * hdd_twt_concurrency_update_on_dbs() - Send TWT enable command to fw if DBS
  * exists in two vdevs
- * @hdd_ctx: hdd context pointer
+ * @pdev: pdev pointer
+ * @object: object pointer
+ * @arg: arg pointer
  *
  * Return: None
  */
@@ -283,7 +287,7 @@ void hdd_twt_concurrency_update_on_dbs(struct wlan_objmgr_pdev *pdev,
 /**
  * __hdd_twt_update_work_handler() - TWT work handler to send TWT enable/disable
  * command to fw
- * @hdd_ctx: HDD pointer context
+ * @hdd_ctx: HDD context pointer
  *
  * Return: None
  */

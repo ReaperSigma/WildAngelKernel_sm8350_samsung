@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -1157,7 +1157,7 @@
  * FastRoamEnabled - Enable fast roaming
  * @Min: 0
  * @Max: 1
- * @Default: 1
+ * @Default: 0
  *
  * This ini is used to inform FW to enable fast roaming
  *
@@ -1171,7 +1171,7 @@
  */
 #define CFG_LFR_FEATURE_ENABLED CFG_INI_BOOL( \
 	"FastRoamEnabled", \
-	1, \
+	0, \
 	"Enable fast roaming")
 
 /*
@@ -1375,7 +1375,7 @@
 
 /*
  * <ini>
- * gRoamRestTimeMin/RoamScan_HomeTime - Set min neighbor scan timer period
+ * gRoamRestTimeMin - Set min neighbor scan timer period
  * @Min: 3
  * @Max: 300
  * @Default: 50
@@ -1394,7 +1394,7 @@
  * </ini>
  */
 #define CFG_LFR_NEIGHBOR_SCAN_MIN_TIMER_PERIOD CFG_INI_UINT( \
-	"gRoamRestTimeMin RoamScan_HomeTime", \
+	"gRoamRestTimeMin", \
 	3, \
 	300, \
 	50, \
@@ -1403,9 +1403,8 @@
 
 /*
  * <ini>
- * gNeighborLookupThreshold/RoamRSSI_Trigger - Set neighbor lookup rssi
- * threshold
- * @Min: -100
+ * gNeighborLookupThreshold - Set neighbor lookup rssi threshold
+ * @Min: 10
  * @Max: 120
  * @Default: 78
  *
@@ -1419,9 +1418,9 @@
  *
  * </ini>
  */
-#define CFG_LFR_NEIGHBOR_LOOKUP_RSSI_THRESHOLD CFG_INI_INT( \
-	"gNeighborLookupThreshold RoamRSSI_Trigger", \
-	-100, \
+#define CFG_LFR_NEIGHBOR_LOOKUP_RSSI_THRESHOLD CFG_INI_UINT( \
+	"gNeighborLookupThreshold", \
+	10, \
 	120, \
 	78, \
 	CFG_VALUE_OR_DEFAULT, \
@@ -1460,8 +1459,7 @@
 
 /*
  * <ini>
- * gRoamRescanRssiDiff/RoamScan_StepRSSI - Sets RSSI for Scan trigger in
- * firmware
+ * gRoamRescanRssiDiff - Sets RSSI for Scan trigger in firmware
  * @Min: 0
  * @Max: 100
  * @Default: 5
@@ -1479,7 +1477,7 @@
  * </ini>
  */
 #define CFG_LFR_ROAM_RESCAN_RSSI_DIFF CFG_INI_UINT( \
-	"gRoamRescanRssiDiff RoamScan_StepRSSI", \
+	"gRoamRescanRssiDiff", \
 	0, \
 	100, \
 	5, \
@@ -1514,8 +1512,7 @@
 
 /*
  * <ini>
- * gNeighborScanChannelMaxTime/RoamScan_ActiveCH_DwellTime - Set neighbor scan
- * channel max time
+ * gNeighborScanChannelMaxTime - Set neighbor scan channel max time
  * @Min: 3
  * @Max: 300
  * @Default: 40
@@ -1532,7 +1529,7 @@
  * </ini>
  */
 #define CFG_LFR_NEIGHBOR_SCAN_MAX_CHAN_TIME CFG_INI_UINT( \
-	"gNeighborScanChannelMaxTime RoamScan_ActiveCH_DwellTime", \
+	"gNeighborScanChannelMaxTime", \
 	3, \
 	300, \
 	40, \
@@ -1674,7 +1671,7 @@
  * gAllowDFSChannelRoam - Allow dfs channel in roam
  * @Min: 0
  * @Max: 2
- * @Default: 1
+ * @Default: 0
  *
  * This ini is used to set default dfs channel
  *
@@ -1690,7 +1687,7 @@
 	"gAllowDFSChannelRoam", \
 	0, \
 	2, \
-	1, \
+	0, \
 	CFG_VALUE_OR_DEFAULT, \
 	"Allow dfs channel in roam")
 
@@ -1868,7 +1865,7 @@
 
 /*
  * <ini>
- * gRoamScanHomeAwayTime/RoamScan_AwayTime - Sets the Home Away Time to firmware
+ * gRoamScanHomeAwayTime - Sets the Home Away Time to firmware
  * @Min: 0
  * @Max: 300
  * @Default: 0
@@ -1886,7 +1883,7 @@
  * </ini>
  */
 #define CFG_LFR_ROAM_SCAN_HOME_AWAY_TIME CFG_INI_UINT( \
-	"gRoamScanHomeAwayTime RoamScan_AwayTime", \
+	"gRoamScanHomeAwayTime", \
 	0, \
 	300, \
 	0, \
@@ -1941,8 +1938,7 @@
 
 /*
  * <ini>
- * bss_load_threshold/RoamCU_Trigger - bss load above which the STA should
- * trigger roaming
+ * bss_load_threshold - bss load above which the STA should trigger roaming
  * @Min: 0
  * @Max: 100
  * @Default: 70
@@ -1959,7 +1955,7 @@
  * </ini>
  */
 #define CFG_BSS_LOAD_THRESHOLD CFG_INI_UINT( \
-		"bss_load_threshold RoamCU_Trigger", \
+		"bss_load_threshold", \
 		0, \
 		100, \
 		70, \
@@ -1992,8 +1988,7 @@
 
 /*
  * <ini>
- * bss_load_trigger_5g_rssi_threshold/RoamCU_5GRSSIRange -
- * Current AP minimum RSSI in dBm below
+ * bss_load_trigger_5g_rssi_threshold - Current AP minimum RSSI in dBm below
  * which roaming can be triggered if BSS load exceeds bss_load_threshold.
  * @Min: -120
  * @Max: 0
@@ -2012,7 +2007,7 @@
  * </ini>
  */
 #define CFG_BSS_LOAD_TRIG_5G_RSSI_THRES CFG_INI_INT( \
-	"bss_load_trigger_5g_rssi_threshold RoamCU_5GRSSIRange", \
+	"bss_load_trigger_5g_rssi_threshold", \
 	-120, \
 	0, \
 	-70, \
@@ -2021,8 +2016,7 @@
 
 /*
  * <ini>
- * bss_load_trigger_2g_rssi_threshold/RoamCU_24GRSSIRange -
- * Current AP minimum RSSI in dBm below
+ * bss_load_trigger_2g_rssi_threshold - Current AP minimum RSSI in dBm below
  * which roaming can be triggered if BSS load exceeds bss_load_threshold.
  * @Min: -120
  * @Max: 0
@@ -2041,7 +2035,7 @@
  * </ini>
  */
 #define CFG_BSS_LOAD_TRIG_2G_RSSI_THRES CFG_INI_INT( \
-	"bss_load_trigger_2g_rssi_threshold RoamCU_24GRSSIRange", \
+	"bss_load_trigger_2g_rssi_threshold", \
 	-120, \
 	0, \
 	-60, \
@@ -2297,12 +2291,11 @@
 
 /*
  * <ini>
- * idle_roam_rssi_delta/RoamIdle_RSSIVariation - This threshold is the criteria
- * to decide whether DUT is idle or moving. If rssi delta is more than
- * configured threshold then its considered as not idle. RSSI delta is entered
- *in dBm. Idle roaming can be triggered if the connected AP rssi change exceeds
- * or falls below the rssi delta and if other criteria of ini "enable_idle_roam"
- * is met
+ * idle_roam_rssi_delta - This threshold is the criteria to decide whether DUT
+ * is idle or moving. If rssi delta is more than configured thresold then its
+ * considered as not idle. RSSI delta is entered in dBm. Idle roaming can be
+ * triggered if the connected AP rssi change exceeds or falls below the
+ * rssi delta and if other criteria of ini "enable_idle_roam" is met
  * @Min: 0
  * @Max: 50
  * @Default: 3
@@ -2316,7 +2309,7 @@
  * </ini>
  */
 #define CFG_LFR_IDLE_ROAM_RSSI_DELTA CFG_INI_UINT( \
-	"idle_roam_rssi_delta RoamIdle_RSSIVariation", \
+	"idle_roam_rssi_delta", \
 	0, \
 	50, \
 	3, \
@@ -2353,8 +2346,8 @@
 
 /*
  * <ini>
- * idle_data_packet_count/RoamIdle_InactivePacketCount - No of tx/rx packets
- * above which the connection is not idle.
+ * idle_data_packet_count - No of tx/rx packets above which the connection is
+ * not idle.
  * @Min: 0
  * @Max: 0xFFFFFFFF
  * @Default: 10
@@ -2373,7 +2366,7 @@
  * </ini>
  */
 #define CFG_LFR_IDLE_ROAM_PACKET_COUNT CFG_INI_UINT( \
-	"idle_data_packet_count RoamIdle_InactivePacketCount", \
+	"idle_data_packet_count", \
 	0, \
 	0xFFFFFFFF, \
 	10, \
@@ -2382,9 +2375,9 @@
 
 /*
  * <ini>
- * idle_roam_min_rssi/RoamIdle_MinRSSI - Minimum RSSI of connected AP, below
- * which idle roam scan can be triggered if other criteria of ini
- * "enable_idle_roam" is met.
+ * idle_roam_min_rssi - Minimum RSSI of connected AP, below which
+ * idle roam scan can be triggered if other criteria of ini "enable_idle_roam"
+ * is met.
  * @Min: -96
  * @Max: 0
  * @Default: -65
@@ -2398,7 +2391,7 @@
  * </ini>
  */
 #define CFG_LFR_IDLE_ROAM_MIN_RSSI CFG_INI_INT( \
-	"idle_roam_min_rssi RoamIdle_MinRSSI", \
+	"idle_roam_min_rssi", \
 	-96, \
 	0, \
 	-65, \
@@ -2407,7 +2400,7 @@
 
 /*
  * <ini>
- * idle_roam_band/RoamIdle_TriggerBand - Band on which idle roam scan will be
+ * idle_roam_band - Band on which idle roam scan will be
  * enabled
  * @Min: 0
  * @Max: 2
@@ -2426,7 +2419,7 @@
  * </ini>
  */
 #define CFG_LFR_IDLE_ROAM_BAND CFG_INI_UINT( \
-	"idle_roam_band RoamIdle_TriggerBand", \
+	"idle_roam_band", \
 	0, \
 	2, \
 	0, \
@@ -2463,8 +2456,7 @@
  * ROAM_TRIGGER_REASON_ESS_RSSI    BIT 16
  * ROAM_TRIGGER_REASON_WTC_BTM     BIT 17
  * ROAM_TRIGGER_REASON_PMK_TIMEOUT BIT 18
- * ROAM_TRIGGER_REASON_BTC         BIT 19
- * ROAM_TRIGGER_REASON_MAX         BIT 20
+ * ROAM_TRIGGER_REASON_MAX         BIT 19
  *
  * Related: none
  *
@@ -2773,8 +2765,8 @@
 
 /*
  * <ini>
- * roam_inactive_data_count/RoamScan_InactiveCount - Maximum allowed data
- * packets count during roam_scan_inactivity_time.
+ * roam_inactive_data_count - Maximum allowed data packets count during
+ * roam_scan_inactivity_time.
  *
  * @Min: 0
  * @Max: 0xFFFFFFFF
@@ -2793,7 +2785,7 @@
  * </ini>
  */
 #define CFG_ROAM_INACTIVE_COUNT CFG_INI_UINT( \
-	"roam_inactive_data_count RoamScan_InactiveCount", \
+	"roam_inactive_data_count", \
 	0, \
 	0xFFFFFFFF, \
 	10, \

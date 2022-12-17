@@ -62,7 +62,6 @@ int ucfg_cfr_start_capture(struct wlan_objmgr_pdev *pdev,
 	int status;
 	struct pdev_cfr *pa;
 	struct peer_cfr *pe;
-	struct wlan_objmgr_psoc *psoc;
 
 	pa = wlan_objmgr_pdev_get_comp_private_obj(pdev, WLAN_UMAC_COMP_CFR);
 	if (NULL == pa) {
@@ -82,14 +81,11 @@ int ucfg_cfr_start_capture(struct wlan_objmgr_pdev *pdev,
 		return -EINVAL;
 	}
 
-	psoc = wlan_pdev_get_psoc(pdev);
-	if (!psoc) {
-		cfr_err("psoc is null!");
+	if ((params->period < 0) || (params->period > MAX_CFR_PRD) ||
+		(params->period % 10)) {
+		cfr_err("Invalid period value: %d", params->period);
 		return -EINVAL;
 	}
-
-	if (!(tgt_cfr_validate_period(psoc, params->period)))
-		return -EINVAL;
 
 	if (!(params->period) && (pa->cfr_timer_enable)) {
 		cfr_err("Single shot capture is not allowed during periodic capture");
@@ -439,7 +435,7 @@ void ucfg_cfr_capture_data(struct wlan_objmgr_psoc *psoc, uint32_t vdev_id,
 	 * find data pointer from mem index and start address of memory.
 	 */
 	payload = vaddr + mem_index;
-	payload_len = hdr->u.meta_legacy.length;
+	payload_len = hdr->u.meta_leg.length;
 
 	/* Write data into streamfs */
 	tgt_cfr_info_send(pdev, hdr, sizeof(struct csi_cfr_header),
@@ -467,7 +463,7 @@ exit:
 
 #ifdef WLAN_ENH_CFR_ENABLE
 
-static
+static inline
 QDF_STATUS dev_sanity_check(struct wlan_objmgr_vdev *vdev,
 			    struct wlan_objmgr_pdev **ppdev,
 			    struct pdev_cfr **ppcfr)

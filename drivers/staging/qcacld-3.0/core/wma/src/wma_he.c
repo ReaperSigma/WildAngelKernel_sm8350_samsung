@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -713,6 +714,14 @@ void wma_print_he_ppet(void *he_ppet)
 	for (ru_count = 0; ru_bit_mask; ru_bit_mask >>= 1)
 		if (ru_bit_mask & 0x1)
 			ru_count++;
+	if (numss > WMI_HOST_MAX_NUM_SS) {
+		wma_err("invalid numss_m1 %d", ppet->numss_m1);
+		return;
+	}
+	if (ru_count > HE_PEPT_RU_IDX_LEN) {
+		wma_err("invalid ru_count 0x%08x", ppet->ru_bit_mask);
+		return;
+	}
 
 	if (ru_count > 0) {
 		wma_debug("PPET has following RU INDEX,");
@@ -1395,8 +1404,10 @@ QDF_STATUS wma_update_he_ops_ie(tp_wma_handle wma, uint8_t vdev_id,
 	QDF_STATUS ret;
 	uint32_t dword_he_op = 0;
 
-	if (wma_validate_handle(wma))
+	if (!wma) {
+		wma_err("wrong wma_handle....");
 		return QDF_STATUS_E_FAILURE;
+	}
 
 	WMI_HEOPS_COLOR_SET(dword_he_op, he_op->bss_color);
 	WMI_HEOPS_DEFPE_SET(dword_he_op, he_op->default_pe);
@@ -1430,8 +1441,10 @@ void wma_set_he_txbf_params(uint8_t vdev_id, bool su_bfer,
 	QDF_STATUS status;
 	tp_wma_handle wma = cds_get_context(QDF_MODULE_ID_WMA);
 
-	if (!wma)
+	if (!wma) {
+		wma_err("Invalid WMA handle");
 		return;
+	}
 
 	hemu_mode = DOT11AX_HEMU_MODE;
 	hemu_mode |= ((su_bfer << HE_SUBFER) | (su_bfee << HE_SUBFEE) |
@@ -1465,8 +1478,10 @@ QDF_STATUS wma_get_he_capabilities(struct he_capability *he_cap)
 	tp_wma_handle wma_handle;
 
 	wma_handle = cds_get_context(QDF_MODULE_ID_WMA);
-	if (!wma_handle)
+	if (!wma_handle) {
+		wma_err("Invalid WMA handle");
 		return QDF_STATUS_E_FAILURE;
+	}
 
 	qdf_mem_copy(he_cap->phy_cap,
 		     &wma_handle->he_cap.phy_cap,

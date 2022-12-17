@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -186,7 +186,7 @@ typedef struct s_qdf_trace_data {
 #define MAX_QDF_DP_TRACE_RECORDS       2000
 #endif
 
-#define QDF_DP_TRACE_RECORD_SIZE       50 /* bytes */
+#define QDF_DP_TRACE_RECORD_SIZE       40
 #define INVALID_QDF_DP_TRACE_ADDR      0xffffffff
 #define QDF_DP_TRACE_VERBOSITY_HIGH		4
 #define QDF_DP_TRACE_VERBOSITY_MEDIUM		3
@@ -350,8 +350,6 @@ struct qdf_dp_trace_ptr_buf {
  * @type: packet type
  * @subtype: packet subtype
  * @dir: direction
- * @proto_priv_data: protocol private data
- * can be stored in this.
  */
 struct qdf_dp_trace_proto_buf {
 	struct qdf_mac_addr sa;
@@ -360,11 +358,6 @@ struct qdf_dp_trace_proto_buf {
 	uint8_t type;
 	uint8_t subtype;
 	uint8_t dir;
-	/* for ICMP priv data is bit offset 38 to 42
-	 * 38-40 ICMP_ICMP_ID and
-	 * 40-42 ICMP_SEQ_NUM_OFFSET
-	 */
-	uint32_t proto_priv_data;
 };
 
 /**
@@ -545,8 +538,6 @@ enum qdf_dpt_debugfs_state {
 	QDF_DPT_DEBUGFS_STATE_SHOW_COMPLETE,
 };
 
-#define QDF_WIFI_MODULE_PARAMS_FILE "wifi_module_param.ini"
-
 typedef void (*tp_qdf_trace_cb)(void *p_mac, tp_qdf_trace_record, uint16_t);
 typedef void (*tp_qdf_state_info_cb) (char **buf, uint16_t *size);
 #ifdef WLAN_FEATURE_MEMDUMP_ENABLE
@@ -604,59 +595,6 @@ QDF_STATUS qdf_trace_spin_lock_init(void)
 }
 #endif
 #endif
-
-#ifdef WLAN_MAX_LOGS_PER_SEC
-/**
- * qdf_detected_excessive_logging() - Excessive logging detected
- *
- * Track logging count using a quasi-tumbling window.
- * If the max logging count for a given window is exceeded,
- * return true else fails.
- *
- * Return: true/false
- */
-bool qdf_detected_excessive_logging(void);
-
-/**
- * qdf_rl_print_count_set() - set the ratelimiting print count
- * @rl_print_time: ratelimiting print count
- *
- * Return: none
- */
-void qdf_rl_print_count_set(uint32_t rl_print_count);
-
-/**
- * qdf_rl_print_time_set() - set the ratelimiting print time
- * @rl_print_time: ratelimiting print time
- *
- * Return: none
- */
-void qdf_rl_print_time_set(uint32_t rl_print_time);
-
-/**
- * qdf_rl_print_supressed_log() - print the supressed logs count
- *
- * Return: none
- */
-void qdf_rl_print_supressed_log(void);
-
-/**
- * qdf_rl_print_supressed_inc() - increment the supressed logs count
- *
- * Return: none
- */
-void qdf_rl_print_supressed_inc(void);
-
-#else /* WLAN_MAX_LOGS_PER_SEC */
-static inline bool qdf_detected_excessive_logging(void)
-{
-	return false;
-}
-static inline void qdf_rl_print_count_set(uint32_t rl_print_count) {}
-static inline void qdf_rl_print_time_set(uint32_t rl_print_time) {}
-static inline void qdf_rl_print_supressed_log(void) {}
-static inline void qdf_rl_print_supressed_inc(void) {}
-#endif /* WLAN_MAX_LOGS_PER_SEC */
 
 #ifdef ENABLE_MTRACE_LOG
 /**
@@ -853,22 +791,9 @@ enum qdf_dp_tx_rx_status qdf_dp_get_status_from_htt(uint8_t status);
  * Return : the status that from qdf_dp_tx_rx_status
  */
 enum qdf_dp_tx_rx_status qdf_dp_get_status_from_a_status(uint8_t status);
-/**
- * qdf_dp_trace_ptr() - record dptrace
- * @code: dptrace code
- * @pdev_id: pdev_id
- * @data: data
- * @size: size of data
- * @msdu_id: msdu_id
- * @status: return status
- * @qdf_tx_status: qdf tx rx status
- *
- * Return: none
- */
 void qdf_dp_trace_ptr(qdf_nbuf_t nbuf, enum QDF_DP_TRACE_ID code,
 		      uint8_t pdev_id, uint8_t *data, uint8_t size,
-		      uint16_t msdu_id, uint16_t buf_arg_status,
-		      enum qdf_dp_tx_rx_status qdf_tx_status);
+		      uint16_t msdu_id, uint16_t status);
 void qdf_dp_trace_throttle_live_mode(bool high_bw_request);
 
 /**
@@ -908,15 +833,14 @@ uint8_t qdf_dp_get_no_of_record(void);
  * @dir: direction
  * @pdev_id: pdev id
  * @print: to print this proto pkt or not
- * @proto_priv_data: protocol specific private
- * data.
+ *
  * Return: none
  */
 void
 qdf_dp_trace_proto_pkt(enum QDF_DP_TRACE_ID code, uint8_t vdev_id,
 	uint8_t *sa, uint8_t *da, enum qdf_proto_type type,
 	enum qdf_proto_subtype subtype, enum qdf_proto_dir dir,
-	uint8_t pdev_id, bool print, uint32_t proto_priv_data);
+	uint8_t pdev_id, bool print);
 
 void qdf_dp_trace_disable_live_mode(void);
 void qdf_dp_trace_enable_live_mode(void);
@@ -1141,10 +1065,24 @@ enum qdf_dp_tx_rx_status qdf_dp_get_status_from_a_status(uint8_t status)
 }
 #endif
 
+#ifdef WLAN_DEBUG
 void qdf_trace_display(void);
 
 int __printf(3, 4) qdf_snprintf(char *str_buffer, unsigned int size,
 				char *str_format, ...);
+#else
+static inline
+void qdf_trace_display(void)
+{
+}
+
+static inline
+int __printf(3, 4) qdf_snprintf(char *str_buffer, unsigned int size,
+				char *str_format, ...)
+{
+	return 0;
+}
+#endif
 
 #define QDF_SNPRINTF qdf_snprintf
 
@@ -1271,6 +1209,8 @@ qdf_tso_seg_dbg_zero(struct qdf_tso_seg_elem_t *tsoseg)
 
 #endif /* TSOSEG_DEBUG */
 
+#ifdef QDF_ENABLE_TRACING
+#ifdef WLAN_DEBUG
 /**
  * qdf_trace_hex_dump() - externally called hex dump function
  * @module: Module identifier a member of the QDF_MODULE_ID enumeration that
@@ -1287,6 +1227,13 @@ qdf_tso_seg_dbg_zero(struct qdf_tso_seg_elem_t *tsoseg)
  */
 void qdf_trace_hex_dump(QDF_MODULE_ID module, QDF_TRACE_LEVEL level,
 			void *data, int buf_len);
+#else
+static inline
+void qdf_trace_hex_dump(QDF_MODULE_ID module, QDF_TRACE_LEVEL level,
+			void *data, int buf_len)
+{
+}
+#endif
 
 /**
  * qdf_trace_hex_ascii_dump() - externally called hex and ascii dump function
@@ -1304,6 +1251,12 @@ void qdf_trace_hex_dump(QDF_MODULE_ID module, QDF_TRACE_LEVEL level,
  */
 void qdf_trace_hex_ascii_dump(QDF_MODULE_ID module, QDF_TRACE_LEVEL level,
 			      void *data, int buf_len);
+#else
+static inline void qdf_trace_hex_dump(QDF_MODULE_ID module, QDF_TRACE_LEVEL level,
+			void *data, int buf_len) {}
+static inline void qdf_trace_hex_ascii_dump(QDF_MODULE_ID module, QDF_TRACE_LEVEL level,
+			      void *data, int buf_len) {}
+#endif
 
 #define ERROR_CODE                      -1
 #define QDF_MAX_NAME_SIZE               32
@@ -1311,6 +1264,7 @@ void qdf_trace_hex_ascii_dump(QDF_MODULE_ID module, QDF_TRACE_LEVEL level,
 
 #define MAX_SUPPORTED_CATEGORY QDF_MODULE_ID_MAX
 
+#ifdef WLAN_DEBUG
 /**
  * qdf_set_pidx() - Sets the global qdf_pidx.
  * @pidx : Index of print control object assigned to the module
@@ -1328,9 +1282,22 @@ int qdf_get_pidx(void);
  * Shared print control index
  * for converged debug framework
  */
+#else
+static inline
+void qdf_set_pidx(int pidx)
+{
+}
+
+static inline
+int qdf_get_pidx(void)
+{
+	return 0;
+}
+#endif /* WLAN_DEBUG */
 
 #define QDF_PRINT_IDX_SHARED -1
 
+#ifdef WLAN_DEBUG
 /**
  * QDF_PRINT_INFO() - Generic wrapper API for logging
  * @idx : Index of print control object
@@ -1351,6 +1318,14 @@ int qdf_get_pidx(void);
 void QDF_PRINT_INFO(unsigned int idx, QDF_MODULE_ID module,
 		    QDF_TRACE_LEVEL level,
 		    char *str_format, ...);
+#else
+static inline
+void QDF_PRINT_INFO(unsigned int idx, QDF_MODULE_ID module,
+		    QDF_TRACE_LEVEL level,
+		    char *str_format, ...)
+{
+}
+#endif /* WLAN_DEBUG */
 
 /**
  * struct category_info  : Category information structure
@@ -1419,6 +1394,7 @@ struct qdf_print_ctrl {
 	bool in_use;
 };
 
+#ifdef WLAN_DEBUG
 /**
  * qdf_print_ctrl_register() - Allocate QDF print control object, assign
  *                             pointer to category info or print control
@@ -1435,24 +1411,6 @@ int qdf_print_ctrl_register(const struct category_info *cinfo,
 			    void *custom_print_handler,
 			    void *custom_ctx,
 			    const char *pctrl_name);
-
-#ifdef QCA_WIFI_MODULE_PARAMS_FROM_INI
-/**
- * qdf_update_module_param() - Update qdf module params
- *
- *
- * Read the file which has wifi module params, parse and update
- * qdf module params.
- *
- * Return: void
- */
-void qdf_initialize_module_param_from_ini(void);
-#else
-static inline
-void qdf_initialize_module_param_from_ini(void)
-{
-}
-#endif
 
 /**
  * qdf_shared_print_ctrl_init() - Initialize the shared print ctrl obj with
@@ -1569,6 +1527,84 @@ bool qdf_print_is_verbose_enabled(unsigned int idx,
  * Return : None
  */
 void qdf_print_clean_node_flag(unsigned int idx);
+#else
+static inline
+int qdf_print_ctrl_register(const struct category_info *cinfo,
+			    void *custom_print_handler,
+			    void *custom_ctx,
+			    const char *pctrl_name)
+{
+	return 0;
+}
+
+static inline
+void qdf_shared_print_ctrl_init(void)
+{
+}
+
+static inline
+QDF_STATUS qdf_print_setup(void)
+{
+	return 0;
+}
+
+static inline
+QDF_STATUS qdf_print_ctrl_cleanup(unsigned int idx)
+{
+	return 0;
+}
+
+static inline
+void qdf_shared_print_ctrl_cleanup(void)
+{
+}
+
+static inline
+QDF_STATUS qdf_print_set_category_verbose(unsigned int idx,
+					  QDF_MODULE_ID category,
+					  QDF_TRACE_LEVEL verbose,
+					  bool is_set)
+{
+	return 0;
+}
+
+static inline
+bool qdf_log_dump_at_kernel_level(bool enable)
+{
+	return false;
+}
+
+static inline
+int qdf_logging_set_flush_timer(uint32_t milliseconds)
+{
+	return 0;
+}
+
+static inline
+void qdf_logging_flush_logs(void)
+{
+}
+
+static inline
+bool qdf_print_is_category_enabled(unsigned int idx,
+				   QDF_MODULE_ID category)
+{
+	return false;
+}
+
+static inline
+bool qdf_print_is_verbose_enabled(unsigned int idx,
+				  QDF_MODULE_ID category,
+				  QDF_TRACE_LEVEL verbose)
+{
+	return false;
+}
+
+static inline
+void qdf_print_clean_node_flag(unsigned int idx)
+{
+}
+#endif /* WLAN_DEBUG */
 
 #ifdef DBG_LVL_MAC_FILTERING
 
@@ -1594,30 +1630,7 @@ bool qdf_print_get_node_flag(unsigned int idx);
 
 #endif
 
-#ifdef QCA_WIFI_MODULE_PARAMS_FROM_INI
-/**
- * qdf_module_param_handler() - Function to store module params
- *
- * @context : NULL, unused.
- * @key : Name of the module param
- * @value: Value of the module param
- *
- * Handler function to be called from qdf_ini_parse()
- * function when a valid parameter is found in a file.
- *
- * Return : QDF_STATUS_SUCCESS on Success
- */
-QDF_STATUS qdf_module_param_handler(void *context, const char *key,
-				    const char *value);
-#else
-static inline
-QDF_STATUS qdf_module_param_handler(void *context, const char *key,
-				    const char *value)
-{
-	return QDF_STATUS_SUCCESS;
-}
-#endif
-
+#ifdef WLAN_DEBUG
 /**
  * qdf_logging_init() - Initialize msg logging functionality
  *
@@ -1633,9 +1646,21 @@ void qdf_logging_init(void);
  * Return : void
  */
 void qdf_logging_exit(void);
+#else
+static inline
+void qdf_logging_init(void)
+{
+}
+
+static inline
+void qdf_logging_exit(void)
+{
+}
+#endif /* WLAN_DEBUG */
 
 #define QDF_SYMBOL_LEN __QDF_SYMBOL_LEN
 
+#ifdef WLAN_DEBUG
 /**
  * qdf_sprint_symbol() - prints the name of a symbol into a string buffer
  * @buffer: the string buffer to print into
@@ -1644,6 +1669,13 @@ void qdf_logging_exit(void);
  * Return: number of characters printed
  */
 int qdf_sprint_symbol(char *buffer, void *addr);
+#else
+static inline
+int qdf_sprint_symbol(char *buffer, void *addr)
+{
+	return 0;
+}
+#endif /* WLAN_DEBUG */
 
 /**
  * qdf_minidump_log() - Log memory address to be included in minidump
@@ -1652,23 +1684,19 @@ int qdf_sprint_symbol(char *buffer, void *addr);
  * @name: String to identify this entry
  */
 static inline
-void qdf_minidump_log(void *start_addr,
-		      const size_t size, const char *name)
+void qdf_minidump_log(void *start_addr, size_t size, const char *name)
 {
 	__qdf_minidump_log(start_addr, size, name);
 }
 
 /**
  * qdf_minidump_remove() - Remove memory address from minidump
- * @start_addr: Start address of the memory previously added
- * @size: Size in bytes
- * @name: String to identify this entry
+ * @addr: Start address of the memory previously added
  */
 static inline
-void qdf_minidump_remove(void *start_addr,
-			 const size_t size, const char *name)
+void qdf_minidump_remove(void *addr)
 {
-	__qdf_minidump_remove(start_addr, size, name);
+	__qdf_minidump_remove(addr);
 }
 
 #endif /* __QDF_TRACE_H */

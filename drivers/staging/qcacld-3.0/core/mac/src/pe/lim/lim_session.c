@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2020 The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
@@ -38,7 +38,6 @@
 #include "sch_api.h"
 #include "lim_send_messages.h"
 #include "cfg_ucfg_api.h"
-#include <lim_assoc_utils.h>
 
 #ifdef WLAN_ALLOCATE_GLOBAL_BUFFERS_DYNAMICALLY
 static struct sDphHashNode *g_dph_node_array;
@@ -270,6 +269,7 @@ restart_timer:
 	}
 }
 
+#ifdef WLAN_FEATURE_11W
 /**
  * pe_init_pmf_comeback_timer: init PMF comeback timer
  * @mac_ctx: pointer to global adapter context
@@ -296,6 +296,13 @@ pe_init_pmf_comeback_timer(tpAniSirGlobal mac_ctx, struct pe_session *session)
 	if (!QDF_IS_STATUS_SUCCESS(status))
 		pe_err("cannot init pmf comeback timer");
 }
+#else
+static inline void
+pe_init_pmf_comeback_timer(tpAniSirGlobal mac_ctx, struct pe_session *session,
+			   uint8_t vdev_id)
+{
+}
+#endif
 
 #ifdef WLAN_FEATURE_FILS_SK
 /**
@@ -537,7 +544,7 @@ void lim_update_bcn_probe_filter(struct mac_context *mac_ctx,
 struct pe_session *pe_create_session(struct mac_context *mac,
 				     uint8_t *bssid, uint8_t *sessionId,
 				     uint16_t numSta, enum bss_type bssType,
-				     uint8_t vdev_id)
+				     uint8_t vdev_id, enum QDF_OPMODE opmode)
 {
 	QDF_STATUS status;
 	uint8_t i;
@@ -568,7 +575,15 @@ struct pe_session *pe_create_session(struct mac_context *mac,
 					pe_get_session_dph_node_array(i);
 	session_ptr->dph.dphHashTable.size = numSta + 1;
 	dph_hash_table_init(mac, &session_ptr->dph.dphHashTable);
+	session_ptr->gpLimPeerIdxpool = qdf_mem_malloc(
+		sizeof(*(session_ptr->gpLimPeerIdxpool)) *
+		lim_get_peer_idxpool_size(numSta, bssType));
+	if (!session_ptr->gpLimPeerIdxpool)
+		goto free_dp_hash_table;
 
+	session_ptr->freePeerIdxHead = 0;
+	session_ptr->freePeerIdxTail = 0;
+	session_ptr->gLimNumOfCurrentSTAs = 0;
 	/* Copy the BSSID to the session table */
 	sir_copy_mac_addr(session_ptr->bssId, bssid);
 	if (bssType == eSIR_MONITOR_MODE)
@@ -588,6 +603,7 @@ struct pe_session *pe_create_session(struct mac_context *mac,
 	*sessionId = i;
 	session_ptr->peSessionId = i;
 	session_ptr->bssType = bssType;
+	session_ptr->opmode = opmode;
 	session_ptr->gLimPhyMode = WNI_CFG_PHY_MODE_11G;
 	/* Initialize CB mode variables when session is created */
 	session_ptr->htSupportedChannelWidthSet = 0;
@@ -596,12 +612,18 @@ struct pe_session *pe_create_session(struct mac_context *mac,
 #ifdef FEATURE_WLAN_TDLS
 	qdf_mem_zero(session_ptr->peerAIDBitmap,
 		    sizeof(session_ptr->peerAIDBitmap));
+	session_ptr->tdls_prohibited = false;
+	session_ptr->tdls_chan_swit_prohibited = false;
 #endif
 	lim_update_tdls_set_state_for_fw(session_ptr, true);
 	session_ptr->fWaitForProbeRsp = 0;
 	session_ptr->fIgnoreCapsChange = 0;
 	session_ptr->is_session_obss_color_collision_det_enabled =
 		mac->mlme_cfg->obss_ht40.obss_color_collision_offload_enabled;
+
+	pe_debug("Create PE session: %d opmode %d vdev_id %d  BSSID: "QDF_MAC_ADDR_FMT" Max No of STA: %d",
+		 *sessionId, opmode, vdev_id, QDF_MAC_ADDR_REF(bssid),
+		 numSta);
 
 	if (bssType == eSIR_INFRA_AP_MODE) {
 		session_ptr->pSchProbeRspTemplate =
@@ -631,17 +653,6 @@ struct pe_session *pe_create_session(struct mac_context *mac,
 	session_ptr->vdev = vdev;
 	session_ptr->vdev_id = vdev_id;
 	session_ptr->mac_ctx = mac;
-	session_ptr->opmode = wlan_vdev_mlme_get_opmode(vdev);
-	mlme_set_tdls_chan_switch_prohibited(vdev, false);
-	mlme_set_tdls_prohibited(vdev, false);
-	pe_debug("Create PE session: %d opmode %d vdev_id %d  BSSID: "QDF_MAC_ADDR_FMT" Max No of STA: %d",
-		 *sessionId, session_ptr->opmode, vdev_id,
-		 QDF_MAC_ADDR_REF(bssid), numSta);
-
-	if (!lim_create_peer_idxpool(
-		session_ptr,
-		lim_get_peer_idxpool_size(numSta, bssType)))
-		goto free_session_attrs;
 
 	if (eSIR_INFRASTRUCTURE_MODE == bssType)
 		lim_ft_open(mac, &mac->lim.gpSession[i]);
@@ -687,15 +698,17 @@ struct pe_session *pe_create_session(struct mac_context *mac,
 	return &mac->lim.gpSession[i];
 
 free_session_attrs:
-	lim_free_peer_idxpool(session_ptr);
+	qdf_mem_free(session_ptr->gpLimPeerIdxpool);
 	qdf_mem_free(session_ptr->pSchProbeRspTemplate);
 	qdf_mem_free(session_ptr->pSchBeaconFrameBegin);
 	qdf_mem_free(session_ptr->pSchBeaconFrameEnd);
 
+	session_ptr->gpLimPeerIdxpool = NULL;
 	session_ptr->pSchProbeRspTemplate = NULL;
 	session_ptr->pSchBeaconFrameBegin = NULL;
 	session_ptr->pSchBeaconFrameEnd = NULL;
 
+free_dp_hash_table:
 	qdf_mem_free(session_ptr->dph.dphHashTable.pHashTable);
 	qdf_mem_zero(session_ptr->dph.dphHashTable.pDphNodeArray,
 		     sizeof(struct sDphHashNode) * (SIR_SAP_MAX_NUM_PEERS + 1));
@@ -802,6 +815,7 @@ struct pe_session *pe_find_session_by_session_id(struct mac_context *mac,
 	return NULL;
 }
 
+#ifdef WLAN_FEATURE_11W
 static void lim_clear_pmfcomeback_timer(struct pe_session *session)
 {
 	if (session->opmode != QDF_STA_MODE)
@@ -814,6 +828,11 @@ static void lim_clear_pmfcomeback_timer(struct pe_session *session)
 	qdf_mc_timer_destroy(&session->pmf_retry_timer);
 	session->pmf_retry_timer_info.retried = false;
 }
+#else
+static void lim_clear_pmfcomeback_timer(struct pe_session *session)
+{
+}
+#endif
 
 /**
  * pe_delete_session() - deletes the PE session given the session ID.
@@ -908,7 +927,10 @@ void pe_delete_session(struct mac_context *mac_ctx, struct pe_session *session)
 		session->dph.dphHashTable.pDphNodeArray = NULL;
 	}
 
-	lim_free_peer_idxpool(session);
+	if (session->gpLimPeerIdxpool) {
+		qdf_mem_free(session->gpLimPeerIdxpool);
+		session->gpLimPeerIdxpool = NULL;
+	}
 
 	if (session->beacon) {
 		qdf_mem_free(session->beacon);
@@ -936,7 +958,11 @@ void pe_delete_session(struct mac_context *mac_ctx, struct pe_session *session)
 				continue;
 			tmp_ptr = ((tpSirAssocReq)
 				  (session->parsedAssocReq[i]));
-			lim_free_assoc_req_frm_buf(tmp_ptr);
+			if (tmp_ptr->assocReqFrame) {
+				qdf_mem_free(tmp_ptr->assocReqFrame);
+				tmp_ptr->assocReqFrame = NULL;
+				tmp_ptr->assocReqFrameLength = 0;
+			}
 			qdf_mem_free(session->parsedAssocReq[i]);
 			session->parsedAssocReq[i] = NULL;
 		}

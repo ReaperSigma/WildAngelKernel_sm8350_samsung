@@ -211,35 +211,22 @@ void ucfg_tdls_teardown_links_sync(struct wlan_objmgr_psoc *psoc);
 QDF_STATUS ucfg_tdls_notify_reset_adapter(struct wlan_objmgr_vdev *vdev);
 
 /**
- * ucfg_tdls_notify_sta_connect() - notify sta connect to TDLS
- * @vdev_id: pointer to soc object
- * @tdls_chan_swit_prohibited: indicates channel switch capability
- * @tdls_prohibited: indicates tdls allowed or not
- * @vdev: vdev object manager
+ * ucfg_tdls_notify_sta_connect() - notify sta connect
+ * @notify_info: sta notification info
  *
- * Notify sta connect event to TDLS component
- *
- * Return: None
+ * Return: QDF_STATUS
  */
-void ucfg_tdls_notify_sta_connect(uint8_t vdev_id,
-				  bool tdls_chan_swit_prohibited,
-				  bool tdls_prohibited,
-				  struct wlan_objmgr_vdev *vdev);
+QDF_STATUS ucfg_tdls_notify_sta_connect(
+			struct tdls_sta_notify_params *notify_info);
 
 /**
  * ucfg_tdls_notify_sta_disconnect() - notify sta disconnect
- * @vdev_id: pointer to soc object
- * @lfr_roam: indicate, whether disconnect due to lfr roam
- * @bool user_disconnect: disconnect from user space
- * @vdev: vdev object manager
+ * @notify_info: sta notification info
  *
- * Notify sta disconnect event to TDLS component
- *
- * Return: None
+ * Return: QDF_STATUS
  */
-void ucfg_tdls_notify_sta_disconnect(uint8_t vdev_id,
-				     bool lfr_roam, bool user_disconnect,
-				     struct wlan_objmgr_vdev *vdev);
+QDF_STATUS ucfg_tdls_notify_sta_disconnect(
+			struct tdls_sta_notify_params *notify_info);
 
 /**
  * ucfg_tdls_set_operating_mode() - set operating mode
@@ -424,20 +411,6 @@ void ucfg_tdls_notify_connect_failure(struct wlan_objmgr_psoc *psoc)
 }
 
 static inline
-void ucfg_tdls_notify_sta_connect(uint8_t vdev_id,
-				  bool tdls_chan_swit_prohibited,
-				  bool tdls_prohibited,
-				  struct wlan_objmgr_vdev *vdev)
-{
-}
-
-static inline
-void ucfg_tdls_notify_sta_disconnect(uint8_t vdev_id,
-				     bool lfr_roam, bool user_disconnect,
-				     struct wlan_objmgr_vdev *vdev)
-{}
-
-static inline
 struct wlan_objmgr_vdev *ucfg_get_tdls_vdev(struct wlan_objmgr_psoc *psoc,
 					    wlan_objmgr_ref_dbgid dbg_id)
 {
@@ -455,5 +428,6 @@ bool  ucfg_tdls_is_fw_11ax_capable(struct wlan_objmgr_psoc *psoc)
 {
 return false;
 }
+
 #endif /* FEATURE_WLAN_TDLS */
 #endif

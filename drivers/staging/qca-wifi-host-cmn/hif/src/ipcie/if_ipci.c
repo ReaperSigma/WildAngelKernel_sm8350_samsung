@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2021 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -115,21 +116,14 @@ static int hif_ce_msi_map_ce_to_irq(struct hif_softc *scn, int ce_id)
 int hif_ipci_bus_configure(struct hif_softc *hif_sc)
 {
 	int status = 0;
-	struct HIF_CE_state *hif_state = HIF_GET_CE_STATE(hif_sc);
 	uint8_t wake_ce_id;
 
 	hif_ce_prepare_config(hif_sc);
 
-	/* initialize sleep state adjust variables */
-	hif_state->sleep_timer_init = true;
-	hif_state->keep_awake_count = 0;
-	hif_state->fake_sleep = false;
-	hif_state->sleep_ticks = 0;
-
 	status = hif_wlan_enable(hif_sc);
 	if (status) {
 		hif_err("hif_wlan_enable error = %d", status);
-		goto timer_free;
+		return status;
 	}
 
 	A_TARGET_ACCESS_LIKELY(hif_sc);
@@ -161,11 +155,6 @@ unconfig_ce:
 disable_wlan:
 	A_TARGET_ACCESS_UNLIKELY(hif_sc);
 	hif_wlan_disable(hif_sc);
-
-timer_free:
-	qdf_timer_stop(&hif_state->sleep_timer);
-	qdf_timer_free(&hif_state->sleep_timer);
-	hif_state->sleep_timer_init = false;
 
 	hif_err("Failed, status = %d", status);
 	return status;
@@ -252,7 +241,6 @@ void hif_ipci_nointrs(struct hif_softc *scn)
 	int ret;
 	struct HIF_CE_state *hif_state = HIF_GET_CE_STATE(scn);
 
-	scn->free_irq_done = true;
 	ce_unregister_irq(hif_state, CE_ALL_BITMAP);
 
 	if (scn->request_irq_done == false)
@@ -636,43 +624,6 @@ void hif_ipci_config_irq_affinity(struct hif_softc *scn)
 }
 #endif /* #ifdef HIF_CPU_PERF_AFFINE_MASK */
 
-#ifdef HIF_CPU_CLEAR_AFFINITY
-void hif_ipci_config_irq_clear_cpu_affinity(struct hif_softc *scn,
-					    int intr_ctxt_id, int cpu)
-{
-	struct HIF_CE_state *hif_state = HIF_GET_CE_STATE(scn);
-	struct hif_exec_context *hif_ext_group;
-	int i, ret;
-
-	if (intr_ctxt_id < hif_state->hif_num_extgroup) {
-		hif_ext_group = hif_state->hif_ext_group[intr_ctxt_id];
-		for (i = 0; i < hif_ext_group->numirq; i++) {
-			qdf_cpumask_setall(&hif_ext_group->new_cpu_mask[i]);
-			qdf_cpumask_clear_cpu(cpu,
-					      &hif_ext_group->new_cpu_mask[i]);
-			qdf_dev_modify_irq_status(hif_ext_group->os_irq[i],
-						  IRQ_NO_BALANCING, 0);
-			ret = qdf_dev_set_irq_affinity(hif_ext_group->os_irq[i],
-						       (struct qdf_cpu_mask *)
-						       &hif_ext_group->
-						       new_cpu_mask[i]);
-			qdf_dev_modify_irq_status(hif_ext_group->os_irq[i],
-						  0, IRQ_NO_BALANCING);
-			if (ret)
-				hif_err("Set affinity %*pbl fails for IRQ %d ",
-					qdf_cpumask_pr_args(&hif_ext_group->
-							    new_cpu_mask[i]),
-					hif_ext_group->os_irq[i]);
-			else
-				hif_debug("Set affinity %*pbl for IRQ: %d",
-					  qdf_cpumask_pr_args(&hif_ext_group->
-							      new_cpu_mask[i]),
-					  hif_ext_group->os_irq[0]);
-		}
-	}
-}
-#endif
-
 int hif_ipci_configure_grp_irq(struct hif_softc *scn,
 			       struct hif_exec_context *hif_ext_group)
 {
@@ -708,6 +659,8 @@ int hif_ipci_configure_grp_irq(struct hif_softc *scn,
 int hif_configure_irq(struct hif_softc *scn)
 {
 	int ret = 0;
+
+	hif_info("E");
 
 	if (hif_is_polled_mode_enabled(GET_HIF_OPAQUE_HDL(scn))) {
 		scn->request_irq_done = false;
@@ -940,6 +893,14 @@ int hif_prevent_link_low_power_states(struct hif_opaque_softc *hif)
 
 	if (pld_is_pci_ep_awake(scn->qdf_dev->dev) == -ENOTSUPP)
 		return 0;
+
+	if ((qdf_atomic_read(&scn->dp_ep_vote_access) ==
+	     HIF_EP_VOTE_ACCESS_DISABLE) &&
+	    (qdf_atomic_read(&scn->ep_vote_access) ==
+	    HIF_EP_VOTE_ACCESS_DISABLE)) {
+		hif_info_high("EP access disabled in flight skip vote");
+		return 0;
+	}
 
 	start_time = curr_time = qdf_system_ticks_to_msecs(qdf_system_ticks());
 	while (pld_is_pci_ep_awake(scn->qdf_dev->dev) &&

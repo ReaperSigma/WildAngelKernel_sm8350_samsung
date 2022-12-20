@@ -785,32 +785,16 @@ store_state_field(struct device *dev, struct device_attribute *attr,
 	}
 
 	mutex_lock(&sdev->state_mutex);
-	switch (sdev->sdev_state) {
-	case SDEV_RUNNING:
-	case SDEV_OFFLINE:
-		break;
-	default:
-		mutex_unlock(&sdev->state_mutex);
-		return -EINVAL;
-	}
-	if (sdev->sdev_state == SDEV_RUNNING && state == SDEV_RUNNING) {
-		ret = 0;
-	} else {
-		ret = scsi_device_set_state(sdev, state);
-		if (ret == 0 && state == SDEV_RUNNING)
-			rescan_dev = true;
-	}
-	mutex_unlock(&sdev->state_mutex);
-
-	if (rescan_dev) {
-		/*
-		 * If the device state changes to SDEV_RUNNING, we need to
-		 * run the queue to avoid I/O hang, and rescan the device
-		 * to revalidate it. Running the queue first is necessary
-		 * because another thread may be waiting inside
-		 * blk_mq_freeze_queue_wait() and because that call may be
-		 * waiting for pending I/O to finish.
-		 */
+	ret = scsi_device_set_state(sdev, state);
+	/*
+	 * If the device state changes to SDEV_RUNNING, we need to
+	 * run the queue to avoid I/O hang, and rescan the device
+	 * to revalidate it. Running the queue first is necessary
+	 * because another thread may be waiting inside
+	 * blk_mq_freeze_queue_wait() and because that call may be
+	 * waiting for pending I/O to finish.
+	 */
+	if (ret == 0 && state == SDEV_RUNNING) {
 		blk_mq_run_hw_queues(sdev->request_queue, true);
 		scsi_rescan_device(dev);
 	}
@@ -818,7 +802,6 @@ store_state_field(struct device *dev, struct device_attribute *attr,
 
 	return ret == 0 ? count : -EINVAL;
 }
-
 static ssize_t
 show_state_field(struct device *dev, struct device_attribute *attr, char *buf)
 {

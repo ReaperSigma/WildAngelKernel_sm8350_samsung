@@ -138,6 +138,7 @@ struct f_cdev {
 	unsigned long		nbytes_from_port_bridge;
 
 	struct dentry		*debugfs_root;
+	bool			setup_pending;
 
 	/* To test remote wakeup using debugfs */
 	u8 debugfs_rw_enable;
@@ -541,6 +542,7 @@ static int usb_cser_set_alt(struct usb_function *f, unsigned int intf,
 }
 
 static int port_notify_serial_state(struct cserial *cser);
+static void usb_cser_start_rx(struct f_cdev *port);
 
 static void usb_cser_resume(struct usb_function *f)
 {

@@ -287,10 +287,14 @@ void rcu_note_context_switch(bool preempt)
 	struct task_struct *t = current;
 	struct rcu_data *rdp = this_cpu_ptr(&rcu_data);
 	struct rcu_node *rnp;
+	int sleeping_l = 0;
 
 	trace_rcu_utilization(TPS("Start context switch"));
 	lockdep_assert_irqs_disabled();
-	WARN_ON_ONCE(!preempt && t->rcu_read_lock_nesting > 0);
+#if defined(CONFIG_PREEMPT_RT)
+	sleeping_l = t->sleeping_lock;
+#endif
+	WARN_ON_ONCE(!preempt && t->rcu_read_lock_nesting > 0 && !sleeping_l);
 	if (t->rcu_read_lock_nesting > 0 &&
 	    !t->rcu_read_unlock_special.b.blocked) {
 
@@ -360,7 +364,7 @@ void __rcu_read_lock(void)
 		WARN_ON_ONCE(current->rcu_read_lock_nesting > RCU_NEST_PMAX);
 	barrier();  /* critical section after entry code. */
 }
-EXPORT_SYMBOL_GPL(__rcu_read_lock);
+EXPORT_SYMBOL(__rcu_read_lock);
 
 /*
  * Preemptible RCU implementation for rcu_read_unlock().
@@ -390,7 +394,7 @@ void __rcu_read_unlock(void)
 		WARN_ON_ONCE(rrln < 0 && rrln > RCU_NEST_NMAX);
 	}
 }
-EXPORT_SYMBOL_GPL(__rcu_read_unlock);
+EXPORT_SYMBOL(__rcu_read_unlock);
 
 /*
  * Advance a ->blkd_tasks-list pointer to the next entry, instead
@@ -789,7 +793,7 @@ static void __init rcu_bootup_announce(void)
 }
 
 /*
- * Note a quiescent state for PREEMPT=n.  Because we do not need to know
+ * Note a quiescent state for PREEMPTION=n.  Because we do not need to know
  * how many quiescent states passed, just if there was at least one since
  * the start of the grace period, this just sets a flag.  The caller must
  * have disabled preemption.
@@ -839,7 +843,7 @@ void rcu_all_qs(void)
 EXPORT_SYMBOL_GPL(rcu_all_qs);
 
 /*
- * Note a PREEMPT=n context switch.  The caller must have disabled interrupts.
+ * Note a PREEMPTION=n context switch.  The caller must have disabled interrupts.
  */
 void rcu_note_context_switch(bool preempt)
 {

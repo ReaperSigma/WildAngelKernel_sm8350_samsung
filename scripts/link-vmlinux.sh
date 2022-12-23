@@ -108,6 +108,7 @@ recordmcount()
 vmlinux_link()
 {
 	local lds="${objtree}/${KBUILD_LDS}"
+	local extra_lds=""
 	local output=${1}
 	local objects
 	local strip_debug
@@ -148,8 +149,13 @@ vmlinux_link()
 		${LD} ${KBUILD_LDFLAGS} ${LDFLAGS_vmlinux}	\
 			${strip_debug#-Wl,}			\
 			-o ${output}				\
-			-T ${lds} ${objects}
+			-T ${lds} ${extra_lds} ${objects}
 	else
+		for extra_ld in ${KBUILD_EXTRA_LDS}
+		do
+			extra_lds="$extra_lds -Wl,-T,${objtree}/$extra_ld"
+		done
+
 		objects="-Wl,--whole-archive			\
 			${KBUILD_VMLINUX_OBJS}			\
 			-Wl,--no-whole-archive			\
@@ -162,6 +168,7 @@ vmlinux_link()
 			${strip_debug}				\
 			-o ${output}				\
 			-Wl,-T,${lds}				\
+			${extra_lds}				\
 			${objects}				\
 			-lutil -lrt -lpthread
 		rm -f linux

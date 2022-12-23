@@ -216,8 +216,6 @@ struct futex_pi_state {
  * @rt_waiter:		rt_waiter storage for use with requeue_pi
  * @requeue_pi_key:	the requeue_pi target futex key
  * @bitset:		bitset for the optional bitmasked wakeup
- * @uaddr:             userspace address of futex
- * @uval:              expected futex's value
  *
  * We use this hashed waitqueue, instead of a normal wait_queue_entry_t, so
  * we can wake only the relevant ones (hashed queues may be shared).
@@ -240,8 +238,6 @@ struct futex_q {
 	struct rt_mutex_waiter *rt_waiter;
 	union futex_key *requeue_pi_key;
 	u32 bitset;
-	u32 __user *uaddr;
-	u32 uval;
 } __randomize_layout;
 
 static const struct futex_q futex_q_init = {
@@ -985,9 +981,7 @@ static void exit_pi_state_list(struct task_struct *curr)
 		if (head->next != next) {
 			/* retain curr->pi_lock for the loop invariant */
 			raw_spin_unlock(&pi_state->pi_mutex.wait_lock);
-			raw_spin_unlock_irq(&curr->pi_lock);
 			spin_unlock(&hb->lock);
-			raw_spin_lock_irq(&curr->pi_lock);
 			put_pi_state(pi_state);
 			continue;
 		}
@@ -1597,7 +1591,6 @@ static int wake_futex_pi(u32 __user *uaddr, u32 uval, struct futex_pi_state *pi_
 	struct task_struct *new_owner;
 	bool postunlock = false;
 	DEFINE_WAKE_Q(wake_q);
-	DEFINE_WAKE_Q(wake_sleeper_q);
 	int ret = 0;
 
 	new_owner = rt_mutex_next_owner(&pi_state->pi_mutex);
@@ -1647,15 +1640,14 @@ static int wake_futex_pi(u32 __user *uaddr, u32 uval, struct futex_pi_state *pi_
 		 * not fail.
 		 */
 		pi_state_update_owner(pi_state, new_owner);
-		postunlock = __rt_mutex_futex_unlock(&pi_state->pi_mutex, &wake_q,
-						     &wake_sleeper_q);
+		postunlock = __rt_mutex_futex_unlock(&pi_state->pi_mutex, &wake_q);
 	}
 
 out_unlock:
 	raw_spin_unlock_irq(&pi_state->pi_mutex.wait_lock);
 
 	if (postunlock)
-		rt_mutex_postunlock(&wake_q, &wake_sleeper_q);
+		rt_mutex_postunlock(&wake_q);
 
 	return ret;
 }
@@ -2279,16 +2271,6 @@ retry_private:
 				requeue_pi_wake_futex(this, &key2, hb2);
 				drop_count++;
 				continue;
-			} else if (ret == -EAGAIN) {
-				/*
-				 * Waiter was woken by timeout or
-				 * signal and has set pi_blocked_on to
-				 * PI_WAKEUP_INPROGRESS before we
-				 * tried to enqueue it on the rtmutex.
-				 */
-				this->pi_state = NULL;
-				put_pi_state(pi_state);
-				continue;
 			} else if (ret) {
 				/*
 				 * rt_mutex_start_proxy_lock() detected a
@@ -2465,29 +2447,6 @@ retry:
 	}
 
 	drop_futex_key_refs(&q->key);
-	return ret;
-}
-
-/**
- * unqueue_multiple() - Remove several futexes from their futex_hash_bucket
- * @q:	The list of futexes to unqueue
- * @count: Number of futexes in the list
- *
- * Helper to unqueue a list of futexes. This can't fail.
- *
- * Return:
- *  - >=0 - Index of the last futex that was awoken;
- *  - -1  - If no futex was awoken
- */
-static int unqueue_multiple(struct futex_q *q, int count)
-{
-	int ret = -1;
-	int i;
-
-	for (i = 0; i < count; i++) {
-		if (!unqueue_me(&q[i]))
-			ret = i;
-	}
 	return ret;
 }
 
@@ -2862,211 +2821,6 @@ out:
 	return ret;
 }
 
-/**
- * futex_wait_multiple_setup() - Prepare to wait and enqueue multiple futexes
- * @qs:		The corresponding futex list
- * @count:	The size of the lists
- * @flags:	Futex flags (FLAGS_SHARED, etc.)
- * @awaken:	Index of the last awoken futex
- *
- * Prepare multiple futexes in a single step and enqueue them. This may fail if
- * the futex list is invalid or if any futex was already awoken. On success the
- * task is ready to interruptible sleep.
- *
- * Return:
- *  -  1 - One of the futexes was awaken by another thread
- *  -  0 - Success
- *  - <0 - -EFAULT, -EWOULDBLOCK or -EINVAL
- */
-static int futex_wait_multiple_setup(struct futex_q *qs, int count,
-				     unsigned int flags, int *awaken)
-{
-	struct futex_hash_bucket *hb;
-	int ret, i;
-	u32 uval;
-
-	/*
-	 * Enqueuing multiple futexes is tricky, because we need to
-	 * enqueue each futex in the list before dealing with the next
-	 * one to avoid deadlocking on the hash bucket.  But, before
-	 * enqueuing, we need to make sure that current->state is
-	 * TASK_INTERRUPTIBLE, so we don't absorb any awake events, which
-	 * cannot be done before the get_futex_key of the next key,
-	 * because it calls get_user_pages, which can sleep.  Thus, we
-	 * fetch the list of futexes keys in two steps, by first pinning
-	 * all the memory keys in the futex key, and only then we read
-	 * each key and queue the corresponding futex.
-	 */
-retry:
-	for (i = 0; i < count; i++) {
-		qs[i].key = FUTEX_KEY_INIT;
-		ret = get_futex_key(qs[i].uaddr, flags & FLAGS_SHARED,
-				    &qs[i].key, FUTEX_READ);
-		if (unlikely(ret)) {
-			for (--i; i >= 0; i--)
-				put_futex_key(&qs[i].key);
-			return ret;
-		}
-	}
-
-	set_current_state(TASK_INTERRUPTIBLE);
-
-	for (i = 0; i < count; i++) {
-		struct futex_q *q = &qs[i];
-
-		hb = queue_lock(q);
-
-		ret = get_futex_value_locked(&uval, q->uaddr);
-		if (ret) {
-			/*
-			 * We need to try to handle the fault, which
-			 * cannot be done without sleep, so we need to
-			 * undo all the work already done, to make sure
-			 * we don't miss any wake ups.  Therefore, clean
-			 * up, handle the fault and retry from the
-			 * beginning.
-			 */
-			queue_unlock(hb);
-
-			/*
-			 * Keys 0..(i-1) are implicitly put
-			 * on unqueue_multiple.
-			 */
-			put_futex_key(&q->key);
-
-			*awaken = unqueue_multiple(qs, i);
-
-			__set_current_state(TASK_RUNNING);
-
-			/*
-			 * On a real fault, prioritize the error even if
-			 * some other futex was awoken.  Userspace gave
-			 * us a bad address, -EFAULT them.
-			 */
-			ret = get_user(uval, q->uaddr);
-			if (ret)
-				return ret;
-
-			/*
-			 * Even if the page fault was handled, If
-			 * something was already awaken, we can safely
-			 * give up and succeed to give a hint for userspace to
-			 * acquire the right futex faster.
-			 */
-			if (*awaken >= 0)
-				return 1;
-
-			goto retry;
-		}
-
-		if (uval != q->uval) {
-			queue_unlock(hb);
-
-			put_futex_key(&qs[i].key);
-
-			/*
-			 * If something was already awaken, we can
-			 * safely ignore the error and succeed.
-			 */
-			*awaken = unqueue_multiple(qs, i);
-			__set_current_state(TASK_RUNNING);
-			if (*awaken >= 0)
-				return 1;
-
-			return -EWOULDBLOCK;
-		}
-
-		/*
-		 * The bucket lock can't be held while dealing with the
-		 * next futex. Queue each futex at this moment so hb can
-		 * be unlocked.
-		 */
-		queue_me(&qs[i], hb);
-	}
-	return 0;
-}
-
-/**
- * futex_wait_multiple() - Prepare to wait on and enqueue several futexes
- * @qs:		The list of futexes to wait on
- * @op:		Operation code from futex's syscall
- * @count:	The number of objects
- * @abs_time:	Timeout before giving up and returning to userspace
- *
- * Entry point for the FUTEX_WAIT_MULTIPLE futex operation, this function
- * sleeps on a group of futexes and returns on the first futex that
- * triggered, or after the timeout has elapsed.
- *
- * Return:
- *  - >=0 - Hint to the futex that was awoken
- *  - <0  - On error
- */
-static int futex_wait_multiple(struct futex_q *qs, int op,
-			       u32 count, ktime_t *abs_time)
-{
-	struct hrtimer_sleeper timeout, *to;
-	int ret, flags = 0, hint = 0;
-	unsigned int i;
-
-	if (!(op & FUTEX_PRIVATE_FLAG))
-		flags |= FLAGS_SHARED;
-
-	if (op & FUTEX_CLOCK_REALTIME)
-		flags |= FLAGS_CLOCKRT;
-
-	to = futex_setup_timer(abs_time, &timeout, flags, 0);
-	while (1) {
-		ret = futex_wait_multiple_setup(qs, count, flags, &hint);
-		if (ret) {
-			if (ret > 0) {
-				/* A futex was awaken during setup */
-				ret = hint;
-			}
-			break;
-		}
-
-		if (to)
-			hrtimer_start_expires(&to->timer, HRTIMER_MODE_ABS);
-
-		/*
-		 * Avoid sleeping if another thread already tried to
-		 * wake us.
-		 */
-		for (i = 0; i < count; i++) {
-			if (plist_node_empty(&qs[i].list))
-				break;
-		}
-
-		if (i == count && (!to || to->task))
-			freezable_schedule();
-
-		ret = unqueue_multiple(qs, count);
-
-		__set_current_state(TASK_RUNNING);
-
-		if (ret >= 0)
-			break;
-		if (to && !to->task) {
-			ret = -ETIMEDOUT;
-			break;
-		} else if (signal_pending(current)) {
-			ret = -ERESTARTSYS;
-			break;
-		}
-		/*
-		 * The final case is a spurious wakeup, for
-		 * which just retry.
-		 */
-	}
-
-	if (to) {
-		hrtimer_cancel(&to->timer);
-		destroy_hrtimer_on_stack(&to->timer);
-	}
-
-	return ret;
-}
-
 static int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 		      ktime_t *abs_time, u32 bitset)
 {
@@ -3234,7 +2988,7 @@ retry_private:
 		goto no_block;
 	}
 
-	rt_mutex_init_waiter(&rt_waiter, false);
+	rt_mutex_init_waiter(&rt_waiter);
 
 	/*
 	 * On PREEMPT_RT_FULL, when hb->lock becomes an rt_mutex, we must not
@@ -3250,14 +3004,6 @@ retry_private:
 	 * before __rt_mutex_start_proxy_lock() is done.
 	 */
 	raw_spin_lock_irq(&q.pi_state->pi_mutex.wait_lock);
-	/*
-	 * the migrate_disable() here disables migration in the in_atomic() fast
-	 * path which is enabled again in the following spin_unlock(). We have
-	 * one migrate_disable() pending in the slow-path which is reversed
-	 * after the raw_spin_unlock_irq() where we leave the atomic context.
-	 */
-	migrate_disable();
-
 	spin_unlock(q.lock_ptr);
 	/*
 	 * __rt_mutex_start_proxy_lock() unconditionally enqueues the @rt_waiter
@@ -3266,7 +3012,6 @@ retry_private:
 	 */
 	ret = __rt_mutex_start_proxy_lock(&q.pi_state->pi_mutex, &rt_waiter, current);
 	raw_spin_unlock_irq(&q.pi_state->pi_mutex.wait_lock);
-	migrate_enable();
 
 	if (ret) {
 		if (ret == 1)
@@ -3401,19 +3146,10 @@ retry:
 		 * rt_waiter. Also see the WARN in wake_futex_pi().
 		 */
 		raw_spin_lock_irq(&pi_state->pi_mutex.wait_lock);
-		/*
-		 * Magic trickery for now to make the RT migrate disable
-		 * logic happy. The following spin_unlock() happens with
-		 * interrupts disabled so the internal migrate_enable()
-		 * won't undo the migrate_disable() which was issued when
-		 * locking hb->lock.
-		 */
-		migrate_disable();
 		spin_unlock(&hb->lock);
 
 		/* drops pi_state->pi_mutex.wait_lock */
 		ret = wake_futex_pi(uaddr, uval, pi_state);
-		migrate_enable();
 
 		put_pi_state(pi_state);
 
@@ -3584,7 +3320,7 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 {
 	struct hrtimer_sleeper timeout, *to;
 	struct rt_mutex_waiter rt_waiter;
-	struct futex_hash_bucket *hb, *hb2;
+	struct futex_hash_bucket *hb;
 	union futex_key key2 = FUTEX_KEY_INIT;
 	struct futex_q q = futex_q_init;
 	int res, ret;
@@ -3605,7 +3341,7 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 	 * The waiter is allocated on our stack, manipulated by the requeue
 	 * code while we sleep on uaddr.
 	 */
-	rt_mutex_init_waiter(&rt_waiter, false);
+	rt_mutex_init_waiter(&rt_waiter);
 
 	ret = get_futex_key(uaddr2, flags & FLAGS_SHARED, &key2, FUTEX_WRITE);
 	if (unlikely(ret != 0))
@@ -3636,55 +3372,20 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 	/* Queue the futex_q, drop the hb lock, wait for wakeup. */
 	futex_wait_queue_me(hb, &q, to);
 
-	/*
-	 * On RT we must avoid races with requeue and trying to block
-	 * on two mutexes (hb->lock and uaddr2's rtmutex) by
-	 * serializing access to pi_blocked_on with pi_lock.
-	 */
-	raw_spin_lock_irq(&current->pi_lock);
-	if (current->pi_blocked_on) {
-		/*
-		 * We have been requeued or are in the process of
-		 * being requeued.
-		 */
-		raw_spin_unlock_irq(&current->pi_lock);
-	} else {
-		/*
-		 * Setting pi_blocked_on to PI_WAKEUP_INPROGRESS
-		 * prevents a concurrent requeue from moving us to the
-		 * uaddr2 rtmutex. After that we can safely acquire
-		 * (and possibly block on) hb->lock.
-		 */
-		current->pi_blocked_on = PI_WAKEUP_INPROGRESS;
-		raw_spin_unlock_irq(&current->pi_lock);
-
-		spin_lock(&hb->lock);
-
-		/*
-		 * Clean up pi_blocked_on. We might leak it otherwise
-		 * when we succeeded with the hb->lock in the fast
-		 * path.
-		 */
-		raw_spin_lock_irq(&current->pi_lock);
-		current->pi_blocked_on = NULL;
-		raw_spin_unlock_irq(&current->pi_lock);
-
-		ret = handle_early_requeue_pi_wakeup(hb, &q, &key2, to);
-		spin_unlock(&hb->lock);
-		if (ret)
-			goto out_put_keys;
-	}
+	spin_lock(&hb->lock);
+	ret = handle_early_requeue_pi_wakeup(hb, &q, &key2, to);
+	spin_unlock(&hb->lock);
+	if (ret)
+		goto out_put_keys;
 
 	/*
-	 * In order to be here, we have either been requeued, are in
-	 * the process of being requeued, or requeue successfully
-	 * acquired uaddr2 on our behalf.  If pi_blocked_on was
-	 * non-null above, we may be racing with a requeue.  Do not
-	 * rely on q->lock_ptr to be hb2->lock until after blocking on
-	 * hb->lock or hb2->lock. The futex_requeue dropped our key1
-	 * reference and incremented our key2 reference count.
+	 * In order for us to be here, we know our q.key == key2, and since
+	 * we took the hb->lock above, we also know that futex_requeue() has
+	 * completed and we no longer have to concern ourselves with a wakeup
+	 * race with the atomic proxy lock acquisition by the requeue code. The
+	 * futex_requeue dropped our key1 reference and incremented our key2
+	 * reference count.
 	 */
-	hb2 = hash_futex(&key2);
 
 	/* Check if the requeue code acquired the second futex for us. */
 	if (!q.rt_waiter) {
@@ -3693,15 +3394,14 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 		 * did a lock-steal - fix up the PI-state in that case.
 		 */
 		if (q.pi_state && (q.pi_state->owner != current)) {
-			spin_lock(&hb2->lock);
-			BUG_ON(&hb2->lock != q.lock_ptr);
+			spin_lock(q.lock_ptr);
 			ret = fixup_pi_state_owner(uaddr2, &q, current);
 			/*
 			 * Drop the reference to the pi state which
 			 * the requeue_pi() code acquired for us.
 			 */
 			put_pi_state(q.pi_state);
-			spin_unlock(&hb2->lock);
+			spin_unlock(q.lock_ptr);
 			/*
 			 * Adjust the return value. It's either -EFAULT or
 			 * success (1) but the caller expects 0 for success.
@@ -3720,8 +3420,7 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 		pi_mutex = &q.pi_state->pi_mutex;
 		ret = rt_mutex_wait_proxy_lock(pi_mutex, to, &rt_waiter);
 
-		spin_lock(&hb2->lock);
-		BUG_ON(&hb2->lock != q.lock_ptr);
+		spin_lock(q.lock_ptr);
 		if (ret && !rt_mutex_cleanup_proxy_lock(pi_mutex, &rt_waiter))
 			ret = 0;
 
@@ -4214,43 +3913,6 @@ long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
 	return -ENOSYS;
 }
 
-/**
- * futex_read_wait_block - Read an array of futex_wait_block from userspace
- * @uaddr:	Userspace address of the block
- * @count:	Number of blocks to be read
- *
- * This function creates and allocate an array of futex_q (we zero it to
- * initialize the fields) and then, for each futex_wait_block element from
- * userspace, fill a futex_q element with proper values.
- */
-inline struct futex_q *futex_read_wait_block(u32 __user *uaddr, u32 count)
-{
-	unsigned int i;
-	struct futex_q *qs;
-	struct futex_wait_block fwb;
-	struct futex_wait_block __user *entry =
-		(struct futex_wait_block __user *)uaddr;
-
-	if (!count || count > FUTEX_MULTIPLE_MAX_COUNT)
-		return ERR_PTR(-EINVAL);
-
-	qs = kcalloc(count, sizeof(*qs), GFP_KERNEL);
-	if (!qs)
-		return ERR_PTR(-ENOMEM);
-
-	for (i = 0; i < count; i++) {
-		if (copy_from_user(&fwb, &entry[i], sizeof(fwb))) {
-			kfree(qs);
-			return ERR_PTR(-EFAULT);
-		}
-
-		qs[i].uaddr = fwb.uaddr;
-		qs[i].uval = fwb.val;
-		qs[i].bitset = fwb.bitset;
-	}
-
-	return qs;
-}
 
 SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 		struct __kernel_timespec __user *, utime, u32 __user *, uaddr2,
@@ -4263,8 +3925,7 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 
 	if (utime && (cmd == FUTEX_WAIT || cmd == FUTEX_LOCK_PI ||
 		      cmd == FUTEX_WAIT_BITSET ||
-		      cmd == FUTEX_WAIT_REQUEUE_PI ||
-		      cmd == FUTEX_WAIT_MULTIPLE)) {
+		      cmd == FUTEX_WAIT_REQUEUE_PI)) {
 		if (unlikely(should_fail_futex(!(op & FUTEX_PRIVATE_FLAG))))
 			return -EFAULT;
 		if (get_timespec64(&ts, utime))
@@ -4273,7 +3934,7 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 			return -EINVAL;
 
 		t = timespec64_to_ktime(ts);
-		if (cmd == FUTEX_WAIT || cmd == FUTEX_WAIT_MULTIPLE)
+		if (cmd == FUTEX_WAIT)
 			t = ktime_add_safe(ktime_get(), t);
 		tp = &t;
 	}
@@ -4284,25 +3945,6 @@ SYSCALL_DEFINE6(futex, u32 __user *, uaddr, int, op, u32, val,
 	if (cmd == FUTEX_REQUEUE || cmd == FUTEX_CMP_REQUEUE ||
 	    cmd == FUTEX_CMP_REQUEUE_PI || cmd == FUTEX_WAKE_OP)
 		val2 = (u32) (unsigned long) utime;
-
-	if (cmd == FUTEX_WAIT_MULTIPLE) {
-		int ret;
-		struct futex_q *qs;
-
-#ifdef CONFIG_X86_X32
-		if (unlikely(in_x32_syscall()))
-			return -ENOSYS;
-#endif
-		qs = futex_read_wait_block(uaddr, val);
-
-		if (IS_ERR(qs))
-			return PTR_ERR(qs);
-
-		ret = futex_wait_multiple(qs, op, val, tp);
-		kfree(qs);
-
-		return ret;
-	}
 
 	return do_futex(uaddr, op, val, tp, uaddr2, val2, val3);
 }
@@ -4466,58 +4108,6 @@ err_unlock:
 #endif /* CONFIG_COMPAT */
 
 #ifdef CONFIG_COMPAT_32BIT_TIME
-/**
- * struct compat_futex_wait_block - Block of futexes to be waited for
- * @uaddr:	User address of the futex (compatible pointer)
- * @val:	Futex value expected by userspace
- * @bitset:	Bitset for the optional bitmasked wakeup
- */
-struct compat_futex_wait_block {
-	compat_uptr_t	uaddr;
-	__u32 pad;
-	__u32 val;
-	__u32 bitset;
-};
-
-/**
- * compat_futex_read_wait_block - Read an array of futex_wait_block from
- * userspace
- * @uaddr:	Userspace address of the block
- * @count:	Number of blocks to be read
- *
- * This function does the same as futex_read_wait_block(), except that it
- * converts the pointer to the futex from the compat version to the regular one.
- */
-inline struct futex_q *compat_futex_read_wait_block(u32 __user *uaddr,
-						    u32 count)
-{
-	unsigned int i;
-	struct futex_q *qs;
-	struct compat_futex_wait_block fwb;
-	struct compat_futex_wait_block __user *entry =
-		(struct compat_futex_wait_block __user *)uaddr;
-
-	if (!count || count > FUTEX_MULTIPLE_MAX_COUNT)
-		return ERR_PTR(-EINVAL);
-
-	qs = kcalloc(count, sizeof(*qs), GFP_KERNEL);
-	if (!qs)
-		return ERR_PTR(-ENOMEM);
-
-	for (i = 0; i < count; i++) {
-		if (copy_from_user(&fwb, &entry[i], sizeof(fwb))) {
-			kfree(qs);
-			return ERR_PTR(-EFAULT);
-		}
-
-		qs[i].uaddr = compat_ptr(fwb.uaddr);
-		qs[i].uval = fwb.val;
-		qs[i].bitset = fwb.bitset;
-	}
-
-	return qs;
-}
-
 SYSCALL_DEFINE6(futex_time32, u32 __user *, uaddr, int, op, u32, val,
 		struct old_timespec32 __user *, utime, u32 __user *, uaddr2,
 		u32, val3)
@@ -4529,34 +4119,20 @@ SYSCALL_DEFINE6(futex_time32, u32 __user *, uaddr, int, op, u32, val,
 
 	if (utime && (cmd == FUTEX_WAIT || cmd == FUTEX_LOCK_PI ||
 		      cmd == FUTEX_WAIT_BITSET ||
-		      cmd == FUTEX_WAIT_REQUEUE_PI ||
-		      cmd == FUTEX_WAIT_MULTIPLE)) {
+		      cmd == FUTEX_WAIT_REQUEUE_PI)) {
 		if (get_old_timespec32(&ts, utime))
 			return -EFAULT;
 		if (!timespec64_valid(&ts))
 			return -EINVAL;
 
 		t = timespec64_to_ktime(ts);
-		if (cmd == FUTEX_WAIT || cmd == FUTEX_WAIT_MULTIPLE)
+		if (cmd == FUTEX_WAIT)
 			t = ktime_add_safe(ktime_get(), t);
 		tp = &t;
 	}
 	if (cmd == FUTEX_REQUEUE || cmd == FUTEX_CMP_REQUEUE ||
 	    cmd == FUTEX_CMP_REQUEUE_PI || cmd == FUTEX_WAKE_OP)
 		val2 = (int) (unsigned long) utime;
-
-	if (cmd == FUTEX_WAIT_MULTIPLE) {
-		int ret;
-		struct futex_q *qs = compat_futex_read_wait_block(uaddr, val);
-
-		if (IS_ERR(qs))
-			return PTR_ERR(qs);
-
-		ret = futex_wait_multiple(qs, op, val, tp);
-		kfree(qs);
-
-		return ret;
-	}
 
 	return do_futex(uaddr, op, val, tp, uaddr2, val2, val3);
 }

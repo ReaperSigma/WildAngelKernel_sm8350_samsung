@@ -198,7 +198,6 @@ read_options(){
 }
 
 # Trap CTRL+C, CTRL+Z and quit singles
-trap '' SIGINT SIGQUIT SIGTSTP
  
 # Step # Main logic - infinite loop
 while true

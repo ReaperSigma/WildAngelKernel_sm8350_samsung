@@ -44,7 +44,6 @@
 #include <linux/slab.h>
 #include <linux/compat.h>
 #include <linux/random.h>
-#include <linux/freezer.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -1314,7 +1313,7 @@ static void del_timer_wait_running(struct timer_list *timer)
 	u32 tf;
 
 	tf = READ_ONCE(timer->flags);
-	if (!(tf & (TIMER_MIGRATING | TIMER_IRQSAFE))) {
+	if (!(tf & TIMER_MIGRATING)) {
 		struct timer_base *base = get_timer_base(tf);
 
 		/*
@@ -1397,13 +1396,6 @@ int del_timer_sync(struct timer_list *timer)
 	 * could lead to deadlock.
 	 */
 	WARN_ON(in_irq() && !(timer->flags & TIMER_IRQSAFE));
-
-	/*
-	 * Must be able to sleep on PREEMPT_RT because of the slowpath in
-	 * del_timer_wait_running().
-	 */
-	if (IS_ENABLED(CONFIG_PREEMPT_RT) && !(timer->flags & TIMER_IRQSAFE))
-		might_sleep();
 
 	do {
 		ret = try_to_del_timer_sync(timer);
@@ -1857,8 +1849,6 @@ static __latent_entropy void run_timer_softirq(struct softirq_action *h)
 {
 	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
 
-	irq_work_tick_soft();
-
 	__run_timers(base);
 	if (IS_ENABLED(CONFIG_NO_HZ_COMMON)) {
 		__run_timers(this_cpu_ptr(&timer_bases[BASE_DEF]));
@@ -1971,18 +1961,6 @@ signed long __sched schedule_timeout(signed long timeout)
 
 	expire = timeout + jiffies;
 
-#ifdef CONFIG_HIGH_RES_TIMERS
-	if (timeout == 1 && hrtimer_resolution < NSEC_PER_SEC / HZ) {
-		/*
-		 * Special case 1 as being a request for the minimum timeout
-		 * and use highres timers to timeout after 1ms to workaround
-		 * the granularity of low Hz tick timers.
-		 */
-		if (!schedule_min_hrtimeout())
-			return 0;
-		goto out_timeout;
-	}
-#endif
 	timer.task = current;
 	timer_setup_on_stack(&timer.timer, process_timeout, 0);
 	__mod_timer(&timer.timer, expire, 0);
@@ -1991,10 +1969,10 @@ signed long __sched schedule_timeout(signed long timeout)
 
 	/* Remove the timer from the object tracker */
 	destroy_timer_on_stack(&timer.timer);
-out_timeout:
+
 	timeout = expire - jiffies;
 
-out:
+ out:
 	return timeout < 0 ? 0 : timeout;
 }
 EXPORT_SYMBOL(schedule_timeout);
@@ -2163,19 +2141,7 @@ void __init init_timers(void)
  */
 void msleep(unsigned int msecs)
 {
-	int jiffs = msecs_to_jiffies(msecs);
-	unsigned long timeout;
-
-	/*
-	 * Use high resolution timers where the resolution of tick based
-	 * timers is inadequate.
-	 */
-	if (jiffs < 5 && hrtimer_resolution < NSEC_PER_SEC / HZ && !pm_freezing) {
-		while (msecs)
-			msecs = schedule_msec_hrtimeout_uninterruptible(msecs);
-		return;
-	}
-	timeout = jiffs + 1;
+	unsigned long timeout = msecs_to_jiffies(msecs) + 1;
 
 	while (timeout)
 		timeout = schedule_timeout_uninterruptible(timeout);
@@ -2189,15 +2155,7 @@ EXPORT_SYMBOL(msleep);
  */
 unsigned long msleep_interruptible(unsigned int msecs)
 {
-	int jiffs = msecs_to_jiffies(msecs);
-	unsigned long timeout;
-
-	if (jiffs < 5 && hrtimer_resolution < NSEC_PER_SEC / HZ && !pm_freezing) {
-		while (msecs && !signal_pending(current))
-			msecs = schedule_msec_hrtimeout_interruptible(msecs);
-		return msecs;
-	}
-	timeout = jiffs + 1;
+	unsigned long timeout = msecs_to_jiffies(msecs) + 1;
 
 	while (timeout && !signal_pending(current))
 		timeout = schedule_timeout_interruptible(timeout);

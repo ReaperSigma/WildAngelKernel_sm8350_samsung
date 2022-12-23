@@ -645,17 +645,9 @@ static void __blk_mq_complete_request(struct request *rq)
 		return;
 	}
 
-	cpu = get_cpu_light();
-	/*
-	 * Avoid SMP function calls for completions because they acquire
-	 * sleeping spinlocks on RT.
-	 */
-#ifdef CONFIG_PREEMPT_RT
-	shared = true;
-#else
+	cpu = get_cpu();
 	if (!test_bit(QUEUE_FLAG_SAME_FORCE, &q->queue_flags))
 		shared = cpus_share_cache(cpu, ctx->cpu);
-#endif
 
 	if (cpu != ctx->cpu && !shared && cpu_online(ctx->cpu)) {
 		rq->csd.func = __blk_mq_complete_request_remote;
@@ -665,7 +657,7 @@ static void __blk_mq_complete_request(struct request *rq)
 	} else {
 		q->mq_ops->complete(rq);
 	}
-	put_cpu_light();
+	put_cpu();
 }
 
 static void hctx_unlock(struct blk_mq_hw_ctx *hctx, int srcu_idx)
@@ -1534,14 +1526,14 @@ static void __blk_mq_delay_run_hw_queue(struct blk_mq_hw_ctx *hctx, bool async,
 		return;
 
 	if (!async && !(hctx->flags & BLK_MQ_F_BLOCKING)) {
-		int cpu = get_cpu_light();
+		int cpu = get_cpu();
 		if (cpumask_test_cpu(cpu, hctx->cpumask)) {
 			__blk_mq_run_hw_queue(hctx);
-			put_cpu_light();
+			put_cpu();
 			return;
 		}
 
-		put_cpu_light();
+		put_cpu();
 	}
 
 	kblockd_mod_delayed_work_on(blk_mq_hctx_next_cpu(hctx), &hctx->run_work,

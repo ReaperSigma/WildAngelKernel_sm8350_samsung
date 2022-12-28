@@ -126,12 +126,12 @@ struct memlat_mon {
  * @mons:			All of the memlat_mon structs representing
  *				the different voters who share this cpu_grp.
  * @mons_lock:		A lock used to protect the @mons.
- * @init_mons_lock:	A lock used to protect the @mons in probe routine.
  */
 struct memlat_cpu_grp {
 	cpumask_t		cpus;
 	unsigned int		common_ev_ids[NUM_COMMON_EVS];
 	struct cpu_data		*cpus_data;
+	int			read_event_cpu;
 	ktime_t			last_update_ts;
 	unsigned long		last_ts_delta_us;
 
@@ -143,7 +143,6 @@ struct memlat_cpu_grp {
 	unsigned int		num_active_mons;
 	struct memlat_mon	*mons;
 	struct mutex		mons_lock;
-	struct mutex		init_mons_lock;
 	spinlock_t		mon_active_lock;
 };
 
@@ -200,17 +199,17 @@ static void update_counts(struct memlat_cpu_grp *cpu_grp)
 		struct cpu_data *cpu_data = to_cpu_data(cpu_grp, cpu);
 		struct event_data *common_evs = cpu_data->common_evs;
 
-		for (i = 0; i < NUM_COMMON_EVS; i++)
+		for (i = 0; i < NUM_COMMON_EVS; i++) {
+			cpu_grp->read_event_cpu = cpu;
 			read_event(&common_evs[i]);
+			cpu_grp->read_event_cpu = -1;
+		}
 
 		if (!common_evs[STALL_IDX].pevent)
 			common_evs[STALL_IDX].last_delta =
 				common_evs[CYC_IDX].last_delta;
 
-		if (delta != 0)
-			cpu_data->freq = common_evs[CYC_IDX].last_delta / delta;
-		else
-			cpu_data->freq = common_evs[CYC_IDX].last_delta;
+		cpu_data->freq = common_evs[CYC_IDX].last_delta / delta;
 		cpu_data->stall_pct = mult_frac(100,
 				common_evs[STALL_IDX].last_delta,
 				common_evs[CYC_IDX].last_delta);
@@ -225,11 +224,13 @@ static void update_counts(struct memlat_cpu_grp *cpu_grp)
 		for_each_cpu(cpu, &mon->cpus) {
 			unsigned int mon_idx =
 				cpu - cpumask_first(&mon->cpus);
+			cpu_grp->read_event_cpu = cpu;
 			read_event(&mon->miss_ev[mon_idx]);
 			if (mon->wb_ev_id && mon->access_ev_id) {
 				read_event(&mon->wb_ev[mon_idx]);
 				read_event(&mon->access_ev[mon_idx]);
 			}
+			cpu_grp->read_event_cpu = -1;
 		}
 	}
 }
@@ -516,15 +517,11 @@ static int memlat_event_hotplug_going_down(unsigned int cpu)
 	return ret;
 }
 
-/*
- * Note: We must be holding cpus_read_lock() before calling this function
- * since we are using cpuslocked version of function inside it
- */
 static int memlat_event_cpu_hp_init(void)
 {
 	int ret = 0;
 
-	ret = cpuhp_setup_state_nocalls_cpuslocked(CPUHP_AP_ONLINE_DYN,
+	ret = cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN,
 				"MEMLAT_EVENT",
 				memlat_event_hotplug_coming_up,
 				memlat_event_hotplug_going_down);
@@ -806,6 +803,8 @@ static int memlat_cpu_grp_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
+	cpu_grp->read_event_cpu = -1;
+
 	num_mons = of_get_available_child_count(dev->of_node);
 
 	if (!num_mons) {
@@ -852,7 +851,6 @@ static int memlat_cpu_grp_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	mutex_init(&cpu_grp->mons_lock);
-	mutex_init(&cpu_grp->init_mons_lock);
 	spin_lock_init(&cpu_grp->mon_active_lock);
 	cpu_grp->update_ms = DEFAULT_UPDATE_MS;
 
@@ -888,7 +886,7 @@ static int memlat_mon_probe(struct platform_device *pdev, bool is_compute)
 		return -ENODEV;
 	}
 
-	mutex_lock(&cpu_grp->init_mons_lock);
+	mutex_lock(&cpu_grp->mons_lock);
 	mon = &cpu_grp->mons[cpu_grp->num_inited_mons];
 	spin_lock_irqsave(&cpu_grp->mon_active_lock, flags);
 	mon->is_active = false;
@@ -1005,7 +1003,7 @@ static int memlat_mon_probe(struct platform_device *pdev, bool is_compute)
 		cpu_grp->num_inited_mons++;
 
 unlock_out:
-	mutex_unlock(&cpu_grp->init_mons_lock);
+	mutex_unlock(&cpu_grp->mons_lock);
 	return ret;
 }
 

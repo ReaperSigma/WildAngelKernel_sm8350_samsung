@@ -309,8 +309,7 @@ static size_t cfg80211_gen_new_ie(const u8 *ie, size_t ielen,
 			 * which is skipped anyway).
 			 */
 			if (tmp_old[0] == WLAN_EID_VENDOR_SPECIFIC) {
-				if (tmp_old[1] >= 5 && tmp[1] >= 5 &&
-				    !memcmp(tmp_old + 2, tmp + 2, 5)) {
+				if (!memcmp(tmp_old + 2, tmp + 2, oui_header_len(tmp + 2))) {
 					/* same vendor ie, copy from
 					 * subelement
 					 */
@@ -1156,9 +1155,16 @@ cfg80211_update_known_bss(struct cfg80211_registered_device *rdev,
 		if (old == rcu_access_pointer(known->pub.ies))
 			rcu_assign_pointer(known->pub.ies, new->pub.beacon_ies);
 
-		cfg80211_update_hidden_bsses(known,
-					     rcu_access_pointer(new->pub.beacon_ies),
-					     old);
+		/* Assign beacon IEs to all sub entries */
+		list_for_each_entry(bss, &known->hidden_list, hidden_list) {
+			const struct cfg80211_bss_ies *ies;
+
+			ies = rcu_access_pointer(bss->pub.beacon_ies);
+			WARN_ON(ies != old);
+
+			rcu_assign_pointer(bss->pub.beacon_ies,
+					   new->pub.beacon_ies);
+		}
 
 		if (old)
 			kfree_rcu((struct cfg80211_bss_ies *)old, rcu_head);

@@ -203,6 +203,8 @@ struct dbm_reg_data {
 	unsigned int ep_mult;
 };
 
+struct device *msm_dwc3;
+
 #define DBM_1_4_NUM_EP		4
 #define DBM_1_5_NUM_EP		8
 
@@ -267,6 +269,8 @@ struct dwc3_msm_req_complete {
 	void (*orig_complete)(struct usb_ep *ep,
 			      struct usb_request *req);
 };
+
+int speed_setting;
 
 enum dwc3_drd_state {
 	DRD_STATE_UNDEFINED = 0,
@@ -3704,6 +3708,8 @@ static void dwc3_ext_event_notify(struct dwc3_msm *mdwc)
 	queue_delayed_work(mdwc->sm_usb_wq, &mdwc->sm_work, 0);
 }
 
+void dwc3_max_speed_setting(int speed);
+
 static void dwc3_resume_work(struct work_struct *w)
 {
 	struct dwc3_msm *mdwc = container_of(w, struct dwc3_msm, resume_work);
@@ -4019,6 +4025,15 @@ static int dwc3_msm_get_clk_gdsc(struct dwc3_msm *mdwc)
 
 	return 0;
 }
+
+void dwc3_max_speed_setting(int speed)
+{
+	// speed 0 , it means Super speed
+	// speed 1 , it means High speed restrict enable
+	speed_setting = speed;
+	pr_info("%s : speed_setting = %d\n", __func__, speed_setting);
+}
+EXPORT_SYMBOL(dwc3_max_speed_setting);
 
 static int dwc3_msm_id_notifier(struct notifier_block *nb,
 	unsigned long event, void *ptr)
@@ -5639,6 +5654,63 @@ static int get_chg_type(struct dwc3_msm *mdwc)
 
 	return value;
 }
+
+int dwc3_restart_usb_host_mode(int lanes)
+{
+	struct dwc3_msm *mdwc;
+	struct dwc3 *dwc = NULL;
+	int ret = -EINVAL;
+
+	mdwc = dev_get_drvdata(msm_dwc3);
+
+	if (mdwc == NULL) {
+		pr_info("%s, dwc3-msm is not initialized.\n", __func__);
+		return -EAGAIN;
+	}
+
+	dwc = platform_get_drvdata(mdwc->dwc3);
+	if (dwc == NULL) {
+		pr_info("%s, dwc3 controller is not initialized.\n", __func__);
+		return -EAGAIN;
+	}
+
+	if (dwc->maximum_speed == USB_SPEED_HIGH)
+		return 0;
+
+	if (!mdwc->in_host_mode)
+		goto err;
+
+	if (lanes == 2)
+		return 0;
+
+	dbg_event(0xFF, "ss_lane_release", 0);
+	/* flush any pending work */
+	flush_work(&mdwc->resume_work);
+	drain_workqueue(mdwc->sm_usb_wq);
+
+	mdwc->ss_release_called = true;
+
+#ifdef CONFIG_USB_NOTIFIER
+	mdwc->restarting_host_mode = true;
+#endif
+
+	pr_info("%s, stop_host_mode, maximum_speed=%d", __func__, dwc->maximum_speed);
+	/* stop USB host mode */
+	dwc3_start_stop_host(mdwc, false);
+	pr_info("%s, USB_lpm_state, dwc->in_lpm=%d", __func__, atomic_read(&dwc->in_lpm));
+	dwc3_max_speed_setting(1);
+	/* restart USB host mode into high speed */
+	dwc->maximum_speed = USB_SPEED_HIGH;
+	dwc3_start_stop_host(mdwc, true);
+	pr_info("%s, complete_host_change, max_speed=%d", __func__, dwc->maximum_speed);
+
+err:
+#ifdef CONFIG_USB_NOTIFIER
+	mdwc->restarting_host_mode = false;
+#endif
+	return ret;
+}
+EXPORT_SYMBOL(dwc3_restart_usb_host_mode);
 
 static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned int mA)
 {

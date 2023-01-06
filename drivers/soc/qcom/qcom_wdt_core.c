@@ -627,6 +627,21 @@ static ssize_t qcom_wdt_pet_time_get(struct device *dev,
 
 static DEVICE_ATTR(pet_time, 0400, qcom_wdt_pet_time_get, NULL);
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+static unsigned long long last_emerg_pet;
+
+void emerg_pet_watchdog(void)
+{
+	if (wdog_data && wdog_data->enabled) {
+		wdog_data->ops->enable_wdt(1, wdog_data);
+		wdog_data->ops->reset_wdt(wdog_data);
+
+		last_emerg_pet = sched_clock();
+	}
+}
+EXPORT_SYMBOL(emerg_pet_watchdog);
+#endif
+
 static void qcom_wdt_keep_alive_response(void *info)
 {
 	struct msm_watchdog_data *wdog_dd = info;

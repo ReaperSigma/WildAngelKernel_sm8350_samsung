@@ -2593,6 +2593,8 @@ static struct platform_driver qpnp_pon_driver = {
 	.remove = qpnp_pon_remove,
 };
 
+
+
 static int __init qpnp_pon_init(void)
 {
 	return platform_driver_register(&qpnp_pon_driver);
@@ -2604,6 +2606,38 @@ static void __exit qpnp_pon_exit(void)
 	return platform_driver_unregister(&qpnp_pon_driver);
 }
 module_exit(qpnp_pon_exit);
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+int qpnp_control_s2_reset_onoff(int on)
+{
+	int rc;
+	struct qpnp_pon *pon = sys_reset_dev;
+	struct qpnp_pon_config *cfg;
+
+	cfg = qpnp_get_cfg(pon, PON_KPDPWR_RESIN);
+	if (!cfg) {
+		pr_err("Invalid config pointer\n");
+		return -EFAULT;
+	}
+#if 0
+	u16 s1_timer_addr = QPNP_PON_KPDPWR_RESIN_S1_TIMER(pon);
+
+	/* Make sure S1 Timer set to 0xE(MS_6720) */
+	if (on) {
+		rc = qpnp_pon_masked_write(pon, s1_timer_addr, QPNP_PON_S1_TIMER_MASK, 0xE);
+	}
+#endif
+	/* control S2 reset */
+	rc = qpnp_pon_masked_write(pon, cfg->s2_cntl2_addr,
+			QPNP_PON_S2_CNTL_EN, on ? QPNP_PON_S2_CNTL_EN : 0);
+	if (rc) {
+		dev_err(pon->dev, "Unable to configure S2 enable\n");
+		return rc;
+	}
+
+	return 0;
+}
+#endif
 
 MODULE_DESCRIPTION("QPNP PMIC Power-on driver");
 MODULE_LICENSE("GPL v2");

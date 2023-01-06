@@ -179,16 +179,16 @@ typedef enum {
 
 #if IS_ENABLED(CONFIG_SEC_DEBUG)
 enum pon_restart_reason {
+        PON_RESTART_REASON_UNKNOWN              = 0x00,
+        PON_RESTART_REASON_RECOVERY             = 0x01,
+        PON_RESTART_REASON_BOOTLOADER           = 0x02,
+        PON_RESTART_REASON_RTC                  = 0x03,
+        PON_RESTART_REASON_DMVERITY_CORRUPTED   = 0x04,
+        PON_RESTART_REASON_DMVERITY_ENFORCE     = 0x05,
+        PON_RESTART_REASON_KEYS_CLEAR           = 0x06,
 /**********************************************/
 /* Following values came from qpnp-power-on.h */
 /**********************************************/
-	PON_RESTART_REASON_UNKNOWN		= 0x00,
-	PON_RESTART_REASON_RECOVERY		= 0x01,
-	PON_RESTART_REASON_BOOTLOADER		= 0x02,
-	PON_RESTART_REASON_RTC			= 0x03,
-	PON_RESTART_REASON_DMVERITY_CORRUPTED	= 0x04,
-	PON_RESTART_REASON_DMVERITY_ENFORCE	= 0x05,
-	PON_RESTART_REASON_KEYS_CLEAR		= 0x06,
 #if (CONFIG_SEC_QPNP_PON_SPARE_BITS == 6)
 	/* 32 ~ 63 for OEMs/ODMs secific features */
 	PON_RESTART_REASON_OEM_MIN		= 0x20,

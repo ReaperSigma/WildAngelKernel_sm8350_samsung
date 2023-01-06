@@ -16,6 +16,10 @@
 #include <linux/qcom_scm.h>
 #include <soc/qcom/minidump.h>
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG)
+#include <linux/sec_debug.h>
+#endif
+
 enum qcom_download_dest {
 	QCOM_DOWNLOAD_DEST_UNKNOWN = -1,
 	QCOM_DOWNLOAD_DEST_QPST = 0,
@@ -74,6 +78,18 @@ static void msm_enable_dump_mode(bool enable)
 	else
 		set_download_mode(QCOM_DOWNLOAD_NODUMP);
 }
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG) 
+void set_dload_mode(int on)
+{
+	if (on)
+		set_download_mode(QCOM_DOWNLOAD_FULLDUMP);
+	else
+		set_download_mode(QCOM_DOWNLOAD_NODUMP);
+
+	pr_err("set_dload_mode <%d> ( %lx )\n", on, CALLER_ADDR0);
+}
+#endif
 
 static void set_download_dest(struct qcom_dload *poweroff,
 			      enum qcom_download_dest dest)

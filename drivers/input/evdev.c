@@ -53,6 +53,36 @@ struct evdev_client {
 	struct input_event buffer[];
 };
 
+#if IS_ENABLED(CONFIG_SEC_INPUT_BOOSTER)
+#include <linux/notifier.h>
+#include <linux/input/input_booster.h>
+
+struct workqueue_struct *ib_unbound_highwq;
+spinlock_t ib_idx_lock;
+struct ib_event_work *ib_evt_work;
+int ib_work_cnt;
+
+static BLOCKING_NOTIFIER_HEAD(ib_notifier_list);
+
+int ib_notifier_register(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&ib_notifier_list, nb);
+}
+EXPORT_SYMBOL(ib_notifier_register);
+
+int ib_notifier_unregister(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_unregister(&ib_notifier_list, nb);
+}
+EXPORT_SYMBOL(ib_notifier_unregister);
+
+int ib_notifier_call_chain(unsigned long val, void *v)
+{
+	return blocking_notifier_call_chain(&ib_notifier_list, val, v);
+}
+EXPORT_SYMBOL_GPL(ib_notifier_call_chain);
+#endif
+
 static size_t evdev_get_mask_cnt(unsigned int type)
 {
 	static const size_t counts[EV_CNT] = {

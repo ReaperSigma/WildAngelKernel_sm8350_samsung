@@ -19,6 +19,8 @@
 #include <linux/module.h>
 #include <linux/of_reserved_mem.h>
 
+#include <linux/sec_debug.h>
+
 #define MSM_DUMP_TABLE_VERSION		MSM_DUMP_MAKE_VERSION(2, 0)
 
 #define SCM_CMD_DEBUG_LAR_UNLOCK	0x4
@@ -681,6 +683,16 @@ int msm_dump_data_register_nominidump(enum msm_dump_table_ids id,
 	return register_dump_table_entry(id, entry);
 }
 EXPORT_SYMBOL(msm_dump_data_register_nominidump);
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG_SUMMARY)
+void sec_debug_summary_set_msm_memdump_info(struct sec_debug_summary_data_apss *apss)
+{
+	if (apss == NULL)
+		return;
+	apss->msm_memdump_paddr = (uint64_t)memdump.table_phys;
+	pr_info("%s : 0x%llx\n", __func__, apss->msm_memdump_paddr);
+}
+#endif
 
 #define MSM_DUMP_TOTAL_SIZE_OFFSET	0x724
 static int init_memory_dump(void *dump_vaddr, phys_addr_t phys_addr,

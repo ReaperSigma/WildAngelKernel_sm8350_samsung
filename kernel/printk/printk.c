@@ -62,6 +62,8 @@
 #include "braille.h"
 #include "internal.h"
 
+#include <linux/sec_debug.h>
+
 int console_printk[4] = {
 	CONSOLE_LOGLEVEL_DEFAULT,	/* console_loglevel */
 	MESSAGE_LOGLEVEL_DEFAULT,	/* default_message_loglevel */
@@ -379,6 +381,12 @@ struct printk_log {
 	u8 level:3;		/* syslog level */
 #ifdef CONFIG_PRINTK_CALLER
 	u32 caller_id;            /* thread id or processor id */
+#endif
+	#if IS_ENABLED(CONFIG_SEC_LOG_BUF)
+	char process[TASK_COMM_LEN];	/* process Name CONFIG_PRINTK_PROCESS */
+	pid_t pid;			/* process id CONFIG_PRINTK_PROCESS */
+	unsigned int cpu;		/* cpu core number CONFIG_PRINTK_PROCESS */
+	bool in_interrupt;		/* in interrupt CONFIG_PRINTK_PROCESS */
 #endif
 }
 #ifdef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
@@ -3451,4 +3459,48 @@ void kmsg_dump_rewind(struct kmsg_dumper *dumper)
 }
 EXPORT_SYMBOL_GPL(kmsg_dump_rewind);
 
+#endif
+
+
+#if IS_ENABLED(CONFIG_SEC_LOG_BUF_NO_CONSOLE)
+static void __sec_log_buf_add(const struct printk_log *msg)
+{
+	static char tmp[PAGE_SIZE];
+	unsigned int size;
+
+	size = msg_print_text(msg, true, printk_time, tmp, PAGE_SIZE);
+	sec_log_buf_write(tmp, size);
+
+	if (unlikely(msg->pid == 1))
+		sec_init_log_buf_write(tmp, size);
+}
+
+void __init sec_log_buf_pull_early_buffer(bool *init_done)
+{
+	u32 current_idx = log_first_idx;
+	struct printk_log *msg;
+	unsigned long flags;
+
+	logbuf_lock_irqsave(flags);
+
+	*init_done = true;
+
+	while (current_idx < log_next_idx) {
+		msg = log_from_idx(current_idx);
+		__sec_log_buf_add(msg);
+		current_idx = log_next(current_idx);
+	}
+
+	logbuf_unlock_irqrestore(flags);
+}
+#endif
+
+#if IS_ENABLED(CONFIG_SEC_DEBUG_SUMMARY)
+void sec_debug_summary_set_klog_info(struct sec_debug_summary_data_apss *apss)
+{
+	apss->log.first_idx_paddr = (unsigned int)__pa(&log_first_idx);
+	apss->log.next_idx_paddr = (unsigned int)__pa(&log_next_idx);
+	apss->log.log_paddr = (unsigned long)__pa(log_buf);
+	apss->log.size_paddr = (unsigned long)__pa(&log_buf_len);
+}
 #endif

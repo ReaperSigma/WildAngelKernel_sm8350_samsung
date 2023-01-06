@@ -36,6 +36,13 @@ struct boot_stats {
 #endif
 };
 
+#if IS_ENABLED(CONFIG_SEC_BOOTSTAT)
+uint32_t bs_linuxloader_start;
+uint32_t bs_linux_start;
+uint32_t bs_uefi_start;
+uint32_t bs_bootloader_load_kernel;
+#endif
+
 static void __iomem *mpm_counter_base;
 static uint32_t mpm_counter_freq;
 static struct boot_stats __iomem *boot_stats;
@@ -360,6 +367,17 @@ static void print_boot_stats(void)
 	pr_info("KPI: Kernel MPM Clock frequency = %u\n",
 		mpm_counter_freq);
 }
+
+#if IS_ENABLED(CONFIG_SEC_BOOTSTAT)
+unsigned int __deprecated get_boot_stat_time(void)
+{
+	return readl_relaxed(mpm_counter_base);
+}
+unsigned int get_boot_stat_freq(void)
+{
+	return mpm_counter_freq;
+}
+#endif
 
 static int __init boot_stats_init(void)
 {

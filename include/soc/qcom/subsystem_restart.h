@@ -137,6 +137,15 @@ extern int subsystem_restart_dev(struct subsys_device *dev);
 extern int subsystem_restart(const char *name);
 extern int subsystem_crashed(const char *name);
 
+extern void subsys_set_cdsp_silent_ssr(bool value);
+void subsys_set_fssr(struct subsys_device *dev, bool value);
+void subsys_set_adsp_silent_ssr(bool value);
+int subsys_restart_adsp(void);
+void subsys_set_voice_state(bool value);
+bool subsys_get_voice_state(void);
+void subsys_set_mmap_audio_state(bool value);
+bool subsys_get_mmap_audio_state(void);
+
 extern void *subsystem_get(const char *name);
 extern void *subsystem_get_with_fwname(const char *name, const char *fw_name);
 extern int subsystem_set_fwname(const char *name, const char *fw_name);

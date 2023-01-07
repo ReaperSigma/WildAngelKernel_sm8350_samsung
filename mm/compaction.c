@@ -1709,6 +1709,8 @@ static unsigned long fast_find_migrateblock(struct compact_control *cc)
 
 				update_fast_start_pfn(cc, free_pfn);
 				pfn = pageblock_start_pfn(free_pfn);
+				if (pfn < cc->zone->zone_start_pfn)
+					pfn = cc->zone->zone_start_pfn;
 				cc->fast_search_fail = 0;
 				found_block = true;
 				set_pageblock_skip(freepage);
@@ -2413,14 +2415,16 @@ enum compact_result try_to_compact_pages(gfp_t gfp_mask, unsigned int order,
 	return rc;
 }
 
-static void __compact_node(int nid, bool sync)
+
+/* Compact all zones within a node */
+static void compact_node(int nid)
 {
 	pg_data_t *pgdat = NODE_DATA(nid);
 	int zoneid;
 	struct zone *zone;
 	struct compact_control cc = {
 		.order = -1,
-		.mode = sync ? MIGRATE_SYNC : MIGRATE_ASYNC,
+		.mode = MIGRATE_SYNC,
 		.ignore_skip_hint = true,
 		.whole_zone = true,
 		.gfp_mask = GFP_KERNEL,
@@ -2442,26 +2446,8 @@ static void __compact_node(int nid, bool sync)
 	}
 }
 
-#ifdef CONFIG_HUGEPAGE_POOL
-void compact_node_async(void)
-{
-	/* hugepage pool and kzerod assumes there is only one node */
-	__compact_node(0, false);
-}
-#endif
-
-/* Compact all zones within a node */
-static void compact_node(int nid)
-{
-	__compact_node(nid, true);
-}
-
 /* Compact all nodes in the system */
-#ifdef CONFIG_HUGEPAGE_POOL
-void compact_nodes(void)
-#else
 static void compact_nodes(void)
-#endif
 {
 	int nid;
 

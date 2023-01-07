@@ -2239,7 +2239,7 @@ static void invalidate_batched_entropy(void)
  * Return: A page aligned address within [start, start + range).  On error,
  * @start is returned.
  */
-unsigned long
+/*unsigned long
 randomize_page(unsigned long start, unsigned long range)
 {
 	if (!PAGE_ALIGNED(start)) {
@@ -2256,7 +2256,7 @@ randomize_page(unsigned long start, unsigned long range)
 		return start;
 
 	return start + (get_random_long() % range << PAGE_SHIFT);
-}
+}*/
 
 /* Interface for in-kernel drivers of true hardware RNGs.
  * Those devices may produce endless random bits and will be throttled

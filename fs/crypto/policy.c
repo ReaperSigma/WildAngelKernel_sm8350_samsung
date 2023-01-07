@@ -167,7 +167,10 @@ static bool fscrypt_supported_v2_policy(const struct fscrypt_policy_v2 *policy,
 		return false;
 	}
 
-	if (policy->flags & ~FSCRYPT_POLICY_FLAGS_VALID) {
+	if (policy->flags & ~(FSCRYPT_POLICY_FLAGS_PAD_MASK |
+			      FSCRYPT_POLICY_FLAG_DIRECT_KEY |
+			      FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64 |
+			      FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32)) {
 		fscrypt_warn(inode, "Unsupported encryption flags (0x%02x)",
 			     policy->flags);
 		return false;
@@ -266,10 +269,6 @@ static int fscrypt_new_context_from_policy(union fscrypt_context *ctx_u,
 		       policy->master_key_descriptor,
 		       sizeof(ctx->master_key_descriptor));
 		get_random_bytes(ctx->nonce, sizeof(ctx->nonce));
-
-#if defined(CONFIG_FSCRYPT_SDP) || defined(CONFIG_DDAR)
-		ctx->knox_flags = 0;
-#endif
 		return sizeof(*ctx);
 	}
 	case FSCRYPT_POLICY_V2: {
@@ -286,10 +285,6 @@ static int fscrypt_new_context_from_policy(union fscrypt_context *ctx_u,
 		       policy->master_key_identifier,
 		       sizeof(ctx->master_key_identifier));
 		get_random_bytes(ctx->nonce, sizeof(ctx->nonce));
-
-#if defined(CONFIG_FSCRYPT_SDP) || defined(CONFIG_DDAR)
-		ctx->knox_flags = 0;
-#endif
 		return sizeof(*ctx);
 	}
 	}
@@ -661,24 +656,6 @@ int fscrypt_inherit_context(struct inode *parent, struct inode *child,
 	ctxsize = fscrypt_new_context_from_policy(&ctx, &ci->ci_policy);
 
 	BUILD_BUG_ON(sizeof(ctx) != FSCRYPT_SET_CONTEXT_MAX_SIZE);
-
-#ifdef CONFIG_DDAR
-	res = dd_test_and_inherit_context(&ctx, parent, child, ci, fs_data);
-	if(res) {
-		dd_error("failed to inherit dd policy\n");
-		return res;
-	}
-#endif
-
-#ifdef CONFIG_FSCRYPT_SDP
-	res = fscrypt_sdp_inherit_context(parent, child, &ctx, fs_data);
-	if (res) {
-		printk_once(KERN_WARNING
-				"%s: Failed to set sensitive ongoing flag (err:%d)\n", __func__, res);
-		return res;
-	}
-#endif
-
 	res = parent->i_sb->s_cop->set_context(child, &ctx, ctxsize, fs_data);
 	if (res)
 		return res;

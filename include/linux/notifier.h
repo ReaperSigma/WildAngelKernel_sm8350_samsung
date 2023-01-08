@@ -163,6 +163,9 @@ extern int raw_notifier_chain_unregister(struct raw_notifier_head *nh,
 extern int srcu_notifier_chain_unregister(struct srcu_notifier_head *nh,
 		struct notifier_block *nb);
 
+extern int am_app_launch_notifier_register(struct notifier_block *nb);
+extern int am_app_launch_notifier_unregister(struct notifier_block *nb);
+
 extern int atomic_notifier_call_chain(struct atomic_notifier_head *nh,
 		unsigned long val, void *v);
 extern int __atomic_notifier_call_chain(struct atomic_notifier_head *nh,

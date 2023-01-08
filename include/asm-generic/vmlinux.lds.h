@@ -868,6 +868,17 @@
 		KEEP(*(.con_initcall.init))				\
 		__con_initcall_end = .;
 
+#ifdef CONFIG_SEC_KUNIT
+/* Alignment must be consistent with (test_module *) in include/kunit/test.h */
+#define KUNIT_TEST_MODULES						\
+		. = ALIGN(8);						\
+		__test_modules_start = .;				\
+		KEEP(*(.test_modules))					\
+		__test_modules_end = .;
+#else
+#define KUNIT_TEST_MODULES
+#endif
+
 #ifdef CONFIG_BLK_DEV_INITRD
 #define INIT_RAM_FS							\
 	. = ALIGN(4);							\

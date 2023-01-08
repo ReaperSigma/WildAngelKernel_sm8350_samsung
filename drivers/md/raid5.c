@@ -609,17 +609,17 @@ int raid5_calc_degraded(struct r5conf *conf)
 	return degraded;
 }
 
-static bool has_failed(struct r5conf *conf)
+static int has_failed(struct r5conf *conf)
 {
-	int degraded = conf->mddev->degraded;
+	int degraded;
 
-	if (test_bit(MD_BROKEN, &conf->mddev->flags))
-		return true;
+	if (conf->mddev->reshape_position == MaxSector)
+		return conf->mddev->degraded > conf->max_degraded;
 
-	if (conf->mddev->reshape_position != MaxSector)
-		degraded = raid5_calc_degraded(conf);
-
-	return degraded > conf->max_degraded;
+	degraded = raid5_calc_degraded(conf);
+	if (degraded > conf->max_degraded)
+		return 1;
+	return 0;
 }
 
 struct stripe_head *
@@ -2058,8 +2058,9 @@ static void raid_run_ops(struct stripe_head *sh, unsigned long ops_request)
 	struct raid5_percpu *percpu;
 	unsigned long cpu;
 
-	cpu = get_cpu();
+	cpu = get_cpu_light();
 	percpu = per_cpu_ptr(conf->percpu, cpu);
+	spin_lock(&percpu->lock);
 	if (test_bit(STRIPE_OP_BIOFILL, &ops_request)) {
 		ops_run_biofill(sh);
 		overlap_clear++;
@@ -2118,7 +2119,8 @@ static void raid_run_ops(struct stripe_head *sh, unsigned long ops_request)
 			if (test_and_clear_bit(R5_Overlap, &dev->flags))
 				wake_up(&sh->raid_conf->wait_for_overlap);
 		}
-	put_cpu();
+	spin_unlock(&percpu->lock);
+	put_cpu_light();
 }
 
 static void free_stripe(struct kmem_cache *sc, struct stripe_head *sh)
@@ -2679,31 +2681,34 @@ static void raid5_error(struct mddev *mddev, struct md_rdev *rdev)
 	unsigned long flags;
 	pr_debug("raid456: error called\n");
 
-	pr_crit("md/raid:%s: Disk failure on %s, disabling device.\n",
-		mdname(mddev), bdevname(rdev->bdev, b));
-
 	spin_lock_irqsave(&conf->device_lock, flags);
+
+	if (test_bit(In_sync, &rdev->flags) &&
+	    mddev->degraded == conf->max_degraded) {
+		/*
+		 * Don't allow to achieve failed state
+		 * Don't try to recover this device
+		 */
+		conf->recovery_disabled = mddev->recovery_disabled;
+		spin_unlock_irqrestore(&conf->device_lock, flags);
+		return;
+	}
+
 	set_bit(Faulty, &rdev->flags);
 	clear_bit(In_sync, &rdev->flags);
 	mddev->degraded = raid5_calc_degraded(conf);
-
-	if (has_failed(conf)) {
-		set_bit(MD_BROKEN, &conf->mddev->flags);
-		conf->recovery_disabled = mddev->recovery_disabled;
-
-		pr_crit("md/raid:%s: Cannot continue operation (%d/%d failed).\n",
-			mdname(mddev), mddev->degraded, conf->raid_disks);
-	} else {
-		pr_crit("md/raid:%s: Operation continuing on %d devices.\n",
-			mdname(mddev), conf->raid_disks - mddev->degraded);
-	}
-
 	spin_unlock_irqrestore(&conf->device_lock, flags);
 	set_bit(MD_RECOVERY_INTR, &mddev->recovery);
 
 	set_bit(Blocked, &rdev->flags);
 	set_mask_bits(&mddev->sb_flags, 0,
 		      BIT(MD_SB_CHANGE_DEVS) | BIT(MD_SB_CHANGE_PENDING));
+	pr_crit("md/raid:%s: Disk failure on %s, disabling device.\n"
+		"md/raid:%s: Operation continuing on %d devices.\n",
+		mdname(mddev),
+		bdevname(rdev->bdev, b),
+		mdname(mddev),
+		conf->raid_disks - mddev->degraded);
 	r5c_update_on_rdev_error(mddev, rdev);
 }
 
@@ -6822,6 +6827,7 @@ static int raid456_cpu_up_prepare(unsigned int cpu, struct hlist_node *node)
 			__func__, cpu);
 		return -ENOMEM;
 	}
+	spin_lock_init(&per_cpu_ptr(conf->percpu, cpu)->lock);
 	return 0;
 }
 
@@ -7722,7 +7728,6 @@ static int raid5_add_disk(struct mddev *mddev, struct md_rdev *rdev)
 	 */
 	if (rdev->saved_raid_disk >= 0 &&
 	    rdev->saved_raid_disk >= first &&
-	    rdev->saved_raid_disk <= last &&
 	    conf->disks[rdev->saved_raid_disk].rdev == NULL)
 		first = rdev->saved_raid_disk;
 

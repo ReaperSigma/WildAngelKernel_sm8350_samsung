@@ -19,7 +19,6 @@
 #include <soc/qcom/service-locator.h>
 #include <soc/qcom/service-notifier.h>
 #include "wlan_firmware_service_v01.h"
-#include <linux/timer.h>
 
 #define WCN6750_DEVICE_ID 0x6750
 #define ADRASTEA_DEVICE_ID 0xabcd
@@ -507,6 +506,5 @@ int icnss_get_cpr_info(struct icnss_priv *priv);
 int icnss_update_cpr_info(struct icnss_priv *priv);
 void icnss_add_fw_prefix_name(struct icnss_priv *priv, char *prefix_name,
 			      char *name);
-void icnss_recovery_timeout_hdlr(struct timer_list *t);
 #endif
 

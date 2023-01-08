@@ -41,6 +41,8 @@
 #include <asm/traps.h>
 #include <asm/virt.h>
 
+#include <linux/sec_debug.h>
+
 #define FPEXC_IOF	(1 << 0)
 #define FPEXC_DZF	(1 << 1)
 #define FPEXC_OFF	(1 << 2)
@@ -211,6 +213,16 @@ static void sve_free(struct task_struct *task)
 	WARN_ON(test_tsk_thread_flag(task, TIF_SVE));
 
 	__sve_free(task);
+}
+
+static void *sve_free_atomic(struct task_struct *task)
+{
+	void *sve_state = task->thread.sve_state;
+
+	WARN_ON(test_tsk_thread_flag(task, TIF_SVE));
+
+	task->thread.sve_state = NULL;
+	return sve_state;
 }
 
 /*
@@ -498,7 +510,7 @@ size_t sve_state_size(struct task_struct const *task)
 void sve_alloc(struct task_struct *task)
 {
 	if (task->thread.sve_state) {
-		memset(task->thread.sve_state, 0, sve_state_size(task));
+		memset(task->thread.sve_state, 0, sve_state_size(current));
 		return;
 	}
 
@@ -1000,7 +1012,11 @@ void fpsimd_thread_switch(struct task_struct *next)
 	wrong_task = __this_cpu_read(fpsimd_last_state.st) !=
 					&next->thread.uw.fpsimd_state;
 	wrong_cpu = next->thread.fpsimd_cpu != smp_processor_id();
-
+#if IS_ENABLED(CONFIG_KERNEL_MODE_NEON_DEBUG)
+	if (IS_ENABLED(CONFIG_KERNEL_MODE_NEON_DEBUG))
+		if (!wrong_task && !wrong_cpu)
+			fpsimd_context_check(next);
+#endif
 	update_tsk_thread_flag(next, TIF_FOREIGN_FPSTATE,
 			       wrong_task || wrong_cpu);
 
@@ -1010,6 +1026,7 @@ void fpsimd_thread_switch(struct task_struct *next)
 void fpsimd_flush_thread(void)
 {
 	int vl, supported_vl;
+	void *mem = NULL;
 
 	if (!system_supports_fpsimd())
 		return;
@@ -1022,7 +1039,7 @@ void fpsimd_flush_thread(void)
 
 	if (system_supports_sve()) {
 		clear_thread_flag(TIF_SVE);
-		sve_free(current);
+		mem = sve_free_atomic(current);
 
 		/*
 		 * Reset the task vector length as required.
@@ -1056,6 +1073,7 @@ void fpsimd_flush_thread(void)
 	}
 
 	put_cpu_fpsimd_context();
+	kfree(mem);
 }
 
 /*

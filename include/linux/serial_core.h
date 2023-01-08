@@ -99,6 +99,12 @@ struct uart_icount {
 	__u32	buf_overrun;
 };
 
+struct uart_local_buf {
+	unsigned char *buffer;
+	unsigned int size;
+	unsigned int index;
+};
+
 typedef unsigned int __bitwise upf_t;
 typedef unsigned int __bitwise upstat_t;
 
@@ -253,6 +259,10 @@ struct uart_port {
 	struct serial_rs485     rs485;
 	struct serial_iso7816   iso7816;
 	void			*private_data;		/* generic platform data pointer */
+	#ifdef CONFIG_QGKI
+	unsigned int			uart_logging;
+	struct uart_local_buf	uart_local_buf;
+#endif
 };
 
 static inline int serial_port_in(struct uart_port *up, int offset)

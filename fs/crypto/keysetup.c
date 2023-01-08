@@ -668,3 +668,245 @@ int fscrypt_drop_inode(struct inode *inode)
 	return !is_master_key_secret_present(&mk->mk_secret);
 }
 EXPORT_SYMBOL_GPL(fscrypt_drop_inode);
+
+#ifdef CONFIG_FSCRYPT_SDP
+static inline int __find_and_derive_mode_key(
+		struct fscrypt_key *fskey,
+		struct fscrypt_info *ci,
+		struct fscrypt_master_key *mk,
+		u8 hkdf_context, bool include_fs_uuid)
+{
+	const struct inode *inode = ci->ci_inode;
+	const struct super_block *sb = inode->i_sb;
+	struct fscrypt_mode *mode = ci->ci_mode;
+	const u8 mode_num = mode - fscrypt_modes;
+	u8 mode_key[FSCRYPT_MAX_KEY_SIZE];
+	u8 hkdf_info[sizeof(mode_num) + sizeof(sb->s_uuid)];
+	unsigned int hkdf_infolen = 0;
+	int err;
+
+	if (WARN_ON(mode_num > FSCRYPT_MODE_MAX))
+		return -EINVAL;
+
+	mutex_lock(&fscrypt_mode_key_setup_mutex);
+
+	if (mk->mk_secret.is_hw_wrapped && S_ISREG(inode->i_mode)) {
+		if (!fscrypt_using_inline_encryption(ci)) {
+			fscrypt_warn(ci->ci_inode,
+				     "Hardware-wrapped keys require inline encryption (-o inlinecrypt)");
+			err = -EINVAL;
+			goto out_unlock;
+		}
+		err = -EOPNOTSUPP;
+	} else {
+		BUILD_BUG_ON(sizeof(mode_num) != 1);
+		BUILD_BUG_ON(sizeof(sb->s_uuid) != 16);
+		BUILD_BUG_ON(sizeof(hkdf_info) != 17);
+		hkdf_info[hkdf_infolen++] = mode_num;
+		if (include_fs_uuid) {
+			memcpy(&hkdf_info[hkdf_infolen], &sb->s_uuid,
+				   sizeof(sb->s_uuid));
+			hkdf_infolen += sizeof(sb->s_uuid);
+		}
+		err = fscrypt_hkdf_expand(&mk->mk_secret.hkdf,
+					  hkdf_context, hkdf_info, hkdf_infolen,
+					  mode_key, mode->keysize);
+		if (err)
+			goto out_unlock;
+
+		memcpy(fskey->raw, mode_key, mode->keysize);
+		fskey->size = mode->keysize;
+		memzero_explicit(mode_key, mode->keysize);
+	}
+
+out_unlock:
+	mutex_unlock(&fscrypt_mode_key_setup_mutex);
+	return err;
+}
+
+static inline int __find_and_derive_fskey(
+					struct fscrypt_info *ci,
+					struct fscrypt_key *fskey)
+{
+	struct key *key;
+	struct fscrypt_master_key *mk = NULL;
+	struct fscrypt_key_specifier mk_spec;
+	int err;
+
+	switch (ci->ci_policy.version) {
+//	case FSCRYPT_POLICY_V1:
+//		mk_spec.type = FSCRYPT_KEY_SPEC_TYPE_DESCRIPTOR;
+//		memcpy(mk_spec.u.descriptor,
+//		       ci->ci_policy.v1.master_key_descriptor,
+//		       FSCRYPT_KEY_DESCRIPTOR_SIZE);
+//		break;
+	case FSCRYPT_POLICY_V2:
+		mk_spec.type = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
+		memcpy(mk_spec.u.identifier,
+		       ci->ci_policy.v2.master_key_identifier,
+		       FSCRYPT_KEY_IDENTIFIER_SIZE);
+		break;
+	default:
+		WARN_ON(1);
+		return -EINVAL;
+	}
+
+	key = fscrypt_find_master_key(ci->ci_inode->i_sb, &mk_spec);
+	if (IS_ERR(key))
+		return PTR_ERR(key);
+
+	mk = key->payload.data[0];
+	down_read(&mk->mk_secret_sem);
+
+	/* Has the secret been removed (via FS_IOC_REMOVE_ENCRYPTION_KEY)? */
+	if (!is_master_key_secret_present(&mk->mk_secret)) {
+		err = -ENOKEY;
+		goto out_release_key;
+	}
+
+	/*
+	 * Require that the master key be at least as long as the derived key.
+	 * Otherwise, the derived key cannot possibly contain as much entropy as
+	 * that required by the encryption mode it will be used for.  For v1
+	 * policies it's also required for the KDF to work at all.
+	 */
+	if (mk->mk_secret.size < ci->ci_mode->keysize) {
+		fscrypt_warn(NULL,
+			     "key with %s %*phN is too short (got %u bytes, need %u+ bytes)",
+			     master_key_spec_type(&mk_spec),
+			     master_key_spec_len(&mk_spec), (u8 *)&mk_spec.u,
+			     mk->mk_secret.size, ci->ci_mode->keysize);
+		err = -ENOKEY;
+		goto out_release_key;
+	}
+
+	err = fscrypt_select_encryption_impl(ci, mk->mk_secret.is_hw_wrapped);
+	if (err)
+		goto out_release_key;
+
+	if (mk->mk_secret.is_hw_wrapped &&
+	    !(ci->ci_policy.v2.flags & (FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64 |
+					FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32))) {
+		fscrypt_warn(ci->ci_inode,
+			     "Hardware-wrapped keys are only supported with IV_INO_LBLK policies");
+		err = -EINVAL;
+		goto out_release_key;
+	}
+
+	if (ci->ci_policy.v2.flags & FSCRYPT_POLICY_FLAG_DIRECT_KEY) {
+		err = __find_and_derive_mode_key(fskey, ci, mk,
+				HKDF_CONTEXT_DIRECT_KEY, false);
+	} else if (ci->ci_policy.v2.flags &
+		   FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64) {
+		err = __find_and_derive_mode_key(fskey, ci, mk,
+				HKDF_CONTEXT_IV_INO_LBLK_64_KEY, true);
+
+	} else if (ci->ci_policy.v2.flags &
+		   FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32) {
+		err = -EOPNOTSUPP;
+	} else {
+		err = fscrypt_hkdf_expand(&mk->mk_secret.hkdf,
+					  HKDF_CONTEXT_PER_FILE_ENC_KEY,
+					  ci->ci_nonce,
+					  FS_KEY_DERIVATION_NONCE_SIZE,
+					  fskey->raw, ci->ci_mode->keysize);
+		if (err == 0)
+			fskey->size = ci->ci_mode->keysize;
+	}
+
+out_release_key:
+	up_read(&mk->mk_secret_sem);
+	key_put(key);
+	return err;
+}
+
+/* The function is only for regular files */
+static int derive_fek(struct inode *inode,
+						struct fscrypt_info *crypt_info,
+						u8 *fek, u32 fek_len)
+{
+	int res = 0;
+	/*
+	 * 1. [ Native / Uninitialized / To_sensitive ]  --> Plain fek
+	 * 2. [ Native / Uninitialized / Non_sensitive ] --> Plain fek
+	 */
+	if (fscrypt_sdp_is_uninitialized(crypt_info))
+		res = fscrypt_sdp_derive_uninitialized_dek(crypt_info, fek, fek_len);
+	/*
+	 * 3. [ Native / Initialized / Sensitive ]     --> { fek }_SDPK
+	 * 4. [ Non_native / Initialized / Sensitive ] --> { fek }_SDPK
+	 */
+	else if (fscrypt_sdp_is_sensitive(crypt_info))
+		res = fscrypt_sdp_derive_dek(crypt_info, fek, fek_len);
+	/*
+	 * 5. [ Native / Initialized / Non_sensitive ] --> { fek }_cekey
+	 */
+	else if (fscrypt_sdp_is_native(crypt_info))
+		res = fscrypt_sdp_derive_fek(inode, crypt_info, fek, fek_len);
+	/*
+	 * else { N/A }
+	 *
+	 * Not classified file.
+	 * 6. [ Non_native / Initialized / Non_sensitive ]
+	 * 7. [ Non_native / Initialized / To_sensitive ]
+	 */
+	return res;
+}
+
+int fscrypt_get_encryption_key(
+		struct fscrypt_info *crypt_info,
+		struct fscrypt_key *key)
+{
+	struct fscrypt_key *kek = NULL;
+	int res;
+
+	if (!crypt_info || !(kek = key))
+		return -EINVAL;
+
+	res = fscrypt_get_encryption_kek(crypt_info, kek);
+
+	return res;
+}
+EXPORT_SYMBOL(fscrypt_get_encryption_key);
+
+int fscrypt_get_encryption_key_classified(
+		struct fscrypt_info *crypt_info,
+		struct fscrypt_key *key)
+{
+	u8 *derived_key;
+	int err;
+
+	if (!crypt_info)
+		return -EINVAL;
+
+	derived_key = kmalloc(crypt_info->ci_mode->keysize, GFP_NOFS);
+	if (!derived_key)
+		return -ENOMEM;
+
+	err = derive_fek(crypt_info->ci_inode, crypt_info, derived_key, crypt_info->ci_mode->keysize);
+	if (err)
+		goto out;
+
+	memcpy(key->raw, derived_key, crypt_info->ci_mode->keysize);
+	key->size = crypt_info->ci_mode->keysize;
+
+out:
+	kzfree(derived_key);
+	return err;
+}
+EXPORT_SYMBOL(fscrypt_get_encryption_key_classified);
+
+int fscrypt_get_encryption_kek(
+		struct fscrypt_info *crypt_info,
+		struct fscrypt_key *kek)
+{
+	int res;
+
+	if (!crypt_info)
+		return -EINVAL;
+
+	res = __find_and_derive_fskey(crypt_info, kek);
+	return res;
+}
+EXPORT_SYMBOL(fscrypt_get_encryption_kek);
+#endif

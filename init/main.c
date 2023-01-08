@@ -201,7 +201,7 @@ static const char *panic_later, *panic_param;
 
 extern const struct obs_kernel_param __setup_start[], __setup_end[];
 
-static bool __init obsolete_checksetup(char *line)
+/*static bool __init obsolete_checksetup(char *line)
 {
 	const struct obs_kernel_param *p;
 	bool had_early_param = false;
@@ -211,10 +211,6 @@ static bool __init obsolete_checksetup(char *line)
 		int n = strlen(p->str);
 		if (parameqn(line, p->str, n)) {
 			if (p->early) {
-				/* Already done in parse_early_param?
-				 * (Needs exact match on param part).
-				 * Keep iterating, as we can have early
-				 * params and __setups of same names 8( */
 				if (line[n] == '\0' || line[n] == '=')
 					had_early_param = true;
 			} else if (!p->setup_func) {
@@ -235,7 +231,37 @@ static bool __init obsolete_checksetup(char *line)
 	} while (p < __setup_end);
 
 	return had_early_param;
+}*/
+
+static bool __init obsolete_checksetup(char *line)
+{
+	const struct obs_kernel_param *p;
+	bool had_early_param = false;
+
+	p = __setup_start;
+	do {
+		int n = strlen(p->str);
+		if (parameqn(line, p->str, n)) {
+			if (p->early) {
+				/* Already done in parse_early_param?
+				 * (Needs exact match on param part).
+				 * Keep iterating, as we can have early
+				 * params and __setups of same names 8( */
+				if (line[n] == '\0' || line[n] == '=')
+					had_early_param = true;
+			} else if (!p->setup_func) {
+				pr_warn("Parameter %s is obsolete, ignored\n",
+					p->str);
+				return true;
+			} else if (p->setup_func(line + n))
+				return true;
+		}
+		p++;
+	} while (p < __setup_end);
+
+	return had_early_param;
 }
+
 
 /*
  * This should be approx 2 Bo*oMips to start (note initial shift), and will
@@ -519,10 +545,8 @@ static int __init do_early_param(char *param, char *val,
 		    (strcmp(param, "console") == 0 &&
 		     strcmp(p->str, "earlycon") == 0)
 		) {
-			memblock_memsize_set_name(p->str);
 			if (p->setup_func(val) != 0)
 				pr_warn("Malformed early option '%s'\n", param);
-			memblock_memsize_unset_name();
 		}
 	}
 	/* We accept everything at this stage. */
@@ -765,9 +789,7 @@ asmlinkage __visible void __init start_kernel(void)
 	 * - add_latent_entropy() to get any latent entropy
 	 * - adding command line entropy
 	 */
-	rand_initialize();
-	add_latent_entropy();
-	add_device_randomness(command_line, strlen(command_line));
+	random_init(command_line);
 	boot_init_stack_canary();
 
 	time_init();

@@ -39,7 +39,7 @@
 #include <linux/fs_context.h>
 #include <uapi/linux/mount.h>
 #include "internal.h"
-
+void (*ufs_debug_func)(void *) = NULL;
 static int thaw_super_locked(struct super_block *sb);
 
 static LIST_HEAD(super_blocks);

@@ -43,7 +43,6 @@ obj-y			:= filemap.o mempool.o oom_kill.o fadvise.o \
 			   compaction.o vmacache.o \
 			   interval_tree.o list_lru.o workingset.o \
 			   debug.o gup.o $(mmu-y) showmem.o showmem_extra.o
-obj-y += sec_mm/
 
 # Give 'page_alloc' its own module-parameter namespace
 page-alloc-y := page_alloc.o
@@ -52,10 +51,6 @@ page-alloc-$(CONFIG_SHUFFLE_PAGE_ALLOCATOR) += shuffle.o
 obj-y += page-alloc.o
 obj-y += init-mm.o
 obj-y += memblock.o
-
-ifdef CONFIG_KZEROD
-obj-y += kzerod.o
-endif
 
 ifdef CONFIG_MMU
 	obj-$(CONFIG_ADVISE_SYSCALLS)	+= madvise.o
@@ -112,4 +107,3 @@ obj-$(CONFIG_PERCPU_STATS) += percpu-stats.o
 obj-$(CONFIG_ZONE_DEVICE) += memremap.o
 obj-$(CONFIG_HMM_MIRROR) += hmm.o
 obj-$(CONFIG_MEMFD_CREATE) += memfd.o
-obj-$(CONFIG_PAGE_BOOST_RECORDING) += io_record.o

@@ -3,6 +3,7 @@
 #define __LINUX_MAGIC_H__
 
 #define ADFS_SUPER_MAGIC	0xadf5
+#define SDFAT_SUPER_MAGIC	0x5EC5DFA4
 #define AFFS_SUPER_MAGIC	0xadff
 #define AFS_SUPER_MAGIC                0x5346414F
 #define AUTOFS_SUPER_MAGIC	0x0187

@@ -379,7 +379,7 @@ static void hgsl_reg_read(struct reg *reg, unsigned int off,
 	*value = __raw_readl(reg->vaddr + off);
 
 	/* ensure this read finishes before the next one.*/
-	rmb();
+	dma_rmb();
 }
 
 static void hgsl_reg_write(struct reg *reg, unsigned int off,
@@ -397,7 +397,7 @@ static void hgsl_reg_write(struct reg *reg, unsigned int off,
 	 * ensure previous writes post before this one,
 	 * i.e. act like normal writel()
 	 */
-	wmb();
+	dma_wmb();
 	__raw_writel(value, (reg->vaddr + off));
 }
 
@@ -474,7 +474,7 @@ static int db_queue_wait_freewords(struct doorbell_queue *dbq, uint32_t size)
 			HGSL_DBQ_HOST_TO_GVM_HARDRESET_REQ);
 
 		/* ensure read is done before comparison */
-		rmb();
+		dma_rmb();
 
 		if (hard_reset_req == true) {
 			if (db_get_busy_state(dbq->vbase) == true)
@@ -502,7 +502,7 @@ static int db_get_busy_state(void *dbq_base)
 		HGSL_DBQ_GVM_TO_HOST_HARDRESET_DISPATCH_IN_BUSY);
 
 	/* ensure read is done before comparison */
-	rmb();
+	dma_rmb();
 
 	return busy_state;
 }
@@ -516,7 +516,7 @@ static void db_set_busy_state(void *dbq_base, int in_busy)
 		in_busy);
 
 	/* confirm write to memory done */
-	wmb();
+	dma_wmb();
 }
 
 static int db_send_msg(struct hgsl_priv  *priv,
@@ -549,7 +549,7 @@ static int db_send_msg(struct hgsl_priv  *priv,
 		HGSL_DBQ_HOST_TO_GVM_HARDRESET_REQ);
 
 		/* ensure read is done before comparison */
-		rmb();
+		dma_rmb();
 
 		if (hard_reset_req) {
 			udelay(1000);
@@ -857,7 +857,7 @@ static inline uint32_t get_context_timestamp(struct hgsl_context *ctxt)
 						ctxt->shadow_eop_off);
 
 	/* ensure read is done before comparison */
-	rmb();
+	dma_rmb();
 	return ts;
 }
 
@@ -872,7 +872,7 @@ static inline void set_context_timestamp(struct hgsl_context *ctxt,
 	*ts_mem = ts;
 
 	/* ensure update is done before return */
-	wmb();
+	dma_wmb();
 }
 
 static inline bool _timestamp_retired(struct hgsl_context *ctxt,

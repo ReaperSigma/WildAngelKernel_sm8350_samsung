@@ -122,6 +122,22 @@ int _debug_vx_show(void)
 
 }
 EXPORT_SYMBOL(_debug_vx_show);
+
+#if IS_ENABLED(CONFIG_QTI_SYS_PM_VX)
+extern int debug_vx_show(void);
+#endif /* CONFIG_QTI_SYS_PM_VX */
+
+int _debug_vx_show(void)
+{
+	int ret = 0;
+#if IS_ENABLED(CONFIG_QTI_SYS_PM_VX)
+	if (lpm_mon_active)
+		ret = debug_vx_show();
+#endif /* CONFIG_QTI_SYS_PM_VX */
+	return ret;
+
+}
+EXPORT_SYMBOL(_debug_vx_show);
 /* Changes to send aop messages -*/
 
 /* for enable/disable manual reset, from retail group's request */

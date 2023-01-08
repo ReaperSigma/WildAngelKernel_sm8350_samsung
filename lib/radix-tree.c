@@ -1,3 +1,4 @@
+
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2001 Momchil Velikov
@@ -1293,6 +1294,36 @@ radix_tree_gang_lookup(const struct radix_tree_root *root, void **results,
 	return ret;
 }
 EXPORT_SYMBOL(radix_tree_gang_lookup);
+
+unsigned int
+radix_tree_gang_lookup_index(const struct radix_tree_root *root, void **results,
+			unsigned long *indices, unsigned long first_index,
+			unsigned int max_items)
+{
+	struct radix_tree_iter iter;
+	void **slot;
+	unsigned int ret = 0;
+
+	if (unlikely(!max_items))
+		return 0;
+
+	radix_tree_for_each_slot(slot, root, &iter, first_index) {
+		results[ret] = rcu_dereference_raw(*slot);
+		if (!results[ret])
+			continue;
+		if (radix_tree_is_internal_node(results[ret])) {
+			slot = radix_tree_iter_retry(&iter);
+			continue;
+		}
+		if (indices)
+			indices[ret] = iter.index;
+		if (++ret == max_items)
+			break;
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL(radix_tree_gang_lookup_index);
 
 /**
  *	radix_tree_gang_lookup_tag - perform multiple lookup on a radix tree

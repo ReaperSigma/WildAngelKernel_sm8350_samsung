@@ -729,6 +729,10 @@ static int init_memory_dump(void *dump_vaddr, phys_addr_t phys_addr,
 	mb();
 	pr_info("MSM Memory Dump base table set up\n");
 
+#if IS_ENABLED(CONFIG_SEC_DEBUG_SUMMARY)
+	sec_debug_summary_set_msm_memdump_info(sec_debug_summary_get_apss());
+#endif
+
 	iounmap(imem_base);
 	dump_vaddr +=  sizeof(*table);
 	phys_addr += sizeof(*table);
@@ -908,3 +912,4 @@ module_platform_driver(mem_dump_driver);
 
 MODULE_DESCRIPTION("Memory Dump V2 Driver");
 MODULE_LICENSE("GPL v2");
+

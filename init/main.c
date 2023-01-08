@@ -124,10 +124,6 @@
 #include <linux/sec_debug.h>
 #include <linux/sec_bootstat.h>
 
-#ifdef CONFIG_SECURITY_DEFEX
-#include <linux/defex.h>
-void __init __weak defex_load_rules(void) { }
-#endif
 
 static int kernel_init(void *);
 
@@ -200,38 +196,6 @@ const char *envp_init[MAX_INIT_ENVS+2] = { "HOME=/", "TERM=linux", NULL, };
 static const char *panic_later, *panic_param;
 
 extern const struct obs_kernel_param __setup_start[], __setup_end[];
-
-/*static bool __init obsolete_checksetup(char *line)
-{
-	const struct obs_kernel_param *p;
-	bool had_early_param = false;
-
-	p = __setup_start;
-	do {
-		int n = strlen(p->str);
-		if (parameqn(line, p->str, n)) {
-			if (p->early) {
-				if (line[n] == '\0' || line[n] == '=')
-					had_early_param = true;
-			} else if (!p->setup_func) {
-				pr_warn("Parameter %s is obsolete, ignored\n",
-					p->str);
-				return true;
-			} else {
-				int ret;
-
-				memblock_memsize_set_name(p->str);
-				ret = p->setup_func(line + n);
-				memblock_memsize_unset_name();
-				if (ret)
-					return true;
-			}
-		}
-		p++;
-	} while (p < __setup_end);
-
-	return had_early_param;
-}*/
 
 static bool __init obsolete_checksetup(char *line)
 {
@@ -790,6 +754,8 @@ asmlinkage __visible void __init start_kernel(void)
 	 * - adding command line entropy
 	 */
 	random_init(command_line);
+	add_latent_entropy();
+	add_device_randomness(command_line, strlen(command_line));
 	boot_init_stack_canary();
 
 	time_init();
@@ -1327,7 +1293,7 @@ static noinline void __init kernel_init_freeable(void)
 	 */
 	set_mems_allowed(node_states[N_MEMORY]);
 
-	cad_pid = task_pid(current);
+	cad_pid = get_pid(task_pid(current));
 
 	smp_prepare_cpus(setup_max_cpus);
 

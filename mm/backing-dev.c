@@ -882,26 +882,6 @@ struct backing_dev_info *bdi_alloc_node(gfp_t gfp_mask, int node_id)
 }
 EXPORT_SYMBOL(bdi_alloc_node);
 
-struct backing_dev_info *sec_bdi_alloc_node(gfp_t gfp_mask, int node_id)
-{
-	struct sec_backing_dev_info *sec_bdi;
-
-	sec_bdi = kmalloc_node(sizeof(struct sec_backing_dev_info),
-			   gfp_mask | __GFP_ZERO, node_id);
-	if (!sec_bdi)
-		return NULL;
-
-	if (bdi_init(&sec_bdi->bdi)) {
-		kfree(sec_bdi);
-		return NULL;
-	}
-	spin_lock_init(&sec_bdi->bdp_debug.lock);
-
-	return (struct backing_dev_info *)sec_bdi;
-}
-EXPORT_SYMBOL(sec_bdi_alloc_node);
-
-
 static struct rb_node **bdi_lookup_rb_node(u64 id, struct rb_node **parentp)
 {
 	struct rb_node **p = &bdi_tree.rb_node;

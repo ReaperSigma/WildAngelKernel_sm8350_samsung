@@ -1133,21 +1133,6 @@ static void page_check_dirty_writeback(struct page *page,
 		mapping->a_ops->is_dirty_writeback(page, dirty, writeback);
 }
 
-ATOMIC_NOTIFIER_HEAD(am_app_launch_notifier);
-
-int am_app_launch_notifier_register(struct notifier_block *nb)
-{
-	return atomic_notifier_chain_register(&am_app_launch_notifier, nb);
-}
-
-int am_app_launch_notifier_unregister(struct notifier_block *nb)
-{
-	return  atomic_notifier_chain_unregister(&am_app_launch_notifier, nb);
-}
-
-
-
-
 /*
  * shrink_page_list() returns the number of reclaimed pages
  */

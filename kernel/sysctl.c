@@ -120,6 +120,7 @@ extern int pid_max_min, pid_max_max;
 extern int percpu_pagelist_fraction;
 extern int latencytop_enabled;
 extern unsigned int sysctl_nr_open_min, sysctl_nr_open_max;
+const int sched_user_hint_max = 1000;
 #ifndef CONFIG_MMU
 extern int sysctl_nr_trim_pages;
 #endif
@@ -3357,6 +3358,67 @@ int proc_do_large_bitmap(struct ctl_table *table, int write,
 
 	bitmap_free(tmp_bitmap);
 	return err;
+}
+
+static int do_proc_douintvec_capacity_conv(bool *negp, unsigned long *lvalp,
+					int *valp, int write, void *data)
+{
+	if (write) {
+		/*
+		 * The sched_upmigrate/sched_downmigrate tunables are
+		 * accepted in percentage. Limit them to 100.
+		 */
+		if (*negp || *lvalp == 0 || *lvalp > 100)
+			return -EINVAL;
+		*valp = SCHED_FIXEDPOINT_SCALE * 100 / *lvalp;
+	} else {
+		*negp = false;
+		*lvalp = SCHED_FIXEDPOINT_SCALE * 100 / *valp;
+	}
+
+	return 0;
+}
+
+/**
+ * proc_douintvec_capacity - read a vector of integers in percentage and convert
+ *                         into sched capacity
+ * @table: the sysctl table
+ * @write: %TRUE if this is a write to the sysctl file
+ * @buffer: the user buffer
+ * @lenp: the size of the user buffer
+ * @ppos: file position
+ *
+ * Returns 0 on success.
+ */
+int proc_douintvec_capacity(struct ctl_table *table, int write,
+				void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	return do_proc_dointvec(table, write, buffer, lenp, ppos,
+				do_proc_douintvec_capacity_conv, NULL);
+}
+
+static int do_proc_douintvec_rwin(bool *negp, unsigned long *lvalp,
+					int *valp, int write, void *data)
+{
+	if (write) {
+		if (*lvalp == 2 || *lvalp == 3 || *lvalp == 4 || *lvalp == 5 ||
+			*lvalp == 8)
+			*valp = *lvalp;
+		else
+			return -EINVAL;
+	} else {
+		*negp = false;
+		*lvalp = *valp;
+	}
+
+	return 0;
+}
+
+int proc_douintvec_ravg_window(struct ctl_table *table, int write,
+				void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	return do_proc_dointvec(table, write, buffer, lenp, ppos,
+				do_proc_douintvec_rwin, NULL);
 }
 
 #else /* CONFIG_PROC_SYSCTL */

@@ -95,7 +95,7 @@
 #include <linux/jump_label.h>
 #include <linux/mem_encrypt.h>
 #include <linux/memblock.h>
-
+#include <linux/defex.h>
 #include <asm/io.h>
 #include <asm/bugs.h>
 #include <asm/setup.h>

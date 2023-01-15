@@ -44,11 +44,6 @@ int set_freq_limit(unsigned long id, unsigned int freq);
 
 #else
 #define DVFS_ARGOS_ID	0
-int set_freq_limit(unsigned long id, unsigned int freq)
-{
-	pr_err("%s is not yet implemented\n", __func__);
-	return 0;
-}
 #endif
 
 #if defined(CONFIG_ARCH_LAHAINA)
@@ -472,8 +467,8 @@ static void argos_freq_lock(int type, int level)
 
 	need_update = check_update_freq(BOOST_CPU, type, target_freq);
 	if(need_update != SKIP_FREQ_UPDATE){
-		pr_info("update cpu freq %d\n", argos_pdata->boost_max[BOOST_CPU]);
-		set_freq_limit(DVFS_ARGOS_ID, argos_pdata->boost_max[BOOST_CPU]);
+		//pr_info("update cpu freq %d\n", argos_pdata->boost_max[BOOST_CPU]);
+		//set_freq_limit(DVFS_ARGOS_ID, argos_pdata->boost_max[BOOST_CPU]);
 	}
 #ifdef ARGOS_VOTING_DDR_CLK	
 	if(level != FREQ_UNLOCK)

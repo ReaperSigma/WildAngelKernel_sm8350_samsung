@@ -20,15 +20,9 @@ void set_hmp(int level);
 
 #ifndef CONFIG_CPU_FREQ_LIMIT
 #define DVFS_TOUCH_ID	0
-int set_freq_limit(unsigned long id, unsigned int freq)
-{
-	pr_err("%s is not yet implemented\n", __func__);
-	return 0;
-}
-#else
-	/* TEMP: for KPI */
-#define DVFS_TOUCH_ID 1
 #endif
+
+
 
 #if defined(CONFIG_ARCH_LAHAINA)
 #define NUM_BUS_TABLE 14
@@ -118,15 +112,15 @@ void ib_set_booster(long* qos_values)
 
 		switch (cur_res_idx) {
 		case CPUFREQ:
-			set_freq_limit(DVFS_TOUCH_ID, value);
-			pr_booster("%s :: cpufreq value : %ld", __func__, value);
+			//set_freq_limit(DVFS_TOUCH_ID, value);
+			//pr_booster("%s :: cpufreq value : %ld", __func__, value);
 			break;
 		case DDRFREQ:
-			ddr_idx = trans_freq_to_idx(value);
+			/*ddr_idx = trans_freq_to_idx(value);
 			pr_booster("%s :: bus value : %ld, %u", __func__, value, touch_bus_vectors_bps[ddr_idx].ib);
 			if (register_ddr)
 				rc = icc_set_bw(path_touch_bw,
-						touch_bus_vectors_bps[ddr_idx].ab, touch_bus_vectors_bps[ddr_idx].ib);
+						touch_bus_vectors_bps[ddr_idx].ab, touch_bus_vectors_bps[ddr_idx].ib);*/
 			break;
 		case HMPBOOST:
 			set_hmp(value);

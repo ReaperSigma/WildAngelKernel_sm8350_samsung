@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 #include <linux/module.h>
 #include <linux/thermal.h>
@@ -186,6 +185,12 @@ static int cpu_isolate_set_cur_state(struct thermal_cooling_device *cdev,
 			(!cpumask_test_and_set_cpu(cpu,
 			&cpus_isolated_by_thermal))) {
 			mutex_unlock(&cpu_isolate_lock);
+#if IS_ENABLED(CONFIG_SEC_PM)
+			THERMAL_IPC_LOG("isolate cpu%d\n", cpu);
+#if IS_ENABLED(CONFIG_SEC_THERMAL_LOG)
+			ss_thermal_print("isolate cpu%d\n", cpu);
+#endif			
+#endif
 			if (sched_isolate_cpu(cpu))
 				cpumask_clear_cpu(cpu,
 					&cpus_isolated_by_thermal);
@@ -210,6 +215,12 @@ static int cpu_isolate_set_cur_state(struct thermal_cooling_device *cdev,
 		} else if (cpumask_test_and_clear_cpu(cpu,
 			&cpus_isolated_by_thermal)) {
 			mutex_unlock(&cpu_isolate_lock);
+#if IS_ENABLED(CONFIG_SEC_PM)
+			THERMAL_IPC_LOG("unisolate cpu%d\n", cpu);
+#if IS_ENABLED(CONFIG_SEC_THERMAL_LOG)
+			ss_thermal_print("unisolate cpu%d\n", cpu);
+#endif			
+#endif
 			sched_unisolate_cpu(cpu);
 			mutex_lock(&cpu_isolate_lock);
 		}
@@ -321,12 +332,6 @@ static int cpu_isolate_probe(struct platform_device *pdev)
 				break;
 			}
 		}
-
-		if (cpu_isolate_cdev->cpu_id == -1) {
-			dev_err(&pdev->dev, "Invalid CPU phandle\n");
-			continue;
-		}
-
 		INIT_WORK(&cpu_isolate_cdev->reg_work,
 				cpu_isolate_register_cdev);
 		list_add(&cpu_isolate_cdev->node, &cpu_isolate_cdev_list);

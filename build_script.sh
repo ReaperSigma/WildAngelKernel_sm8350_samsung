@@ -34,15 +34,6 @@ TOOLCHAIN="3"               #
 # 7) arter-gcc [9.3 & 11.1] #
 #############################
 
-export DISPLAY_ROOT=$(pwd)/techpack/display-drivers
-export KERNEL_ROOT=$(pwd)
-export CAMERA_KERNEL_ROOT=$(pwd)/techpack/camera-kernel
-export VIDEO_ROOT=$(pwd)/techpack/video
-export TARGET_BOARD_PLATFORM=taro
-export TARGET_BOARD_AUTO=true
-export MMRM_ROOT=$(pwd)/techpack/mmrm
-export   OPLUS_BUG_STABILITY=1
-export OPLUS_FEATURE_CAMERA_COMMON=y
 USE_UNCOMPRESSED_KERNEL="1"
 DISABLE_LLD="1"
 DISABLE_IAS="0"

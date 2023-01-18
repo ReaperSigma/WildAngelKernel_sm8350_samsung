@@ -195,8 +195,10 @@ void set_hmp(int level)
 			current_hmp_boost = level;
 		}
 		pr_booster("[Input Booster2] ******     hmp_boost : %d ( %s )\n", level, __func__);
+		#ifdef CONFIG_SCHED_WALT
 		if (sched_set_boost(level) < 0)
 			pr_err("[Input Booster2] ******            !!! fail to HMP !!!\n");
+		#endif
 	}
 }
 #else

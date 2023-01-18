@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, 2021 The Linux Foundation. All rights reserved.
  */
 
 #include <linux/err.h>
@@ -12,21 +12,11 @@
 #include <linux/io.h>
 #include <linux/slab.h>
 #include <linux/thermal.h>
+#include <linux/suspend.h>
 #include "tsens.h"
 #include "thermal_core.h"
 
 LIST_HEAD(tsens_device_list);
-
-#if defined(CONFIG_SEC_PM)
-static struct delayed_work ts_print_work;
-struct tsens_device *ts_tmdev0 = NULL;
-struct tsens_device *ts_tmdev1 = NULL;
-
-/* TODO: optimize the # of tsens pring, now for bring up  debugging */
-static int ts_print_num0[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
-static int ts_print_num1[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13};
-static int ts_print_count;
-#endif
 
 static int tsens_get_temp(void *data, int *temp)
 {
@@ -71,6 +61,38 @@ static int tsens_register_interrupts(struct tsens_device *tmdev)
 
 	return 0;
 }
+
+#ifdef CONFIG_DEEPSLEEP
+static int tsens_suspend(struct device *dev)
+{
+	struct tsens_device *tmdev = dev_get_drvdata(dev);
+
+	if (mem_sleep_current != PM_SUSPEND_MEM)
+		return 0;
+
+	return tmdev->ops->suspend(tmdev);
+}
+
+static int tsens_freeze(struct device *dev)
+{
+	return tsens_suspend(dev);
+}
+
+static int tsens_resume(struct device *dev)
+{
+	struct tsens_device *tmdev = dev_get_drvdata(dev);
+
+	if (mem_sleep_current != PM_SUSPEND_MEM)
+		return 0;
+
+	return tmdev->ops->resume(tmdev);
+}
+
+static int tsens_restore(struct device *dev)
+{
+	return tsens_resume(dev);
+}
+#endif
 
 static const struct of_device_id tsens_table[] = {
 	{	.compatible = "qcom,msm8996-tsens",
@@ -262,10 +284,6 @@ static int tsens_tm_remove(struct platform_device *pdev)
 {
 	platform_set_drvdata(pdev, NULL);
 
-#if defined(CONFIG_SEC_PM)
-	cancel_delayed_work_sync(&ts_print_work);
-#endif
-
 	return 0;
 }
 
@@ -300,44 +318,6 @@ static void tsens_therm_fwk_notify(struct work_struct *work)
 		of_thermal_handle_trip(tmdev->dev, tmdev->zeroc.tzd);
 	}
 }
-
-#if defined(CONFIG_SEC_PM)
-static void __ref ts_print(struct work_struct *work)
-{
-	struct tsens_sensor ts_sensor;
-	int temp = 0;
-	size_t i;
-	int added = 0, ret = 0;
-	char buffer[500] = { 0, };
-
-	ret = snprintf(buffer + added, sizeof(buffer) - added, "tsens");
-	added += ret;
-
-	/* print tsens0 (controller 0) */
-	ts_sensor.tmdev = ts_tmdev0;
-	for (i = 0; i < (sizeof(ts_print_num0) / sizeof(int)); i++) {
-		ts_sensor = ts_tmdev0->sensor[ts_print_num0[i]];
-		tsens_get_temp(&ts_sensor, &temp);
-		ret = snprintf(buffer + added, sizeof(buffer) - added,
-				   "[%d:%d]", ts_print_num0[i], temp/100);
-		added += ret;
-	}
-
-	/* print tsens0 (controller 1) */
-	ts_sensor.tmdev = ts_tmdev1;
-	for (i = 0; i < (sizeof(ts_print_num1) / sizeof(int)); i++) {
-		ts_sensor = ts_tmdev1->sensor[ts_print_num1[i]];
-		tsens_get_temp(&ts_sensor, &temp);
-		ret = snprintf(buffer + added, sizeof(buffer) - added,
-					   "[%d:%d]", ts_print_num1[i] + 15, temp/100);
-		added += ret;
-	}
-
-	pr_info("%s\n", buffer);
-
-	schedule_delayed_work(&ts_print_work, HZ * 5);
-}
-#endif
 
 static int tsens_tm_probe(struct platform_device *pdev)
 {
@@ -419,29 +399,27 @@ static int tsens_tm_probe(struct platform_device *pdev)
 
 	list_add_tail(&tmdev->list, &tsens_device_list);
 	platform_set_drvdata(pdev, tmdev);
-
-#if defined(CONFIG_SEC_PM)
-	if (!strncmp(tmdev->pdev->name, "c222000", 7)) {
-		ts_tmdev0 = tmdev;
-	} else if (!strncmp(tmdev->pdev->name, "c223000", 7)) {
-		ts_tmdev1 = tmdev;
-	}
-
-	if (ts_print_count == 0 && ts_tmdev1 != NULL) {
-		INIT_DELAYED_WORK(&ts_print_work, ts_print);
-		schedule_delayed_work(&ts_print_work, 0);
-		ts_print_count++;
-	}
-#endif
-
+	dev_set_drvdata(tmdev->dev, tmdev);
 	return rc;
 }
+
+#ifdef CONFIG_DEEPSLEEP
+static const struct dev_pm_ops tsens_pm_ops = {
+	.freeze = tsens_freeze,
+	.restore = tsens_restore,
+	.suspend = tsens_suspend,
+	.resume = tsens_resume,
+};
+#endif
 
 static struct platform_driver tsens_tm_driver = {
 	.probe = tsens_tm_probe,
 	.remove = tsens_tm_remove,
 	.driver = {
 		.name = "msm-tsens",
+#ifdef CONFIG_DEEPSLEEP
+		.pm = &tsens_pm_ops,
+#endif
 		.of_match_table = tsens_table,
 	},
 };

@@ -23,6 +23,9 @@
 #include <net/netlink.h>
 #include <net/genetlink.h>
 #include <linux/suspend.h>
+#ifdef CONFIG_ONEPLUS_THERM_OPT
+#include <linux/pm_qos.h>
+#endif
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/thermal.h>
@@ -30,16 +33,16 @@
 #include "thermal_core.h"
 #include "thermal_hwmon.h"
 
-#if IS_ENABLED(CONFIG_SEC_PM)
-void *thermal_ipc_log;
-
-/* cooling device state */
-static struct delayed_work cdev_print_work;
-#endif
-
 MODULE_AUTHOR("Zhang Rui");
 MODULE_DESCRIPTION("Generic thermal management sysfs support");
 MODULE_LICENSE("GPL v2");
+
+#ifdef CONFIG_ONEPLUS_THERM_OPT
+#define THERMAL_MAX_ACTIVE	16
+#define THERMAL_MAX_MASK	(1UL<<8)
+#define THERMAL_TRIP_POINT	(1UL<<7)
+#define THERMAL_TEMP_MASK	0x7F
+#endif
 
 static DEFINE_IDA(thermal_tz_ida);
 static DEFINE_IDA(thermal_cdev_ida);
@@ -57,11 +60,10 @@ static bool power_off_triggered;
 
 static struct thermal_governor *def_governor;
 
-#if IS_ENABLED(CONFIG_SEC_PM)
-#define TZ_POLLING_INTERVAL	(HZ * 5)
-static bool tz_polling_enable = true;
-static struct delayed_work tz_print_work;
-static int tz_print_num[] = {71, 72, 79};
+#ifdef CONFIG_ONEPLUS_THERM_OPT
+static struct thermal_zone_device *msm_tz, *skin_tz;
+static struct thermal_zone_device *xo_mmw1_tz, *modem_mmw2_tz;
+static struct thermal_zone_device *modem_skin_tz, *pa1_mmw0_tz;
 #endif
 
 /*
@@ -243,15 +245,14 @@ int thermal_build_list_of_policies(char *buf)
 {
 	struct thermal_governor *pos;
 	ssize_t count = 0;
-	ssize_t size = PAGE_SIZE;
 
 	mutex_lock(&thermal_governor_lock);
 
 	list_for_each_entry(pos, &thermal_governor_list, governor_list) {
-		size = PAGE_SIZE - count;
-		count += scnprintf(buf + count, size, "%s ", pos->name);
+		count += scnprintf(buf + count, PAGE_SIZE - count, "%s ",
+				   pos->name);
 	}
-	count += scnprintf(buf + count, size, "\n");
+	count += scnprintf(buf + count, PAGE_SIZE - count, "\n");
 
 	mutex_unlock(&thermal_governor_lock);
 
@@ -316,12 +317,10 @@ static void thermal_zone_device_set_polling(struct workqueue_struct *queue,
 					    int delay)
 {
 	if (delay > 1000)
-		mod_delayed_work(system_freezable_power_efficient_wq,
-				 &tz->poll_queue,
+		mod_delayed_work(queue, &tz->poll_queue,
 				 round_jiffies(msecs_to_jiffies(delay)));
 	else if (delay)
-		mod_delayed_work(system_freezable_power_efficient_wq,
-				 &tz->poll_queue,
+		mod_delayed_work(queue, &tz->poll_queue,
 				 msecs_to_jiffies(delay));
 	else
 		cancel_delayed_work(&tz->poll_queue);
@@ -527,6 +526,7 @@ static void handle_critical_trips(struct thermal_zone_device *tz,
 		dev_emerg(&tz->device,
 			  "critical temperature reached (%d C), shutting down\n",
 			  tz->temperature / 1000);
+		panic("critical temperature, triger dump");
 		mutex_lock(&poweroff_lock);
 		if (!power_off_triggered) {
 			/*
@@ -569,6 +569,8 @@ static void thermal_zone_device_init(struct thermal_zone_device *tz)
 {
 	struct thermal_instance *pos;
 	tz->temperature = THERMAL_TEMP_INVALID;
+	tz->prev_low_trip = -INT_MAX;
+	tz->prev_high_trip = INT_MAX;
 	list_for_each_entry(pos, &tz->thermal_instances, tz_node)
 		pos->initialized = false;
 }
@@ -1168,7 +1170,6 @@ __thermal_cooling_device_register(struct device_node *np,
 		put_device(&cdev->device);
 		return ERR_PTR(result);
 	}
-	pr_info("register cooling_device%d-%s\n", cdev->id, cdev->type);
 
 	/* Add 'this' new cdev to the global cdev list */
 	mutex_lock(&thermal_list_lock);
@@ -1483,6 +1484,25 @@ thermal_zone_device_register(const char *type, int trips, int mask,
 	atomic_set(&tz->need_update, 1);
 
 	dev_set_name(&tz->device, "thermal_zone%d", tz->id);
+#ifdef CONFIG_ONEPLUS_THERM_OPT
+	if (strcmp(tz->type, "skin-therm") ==  0) {
+		skin_tz = tz;
+		dev_set_name(&tz->device, tz->type);
+	} else if (strcmp(tz->type, "msm-therm") ==  0) {
+		msm_tz = tz;
+		dev_set_name(&tz->device, tz->type);
+	} else if (strcmp(tz->type, "modem-mmw1-step") ==  0)
+		xo_mmw1_tz = tz;
+	else if (strcmp(tz->type, "modem-mmw2-step") ==  0)
+		modem_mmw2_tz = tz;
+	else if (strcmp(tz->type, "modem-mmw0-step") ==  0)
+		pa1_mmw0_tz = tz;
+	else if (strcmp(tz->type, "msm-therm-step") ==  0)
+		modem_skin_tz = tz;
+	else if (strcmp(tz->type, "camera-flash-therm") == 0)
+		dev_set_name(&tz->device, tz->type);
+#endif
+
 	result = device_register(&tz->device);
 	if (result)
 		goto release_device;
@@ -1740,37 +1760,6 @@ static inline int genetlink_init(void) { return 0; }
 static inline void genetlink_exit(void) {}
 #endif /* !CONFIG_NET */
 
-#if IS_ENABLED(CONFIG_SEC_PM)
-#define BUF_SIZE	SZ_1K
-static void __ref cdev_print(struct work_struct *work)
-{
-	struct thermal_cooling_device *cdev;
-	unsigned long cur_state = 0;
-	int added = 0, ret = 0;
-	char buffer[BUF_SIZE] = { 0, };
-
-	mutex_lock(&thermal_list_lock);
-	list_for_each_entry(cdev, &thermal_cdev_list, node) {
-		if (cdev->ops->get_cur_state)
-			cdev->ops->get_cur_state(cdev, &cur_state);;
-
-		if (cur_state) {
-			ret = snprintf(buffer + added, sizeof(buffer) - added,
-					   "[%s:%ld]", cdev->type, cur_state);
-			added += ret;
-
-			if (added >= BUF_SIZE)
-				break;
-		}
-	}
-	mutex_unlock(&thermal_list_lock);
-
-	printk("thermal: cdev%s\n", buffer);
-
-	schedule_delayed_work(&cdev_print_work, HZ * 5);
-}
-#endif
-
 static int thermal_pm_notify(struct notifier_block *nb,
 			     unsigned long mode, void *_unused)
 {
@@ -1781,9 +1770,6 @@ static int thermal_pm_notify(struct notifier_block *nb,
 	case PM_HIBERNATION_PREPARE:
 	case PM_RESTORE_PREPARE:
 	case PM_SUSPEND_PREPARE:
-#if IS_ENABLED(CONFIG_SEC_PM)
-		cancel_delayed_work(&cdev_print_work);
-#endif
 		atomic_set(&in_suspend, 1);
 		break;
 	case PM_POST_HIBERNATION:
@@ -1808,9 +1794,6 @@ static int thermal_pm_notify(struct notifier_block *nb,
 			thermal_zone_device_update(tz,
 						   THERMAL_EVENT_UNSPECIFIED);
 		}
-#if IS_ENABLED(CONFIG_SEC_PM)
-		schedule_delayed_work(&cdev_print_work, 0);
-#endif
 		break;
 	default:
 		break;
@@ -1822,31 +1805,118 @@ static struct notifier_block thermal_pm_nb = {
 	.notifier_call = thermal_pm_notify,
 };
 
-#if IS_ENABLED(CONFIG_SEC_PM)
-static void tz_print(struct work_struct *work)
+#ifdef CONFIG_ONEPLUS_THERM_OPT
+static int update_thermal_target(struct thermal_zone_device *tz,
+	unsigned long val, int thermal_mask)
 {
-	struct thermal_zone_device *pos = NULL, *ref = ERR_PTR(-EINVAL);
-	int temp = 0;
-	size_t i;
-	int added = 0;
-	char buffer[256] = { 0, };
+	int ret = -1;
+	int temperature = 0, trip = 0;
 
-	for (i = 0; i <  (sizeof(tz_print_num) / sizeof(int)); i++) {
-		mutex_lock(&thermal_list_lock);
-		list_for_each_entry(pos, &thermal_tz_list, node)
-			if (pos->id == tz_print_num[i]) {
-				ref = pos;
-				break;
-			}
-		mutex_unlock(&thermal_list_lock);
-		thermal_zone_get_temp(ref, &temp);
-		added += snprintf(buffer + added, sizeof(buffer) - added,
-				"[%d:%d]", tz_print_num[i], temp/100);
+	pr_info("%s::val = %ul, thermal_mask = %d\n",
+			__func__, val, thermal_mask);
+
+	if (val > THERMAL_MAX_MASK - 1) {
+		pr_err("%s: The input parameter is illegal, val = %ul\n",
+					__func__, val);
+		return -EINVAL;
 	}
 
-	pr_info("%s\n", buffer);
+	if (!tz || !tz->ops || !tz->ops->set_trip_temp) {
+		pr_err("%s: set_trip_temp is NULL!\n", __func__);
+		return -EINVAL;
+	}
 
-	schedule_delayed_work(&tz_print_work, TZ_POLLING_INTERVAL);
+	trip = (val & THERMAL_TRIP_POINT) >> 7;
+	temperature = THERMAL_TEMP_MASK & val;
+
+
+	pr_err("%s: type: %s, trip = %d, temp = %d\n", __func__,
+			tz->type, trip, temperature);
+
+	if (temperature < 30) {
+		pr_err("%s: temp trip is too small!!\n", __func__);
+		return -EPERM;
+	}
+
+	if (((temperature > 86) && (thermal_mask == 0))|
+		((temperature > 61) && (thermal_mask == 1))) {
+		pr_err("%s: temp trip is too larger!!\n", __func__);
+		return -EPERM;
+	}
+
+	ret = tz->ops->set_trip_temp(tz, trip, temperature*1000);
+	if (ret)
+		return ret;
+
+	thermal_zone_device_update(tz, THERMAL_EVENT_UNSPECIFIED);
+	pr_notice("%s: update_thermal config successful\n", __func__);
+	return ret;
+}
+
+static int pa1_mmw0_thermal_qos_handler(struct notifier_block *b, unsigned long val, void *v)
+{
+	return update_thermal_target(pa1_mmw0_tz, val, 0);
+}
+
+static struct notifier_block pa1_mmw0_thermal_qos_notifier = {
+	.notifier_call = pa1_mmw0_thermal_qos_handler,
+};
+
+static int xo_mmw1_thermal_qos_handler(struct notifier_block *b, unsigned long val, void *v)
+{
+	return update_thermal_target(xo_mmw1_tz, val, 0);
+}
+
+static struct notifier_block xo_mmw1_thermal_qos_notifier = {
+	.notifier_call = xo_mmw1_thermal_qos_handler,
+};
+
+static int modem_skin_thermal_qos_handler(struct notifier_block *b, unsigned long val, void *v)
+{
+	return update_thermal_target(modem_skin_tz, val, 0);
+}
+
+static struct notifier_block modem_skin_thermal_qos_notifier = {
+	.notifier_call = modem_skin_thermal_qos_handler,
+};
+
+static int modem_mmw2_qos_handler(struct notifier_block *b, unsigned long val, void *v)
+{
+	return update_thermal_target(modem_mmw2_tz, val, 0);
+}
+
+static struct notifier_block modem_mmw2_qos_notifier = {
+	.notifier_call = modem_mmw2_qos_handler,
+};
+
+static int msm_thermal_qos_handler(struct notifier_block *b, unsigned long val, void *v)
+{
+	return update_thermal_target(msm_tz, val, 0);
+}
+
+static struct notifier_block msm_thermal_qos_notifier = {
+	.notifier_call = msm_thermal_qos_handler,
+};
+
+static int skin_thermal_qos_handler(struct notifier_block *b, unsigned long val, void *v)
+{
+	return update_thermal_target(skin_tz, val, 1);
+}
+
+static struct notifier_block skin_thermal_qos_notifier = {
+	.notifier_call = skin_thermal_qos_handler,
+};
+
+void add_therm_pm_qos_notifier(void)
+{
+	pr_err("register_pm_qos_notifier\n");
+	pm_qos_add_notifier(PM_QOS_MSM_THERMAL, &msm_thermal_qos_notifier);
+	pm_qos_add_notifier(PM_QOS_SKIN_THERMAL, &skin_thermal_qos_notifier);
+	pm_qos_add_notifier(PM_QOS_MODEM_SKIN_THERMAL, &modem_skin_thermal_qos_notifier);
+	pm_qos_add_notifier(PM_QOS_MMW1_THERMAL, &xo_mmw1_thermal_qos_notifier);
+	pm_qos_add_notifier(PM_QOS_MMW0_THERMAL,
+				&pa1_mmw0_thermal_qos_notifier);
+	pm_qos_add_notifier(PM_QOS_MMW2_THERMAL, &modem_mmw2_qos_notifier);
 }
 #endif
 
@@ -1881,30 +1951,10 @@ static int __init thermal_init(void)
 	if (result)
 		pr_warn("Thermal: Can not register suspend notifier, return %d\n",
 			result);
-
-#if IS_ENABLED(CONFIG_SEC_PM)
-	INIT_DELAYED_WORK(&cdev_print_work, cdev_print);
-	schedule_delayed_work(&cdev_print_work, 0);
-
-	if (!thermal_ipc_log)
-		thermal_ipc_log = ipc_log_context_create(10, "lmh_dcvs", 0);
-
-	if (!thermal_ipc_log)
-		pr_err("%s: Failed to create thermal logging context\n", __func__);
-
-#if IS_ENABLED(CONFIG_SEC_THERMAL_LOG)
-	/* SS THERMAL LOGGING */
-	ss_thermal_log_init();
-#endif	
-#endif
-
 	thermal_debug_init();
-#if IS_ENABLED(CONFIG_SEC_PM)
-	INIT_DELAYED_WORK(&tz_print_work, tz_print);
-	if (tz_polling_enable)
-		schedule_delayed_work(&tz_print_work, 0);
+#ifdef CONFIG_ONEPLUS_THERM_OPT
+	add_therm_pm_qos_notifier();
 #endif
-
 	return 0;
 
 unregister_class:
@@ -1924,10 +1974,6 @@ error:
 
 static void thermal_exit(void)
 {
-#if IS_ENABLED(CONFIG_SEC_PM)
-	cancel_delayed_work_sync(&cdev_print_work);
-	cancel_delayed_work_sync(&tz_print_work);
-#endif
 	unregister_pm_notifier(&thermal_pm_nb);
 	of_thermal_destroy_zones();
 	destroy_workqueue(thermal_passive_wq);
@@ -1982,6 +2028,9 @@ static int __init thermal_init(void)
 	if (result)
 		pr_warn("Thermal: Can not register suspend notifier, return %d\n",
 			result);
+#ifdef CONFIG_ONEPLUS_THERM_OPT
+	add_therm_pm_qos_notifier();
+#endif
 
 	return 0;
 

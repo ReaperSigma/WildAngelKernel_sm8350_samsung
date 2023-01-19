@@ -26,7 +26,7 @@
 #include <trace/hooks/sched.h>
 
 #include "walt/walt.h"
-
+#include <linux/sched/sysctl.h>
 #ifdef CONFIG_SMP
 static inline bool task_fits_max(struct task_struct *p, int cpu);
 #endif /* CONFIG_SMP */
@@ -132,12 +132,10 @@ unsigned int sched_capacity_margin_up[NR_CPUS] = {
 unsigned int sched_capacity_margin_down[NR_CPUS] = {
 			[0 ... NR_CPUS-1] = 1205}; /* ~15% margin */
 
-#ifdef CONFIG_SCHED_WALT
 __read_mostly unsigned int sysctl_sched_prefer_spread;
 unsigned int sysctl_walt_rtg_cfs_boost_prio = 99; /* disabled by default */
 unsigned int sysctl_walt_low_latency_task_threshold; /* disabled by default */
 unsigned int sysctl_sched_sync_hint_enable = 1;
-#endif
 unsigned int sched_small_task_threshold = 102;
 __read_mostly unsigned int sysctl_sched_force_lb_enable = 1;
 
@@ -3926,7 +3924,7 @@ struct find_best_target_env {
 	int skip_cpu;
 };
 
-static inline bool prefer_spread_on_idle(int cpu)
+/*static inline bool prefer_spread_on_idle(int cpu)
 {
 #ifdef CONFIG_SCHED_WALT
 	switch (sysctl_sched_prefer_spread) {
@@ -3938,7 +3936,7 @@ static inline bool prefer_spread_on_idle(int cpu)
 		return false;
 	}
 #else
-	
+
 	if (likely(!sysctl_sched_prefer_spread))
 	{
 		return false;
@@ -3948,6 +3946,17 @@ static inline bool prefer_spread_on_idle(int cpu)
 
 	return sysctl_sched_prefer_spread > 1;
 #endif
+}*/
+
+static inline bool prefer_spread_on_idle(int cpu)
+{
+	if (likely(!sysctl_sched_prefer_spread))
+		return false;
+
+	if (is_min_capacity_cpu(cpu))
+		return sysctl_sched_prefer_spread >= 1;
+
+	return sysctl_sched_prefer_spread > 1;
 }
 
 #ifdef CONFIG_SCHED_WALT
@@ -8303,6 +8312,7 @@ int can_migrate_task(struct task_struct *p, struct lb_env *env)
 				cpu_rq(env->dst_cpu)->wrq.cluster, p))
 		return 0;
 #endif
+#ifdef CONFIG_SCHED_WALT
 
 	/* Don't detach task if it doesn't fit on the destination */
 	if (env->flags & LBF_IGNORE_BIG_TASKS &&

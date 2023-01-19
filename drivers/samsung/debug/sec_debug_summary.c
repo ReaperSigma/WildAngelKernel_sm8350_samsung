@@ -25,7 +25,7 @@
 #include <asm/system_misc.h>
 
 #include <linux/sec_debug.h>
-
+#include <linux/mod_devicetable.h>
 #if defined(CONFIG_MSM_SMEM)
 #include <soc/qcom/smem.h>
 #else
@@ -731,8 +731,9 @@ static int _sec_debug_summary_init(void)
 		pr_err("return with error[%d]", err);
 		return err;
 	}
-
+	#ifdef CONFIG_SCHED_WALT
 	memset_io(secdbg_summary, 0x0, size);
+	#endif
 
 	secdbg_summary->_apss =
 		qcom_smem_virt_to_phys(&secdbg_summary->priv.apss);
@@ -846,3 +847,4 @@ static int __init sec_debug_summary_init(void)
 }
 subsys_initcall_sync(sec_debug_summary_init);
 #endif
+

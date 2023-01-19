@@ -23,9 +23,6 @@
 #include <net/netlink.h>
 #include <net/genetlink.h>
 #include <linux/suspend.h>
-#ifdef CONFIG_ONEPLUS_THERM_OPT
-#include <linux/pm_qos.h>
-#endif
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/thermal.h>
@@ -36,13 +33,6 @@
 MODULE_AUTHOR("Zhang Rui");
 MODULE_DESCRIPTION("Generic thermal management sysfs support");
 MODULE_LICENSE("GPL v2");
-
-#ifdef CONFIG_ONEPLUS_THERM_OPT
-#define THERMAL_MAX_ACTIVE	16
-#define THERMAL_MAX_MASK	(1UL<<8)
-#define THERMAL_TRIP_POINT	(1UL<<7)
-#define THERMAL_TEMP_MASK	0x7F
-#endif
 
 static DEFINE_IDA(thermal_tz_ida);
 static DEFINE_IDA(thermal_cdev_ida);
@@ -59,12 +49,6 @@ static atomic_t in_suspend;
 static bool power_off_triggered;
 
 static struct thermal_governor *def_governor;
-
-#ifdef CONFIG_ONEPLUS_THERM_OPT
-static struct thermal_zone_device *msm_tz, *skin_tz;
-static struct thermal_zone_device *xo_mmw1_tz, *modem_mmw2_tz;
-static struct thermal_zone_device *modem_skin_tz, *pa1_mmw0_tz;
-#endif
 
 /*
  * Governor section: set of functions to handle thermal governors
@@ -1486,25 +1470,6 @@ thermal_zone_device_register(const char *type, int trips, int mask,
 	atomic_set(&tz->need_update, 1);
 
 	dev_set_name(&tz->device, "thermal_zone%d", tz->id);
-#ifdef CONFIG_ONEPLUS_THERM_OPT
-	if (strcmp(tz->type, "skin-therm") ==  0) {
-		skin_tz = tz;
-		dev_set_name(&tz->device, tz->type);
-	} else if (strcmp(tz->type, "msm-therm") ==  0) {
-		msm_tz = tz;
-		dev_set_name(&tz->device, tz->type);
-	} else if (strcmp(tz->type, "modem-mmw1-step") ==  0)
-		xo_mmw1_tz = tz;
-	else if (strcmp(tz->type, "modem-mmw2-step") ==  0)
-		modem_mmw2_tz = tz;
-	else if (strcmp(tz->type, "modem-mmw0-step") ==  0)
-		pa1_mmw0_tz = tz;
-	else if (strcmp(tz->type, "msm-therm-step") ==  0)
-		modem_skin_tz = tz;
-	else if (strcmp(tz->type, "camera-flash-therm") == 0)
-		dev_set_name(&tz->device, tz->type);
-#endif
-
 	result = device_register(&tz->device);
 	if (result)
 		goto release_device;
@@ -1807,7 +1772,7 @@ static struct notifier_block thermal_pm_nb = {
 	.notifier_call = thermal_pm_notify,
 };
 
-#ifdef CONFIG_ONEPLUS_THERM_OPT
+/*#ifdef CONFIG_ONEPLUS_THERM_OPT
 static int update_thermal_target(struct thermal_zone_device *tz,
 	unsigned long val, int thermal_mask)
 {
@@ -1920,7 +1885,7 @@ void add_therm_pm_qos_notifier(void)
 				&pa1_mmw0_thermal_qos_notifier);
 	pm_qos_add_notifier(PM_QOS_MMW2_THERMAL, &modem_mmw2_qos_notifier);
 }
-#endif
+#endif*/
 
 #ifdef CONFIG_QTI_THERMAL
 static int __init thermal_init(void)
@@ -1954,9 +1919,9 @@ static int __init thermal_init(void)
 		pr_warn("Thermal: Can not register suspend notifier, return %d\n",
 			result);
 	thermal_debug_init();
-#ifdef CONFIG_ONEPLUS_THERM_OPT
+/*#ifdef CONFIG_ONEPLUS_THERM_OPT
 	add_therm_pm_qos_notifier();
-#endif
+#endif*/
 	return 0;
 
 unregister_class:
@@ -2030,9 +1995,9 @@ static int __init thermal_init(void)
 	if (result)
 		pr_warn("Thermal: Can not register suspend notifier, return %d\n",
 			result);
-#ifdef CONFIG_ONEPLUS_THERM_OPT
+/*#ifdef CONFIG_ONEPLUS_THERM_OPT
 	add_therm_pm_qos_notifier();
-#endif
+#endif*/
 
 	return 0;
 

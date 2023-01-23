@@ -36,6 +36,8 @@ static void adreno_get_submit_time(struct adreno_device *adreno_dev,
 {
 	const struct adreno_gpudev *gpudev = ADRENO_GPU_DEVICE(adreno_dev);
 	unsigned long flags;
+	struct adreno_context *drawctxt = rb->drawctxt_active;
+	struct kgsl_context *context = &drawctxt->base;
 
 	/*
 	 * Here we are attempting to create a mapping between the
@@ -69,8 +71,6 @@ static void adreno_ringbuffer_wptr(struct adreno_device *adreno_dev,
 {
 	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
 	unsigned long flags;
-	bool write = false;
-	unsigned int val;
 	int ret = 0;
 
 	spin_lock_irqsave(&rb->preempt_lock, flags);
@@ -83,8 +83,13 @@ static void adreno_ringbuffer_wptr(struct adreno_device *adreno_dev,
 			 */
 			kgsl_pwrscale_busy(device);
 
-			write = true;
-			val = rb->_wptr;
+			/*
+			 * Ensure the write posted after a possible
+			 * GMU wakeup (write could have dropped during wakeup)
+			 */
+			ret = adreno_gmu_fenced_write(adreno_dev,
+				ADRENO_REG_CP_RB_WPTR, rb->_wptr,
+				FENCE_STATUS_WRITEDROPPED0_MASK);
 			rb->skip_inline_wptr = false;
 		}
 	} else {
@@ -99,14 +104,6 @@ static void adreno_ringbuffer_wptr(struct adreno_device *adreno_dev,
 
 	rb->wptr = rb->_wptr;
 	spin_unlock_irqrestore(&rb->preempt_lock, flags);
-
-	/*
-	 * Ensure the write posted after a possible
-	 * GMU wakeup (write could have dropped during wakeup)
-	 */
-	if (write)
-		ret = adreno_gmu_fenced_write(adreno_dev, ADRENO_REG_CP_RB_WPTR,
-			val, FENCE_STATUS_WRITEDROPPED0_MASK);
 
 	if (ret) {
 		/*
@@ -414,7 +411,6 @@ adreno_ringbuffer_addcmds(struct adreno_ringbuffer *rb,
 	struct adreno_context *drawctxt = rb->drawctxt_active;
 	struct kgsl_context *context = NULL;
 	bool secured_ctxt = false;
-	bool write_separate_shadow;
 	static unsigned int _seq_cnt;
 
 	if (drawctxt != NULL && kgsl_context_detached(&drawctxt->base) &&
@@ -511,15 +507,6 @@ adreno_ringbuffer_addcmds(struct adreno_ringbuffer *rb,
 		total_sizedwords += 5;
 	}
 
-	write_separate_shadow = (drawctxt &&
-				 drawctxt->shadow_timestamp_mem &&
-				 !is_internal_cmds(flags));
-
-	if (write_separate_shadow) {
-		total_sizedwords += 4; /* sop mem_write */
-		total_sizedwords += 5; /* eop event_write */
-	}
-
 	if (flags & KGSL_CMD_FLAGS_WFI)
 		total_sizedwords += 2; /* WFI */
 
@@ -595,12 +582,6 @@ adreno_ringbuffer_addcmds(struct adreno_ringbuffer *rb,
 	/* start-of-pipeline timestamp for the ringbuffer */
 	ringcmds += cp_mem_write(adreno_dev, ringcmds,
 		MEMSTORE_RB_GPU_ADDR(device, rb, soptimestamp), rb->timestamp);
-
-	/* start-of-pipeline timestamp for context separate shadow memory */
-	if (write_separate_shadow)
-		ringcmds += cp_mem_write(adreno_dev, ringcmds,
-			DRAWCTXT_SHADOW_GPU_ADDR(drawctxt, soptimestamp),
-			timestamp);
 
 	if (secured_ctxt)
 		ringcmds += cp_secure_mode(adreno_dev, ringcmds, 1);
@@ -692,15 +673,6 @@ adreno_ringbuffer_addcmds(struct adreno_ringbuffer *rb,
 	} else {
 		ringcmds += cp_gpuaddr(adreno_dev, ringcmds,
 			MEMSTORE_RB_GPU_ADDR(device, rb, eoptimestamp));
-		*ringcmds++ = timestamp;
-	}
-
-	/* write end-of-pipeline to context separate shadow memory */
-	if (write_separate_shadow) {
-		*ringcmds++ = cp_mem_packet(adreno_dev, CP_EVENT_WRITE, 3, 1);
-		*ringcmds++ = CACHE_FLUSH_TS;
-		ringcmds += cp_gpuaddr(adreno_dev, ringcmds,
-			DRAWCTXT_SHADOW_GPU_ADDR(drawctxt, eoptimestamp));
 		*ringcmds++ = timestamp;
 	}
 
@@ -897,7 +869,6 @@ int adreno_ringbuffer_submitcmd(struct adreno_device *adreno_dev,
 	struct kgsl_memobj_node *ib;
 	unsigned int numibs = 0;
 	unsigned int *link;
-	unsigned int link_onstack[SZ_256] __aligned(8);
 	unsigned int *cmds;
 	struct kgsl_context *context;
 	struct adreno_context *drawctxt;
@@ -1025,15 +996,10 @@ int adreno_ringbuffer_submitcmd(struct adreno_device *adreno_dev,
 	if (gpudev->ccu_invalidate)
 		dwords += 4;
 
-	if (likely(dwords <= ARRAY_SIZE(link_onstack))) {
-		memset(link_onstack, 0, dwords * sizeof(unsigned int));
-		link = link_onstack;
-	} else {
-		link = kvcalloc(dwords, sizeof(unsigned int), GFP_KERNEL);
-		if (!link) {
-			ret = -ENOMEM;
-			goto done;
-		}
+	link = kvcalloc(dwords, sizeof(unsigned int), GFP_KERNEL);
+	if (!link) {
+		ret = -ENOMEM;
+		goto done;
 	}
 
 	cmds = link;
@@ -1163,8 +1129,7 @@ done:
 	trace_kgsl_issueibcmds(device, context->id, numibs, drawobj->timestamp,
 			drawobj->flags, ret, drawctxt->type);
 
-	if (unlikely(link != link_onstack))
-		kvfree(link);
+	kvfree(link);
 	return ret;
 }
 

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2002,2007-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2002,2007-2020, The Linux Foundation. All rights reserved.
  */
 #ifndef __ADRENO_DRAWCTXT_H
 #define __ADRENO_DRAWCTXT_H
@@ -15,13 +15,7 @@ struct adreno_context_type {
 };
 
 #define ADRENO_CONTEXT_DRAWQUEUE_SIZE 128
-
-#define DRAWCTXT_SHADOW_OFFSET(field)	\
-	offsetof(struct kgsl_devmemstore, field)
-
-#define DRAWCTXT_SHADOW_GPU_ADDR(drawctxt, field)	\
-	((drawctxt)->shadow_timestamp_mem->memdesc.gpuaddr + \
-	 DRAWCTXT_SHADOW_OFFSET(field))
+#define SUBMIT_RETIRE_TICKS_SIZE 7
 
 struct kgsl_device;
 struct adreno_device;
@@ -46,10 +40,13 @@ struct kgsl_device_private;
  * @debug_root: debugfs entry for this context.
  * @queued_timestamp: The last timestamp that was queued on this context
  * @rb: The ringbuffer in which this context submits commands.
+ * @submitted_timestamp: The last timestamp that was submitted for this context
+ * @submit_retire_ticks: Array to hold command obj execution times from submit
+ *                       to retire
+ * @ticks_index: The index into submit_retire_ticks[] where the new delta will
+ *		 be written.
  * @active_node: Linkage for nodes in active_list
  * @active_time: Time when this context last seen
- * @shadow_timestamp_mem: per-context shadow timestamp memory entry when
- * requested by user
  */
 struct adreno_context {
 	struct kgsl_context base;
@@ -73,10 +70,11 @@ struct adreno_context {
 	unsigned int queued_timestamp;
 	struct adreno_ringbuffer *rb;
 	unsigned int submitted_timestamp;
+	uint64_t submit_retire_ticks[SUBMIT_RETIRE_TICKS_SIZE];
+	int ticks_index;
 
 	struct list_head active_node;
 	unsigned long active_time;
-	struct kgsl_mem_entry *shadow_timestamp_mem;
 };
 
 /* Flag definitions for flag field in adreno_context */
@@ -126,11 +124,5 @@ void adreno_drawctxt_invalidate(struct kgsl_device *device,
 
 void adreno_drawctxt_dump(struct kgsl_device *device,
 		struct kgsl_context *context);
-
-int adreno_drawctxt_set_shadow_mem(struct kgsl_device_private *dev_priv,
-		struct kgsl_context *context, unsigned int gpuobj_id);
-
-void adreno_drawctxt_write_shadow_timestamp(struct kgsl_context *context,
-		unsigned int timestamp);
 
 #endif  /* __ADRENO_DRAWCTXT_H */

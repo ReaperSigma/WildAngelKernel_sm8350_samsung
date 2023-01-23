@@ -138,6 +138,7 @@ unsigned int kgsl_pwrctrl_adjust_pwrlevel(struct kgsl_device *device,
 				unsigned int new_level)
 {
 	struct kgsl_pwrctrl *pwr = &device->pwrctrl;
+	unsigned int old_level = pwr->active_pwrlevel;
 
 	/* If a pwr constraint is expired, remove it */
 	if ((pwr->constraint.type != KGSL_CONSTRAINT_NONE) &&
@@ -1205,8 +1206,8 @@ static void kgsl_pwrctrl_clk(struct kgsl_device *device, int state,
 		return;
 
 	if (state == KGSL_PWRFLAGS_OFF) {
-		if (test_bit(KGSL_PWRFLAGS_CLK_ON,
-						&pwr->power_flags)) {
+		if (test_and_clear_bit(KGSL_PWRFLAGS_CLK_ON,
+			&pwr->power_flags)) {
 			trace_kgsl_clk(device, state,
 					kgsl_pwrctrl_active_freq(pwr));
 			/* Disable gpu-bimc-interface clocks */
@@ -1243,11 +1244,9 @@ static void kgsl_pwrctrl_clk(struct kgsl_device *device, int state,
 					pwr->num_pwrlevels - 1);
 			}
 		}
-
-		clear_bit(KGSL_PWRFLAGS_CLK_ON, &pwr->power_flags);
 	} else if (state == KGSL_PWRFLAGS_ON) {
-		if (!test_bit(KGSL_PWRFLAGS_CLK_ON,
-				&pwr->power_flags)) {
+		if (!test_and_set_bit(KGSL_PWRFLAGS_CLK_ON,
+			&pwr->power_flags)) {
 			trace_kgsl_clk(device, state,
 					kgsl_pwrctrl_active_freq(pwr));
 			/* High latency clock maintenance. */
@@ -1282,9 +1281,8 @@ static void kgsl_pwrctrl_clk(struct kgsl_device *device, int state,
 
 			/* Turn on the IOMMU clocks */
 			kgsl_mmu_enable_clk(&device->mmu);
-
-			set_bit(KGSL_PWRFLAGS_CLK_ON, &pwr->power_flags);
 		}
+
 	}
 }
 

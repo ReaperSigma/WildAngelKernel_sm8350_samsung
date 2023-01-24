@@ -934,6 +934,9 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
 	VM_BUG_ON_PAGE(!PageLocked(newpage), newpage);
+#ifdef CONFIG_HUGEPAGE_POOL_DEBUG
+	BUG_ON(PageCompound(page));
+#endif
 
 	mapping = page_mapping(page);
 
@@ -994,12 +997,9 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 		if (!PageMappingFlags(page))
 			page->mapping = NULL;
 
-		if (likely(!is_zone_device_page(newpage))) {
-			int i, nr = compound_nr(newpage);
+		if (likely(!is_zone_device_page(newpage)))
+			flush_dcache_page(newpage);
 
-			for (i = 0; i < nr; i++)
-				flush_dcache_page(newpage + i);
-		}
 	}
 out:
 	return rc;
